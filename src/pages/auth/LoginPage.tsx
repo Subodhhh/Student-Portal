@@ -3,19 +3,62 @@ import "../../App.css";
 
 function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
+  const [studentId, setStudentId] = useState("");
+  const [password, setPassword] = useState("");
+  const [studentIdError, setStudentIdError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  function handleLogin(event: React.FormEvent) {
+    event.preventDefault();
+
+    setStudentIdError("");
+    setPasswordError("");
+
+    let hasError = false;
+
+    if (!studentId.trim()) {
+      setStudentIdError("Student ID is required.");
+      hasError = true;
+    }
+
+    if (!password) {
+      setPasswordError("Password is required.");
+      hasError = true;
+    }
+
+    if (hasError) {
+      return;
+    }
+
+    setIsLoading(true);
+
+    setTimeout(() => {
+      setIsLoading(false);
+    }, 1000);
+  }
 
   return (
     <div className="login-page">
       <div className="login-card">
         <h1>Student Portal</h1>
 
-        <form onSubmit={(event) => event.preventDefault()}>
+        <form onSubmit={handleLogin}>
           <label htmlFor="studentId">Student ID</label>
           <input
             id="studentId"
             type="text"
             placeholder="Enter your Student ID"
+            value={studentId}
+            onChange={(event) => {
+              setStudentId(event.target.value);
+              setStudentIdError("");
+            }}
           />
+
+          {studentIdError && (
+            <p className="login-error">{studentIdError}</p>
+          )}
 
           <label htmlFor="password">Password</label>
 
@@ -24,6 +67,11 @@ function LoginPage() {
               id="password"
               type={showPassword ? "text" : "password"}
               placeholder="Enter your password"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setPasswordError("");
+              }}
             />
 
             <button
@@ -47,9 +95,14 @@ function LoginPage() {
             </button>
           </div>
 
-          <button type="submit">Login</button>
+          {passwordError && (
+            <p className="login-error">{passwordError}</p>
+          )}
 
-          <p className="forgot-password">Forgot Password?</p>
+          <button type="submit" disabled={isLoading}>
+            {isLoading ? "Signing in..." : "Login"}
+          </button>
+
         </form>
       </div>
     </div>
