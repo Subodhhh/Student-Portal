@@ -1,0 +1,144 @@
+.ranking-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.ranking-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 24px 0;
+  max-width: 420px;
+}
+
+.ranking-selector label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ranking-selector select {
+  padding: 11px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 14px;
+  outline: none;
+}
+
+.ranking-selector select:focus {
+  border-color: #2563eb;
+}
+
+.ranking-summary {
+  display: grid;
+  grid-template-columns: 2fr repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ranking-summary > div {
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.ranking-summary span {
+  display: block;
+  margin-bottom: 7px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ranking-summary strong {
+  color: #0f172a;
+  font-size: 17px;
+}
+
+.ranking-panel {
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.ranking-panel-header {
+  padding: 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ranking-panel-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.ranking-panel-header p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ranking-table-wrapper {
+  overflow-x: auto;
+}
+
+.ranking-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ranking-table th,
+.ranking-table td {
+  padding: 14px 20px;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 14px;
+}
+
+.ranking-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ranking-table td {
+  color: #334155;
+}
+
+.ranking-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ranking-table tr.current-student {
+  background: #eff6ff;
+}
+
+.ranking-table tr.current-student td {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+@media (max-width: 800px) {
+  .ranking-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .ranking-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-selector {
+    max-width: none;
+  }
+
+  .ranking-table th,
+  .ranking-table td {
+    padding: 12px 14px;
+  }
+}

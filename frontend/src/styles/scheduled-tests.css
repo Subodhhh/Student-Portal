@@ -1,0 +1,239 @@
+.scheduled-tests-page {
+  width: 100%;
+}
+
+.scheduled-test-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 28px 0 22px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+}
+
+.scheduled-test-tabs button {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.scheduled-test-tabs button:hover {
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.scheduled-test-tabs button.active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.scheduled-test-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scheduled-test-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.scheduled-test-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.scheduled-test-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.scheduled-test-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.scheduled-test-title-row h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.scheduled-test-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scheduled-test-status-active {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.scheduled-test-status-upcoming {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.scheduled-test-status-missed {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.scheduled-test-status-completed {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.scheduled-test-status-left-in-between {
+  background: #fefce8;
+  color: #a16207;
+}
+
+.scheduled-test-provider {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 13px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scheduled-test-provider svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  color: #64748b;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.scheduled-test-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scheduled-test-meta span {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+}
+
+.scheduled-test-action {
+  flex-shrink: 0;
+}
+
+.scheduled-test-action button {
+  min-width: 120px;
+  height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scheduled-test-action button:hover {
+  background: #1d4ed8;
+}
+
+.scheduled-test-action .scheduled-test-details-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.scheduled-test-action .scheduled-test-details-button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+@media (max-width: 768px) {
+  .scheduled-test-tabs {
+    margin-top: 22px;
+  }
+
+  .scheduled-test-card {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .scheduled-test-action {
+    width: 100%;
+  }
+
+  .scheduled-test-action button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .scheduled-test-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .scheduled-test-meta {
+    gap: 6px;
+  }
+
+  .scheduled-test-meta span {
+    font-size: 11px;
+  }
+}
+
+.resume-test-button {
+  background: #19b86f !important;
+  border-color: #19b86f !important;
+  color: #ffffff !important;
+}
+
+.resume-test-button:hover {
+  background: #13a461 !important;
+  border-color: #13a461 !important;
+}
+
+.submitted-test-button {
+  background: #94a3b8 !important;
+  border-color: #94a3b8 !important;
+  color: #ffffff !important;
+  cursor: default !important;
+  opacity: 0.9;
+}

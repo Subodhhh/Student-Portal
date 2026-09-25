@@ -1,0 +1,248 @@
+.dashboard-page {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.dashboard-welcome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 28px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #eff6ff;
+}
+
+.dashboard-eyebrow {
+    margin: 0 0 6px;
+    color: #2563eb;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.dashboard-welcome h2 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.dashboard-welcome p:last-child {
+    margin: 8px 0 0;
+    color: #475569;
+}
+
+.dashboard-primary-button,
+.dashboard-secondary-button {
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.dashboard-primary-button {
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.dashboard-secondary-button {
+    background: #ffffff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+}
+
+.dashboard-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.dashboard-stat-card,
+.dashboard-panel,
+.dashboard-performance {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+
+.dashboard-stat-card {
+    padding: 20px;
+}
+
+.dashboard-stat-card span,
+.dashboard-stat-card small {
+    display: block;
+    color: #64748b;
+}
+
+.dashboard-stat-card strong {
+    display: block;
+    margin: 8px 0 4px;
+    font-size: 26px;
+    color: #0f172a;
+}
+
+.dashboard-stat-card small {
+    font-size: 12px;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+
+.dashboard-panel {
+    padding: 20px;
+}
+
+.dashboard-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.dashboard-panel-header h3,
+.dashboard-performance h3 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.dashboard-panel-header p {
+    margin: 5px 0 0;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.dashboard-panel-header button {
+    border: 0;
+    background: transparent;
+    color: #2563eb;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.dashboard-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 14px 0;
+    border-top: 1px solid #f1f5f9;
+}
+
+.dashboard-list-item:first-child {
+    border-top: 0;
+}
+
+.dashboard-list-item strong,
+.dashboard-list-item span {
+    display: block;
+}
+
+.dashboard-list-item strong {
+    font-size: 14px;
+}
+
+.dashboard-list-item span {
+    margin-top: 4px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.dashboard-badge {
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: #f1f5f9;
+    color: #475569 !important;
+    white-space: nowrap;
+}
+
+.dashboard-result {
+    color: #16a34a !important;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.dashboard-performance {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 24px;
+}
+
+.dashboard-performance p:last-child {
+    margin: 8px 0 0;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+    .dashboard-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 700px) {
+
+    .dashboard-welcome,
+    .dashboard-performance {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 500px) {
+    .dashboard-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-welcome {
+        padding: 20px;
+    }
+
+    .dashboard-welcome h2 {
+        font-size: 23px;
+    }
+}
+
+.stat-card {
+    padding: 20px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+
+.stat-card-label {
+    margin: 0;
+    color: #64748b;
+    font-size: 14px;
+}
+
+.stat-card-value {
+    margin: 8px 0 4px;
+    font-size: 28px;
+    color: #0f172a;
+}
+
+.stat-card-description {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}

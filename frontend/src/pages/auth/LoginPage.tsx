@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "../../App.css";
 
 function LoginPage() {
+  const navigate = useNavigate();
+
   const [showPassword, setShowPassword] = useState(false);
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
@@ -45,6 +48,7 @@ function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <label htmlFor="studentId">Student ID</label>
+
           <input
             id="studentId"
             type="text"
@@ -99,10 +103,17 @@ function LoginPage() {
             <p className="login-error">{passwordError}</p>
           )}
 
+          <button
+            type="button"
+            className="forgot-password"
+            onClick={() => navigate("/forgot-password")}
+          >
+            Forgot Password?
+          </button>
+
           <button type="submit" disabled={isLoading}>
             {isLoading ? "Signing in..." : "Login"}
           </button>
-
         </form>
       </div>
     </div>

@@ -130,3 +130,21 @@
   opacity: 0.7;
   cursor: not-allowed;
 }
+
+.forgot-password {
+  display: block;
+  width: 100%;
+  margin: 8px 0 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  text-align: right;
+  cursor: pointer;
+}
+
+.forgot-password:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
