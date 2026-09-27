@@ -36,8 +36,7 @@ function ForgotPasswordPage() {
             <h1>Forgot Password</h1>
 
             <p className="forgot-password-description">
-              Enter your registered email address and we will send you a
-              password reset link.
+              Enter your registered email address.
             </p>
 
             <form onSubmit={handleSubmit}>
@@ -76,8 +75,7 @@ function ForgotPasswordPage() {
             <h1>Check Your Email</h1>
 
             <p className="forgot-password-description">
-              If an account exists with this email address, a password reset
-              link has been sent.
+              If the email is registered, a reset link has been sent.
             </p>
 
             <button type="button" onClick={() => navigate("/login")}>
