@@ -13,7 +13,7 @@ import TestDetailsPage from "../pages/student/TestDetailsPage";
 import TestAttemptPage from "../pages/student/TestAttemptPage";
 import ResultsPage from "../pages/student/ResultsPage";
 import RankingPage from "../pages/student/RankingPage";
-// import NotificationsPage from "../pages/student/NotificationsPage";
+import NotificationsPage from "../pages/student/NotificationsPage";
 import ProfilePage from "../pages/student/ProfilePage";
 import PerformancePage from "../pages/student/PerformancePage";
 
@@ -31,7 +31,7 @@ function AppRoutes() {
           <Route path="/tests/:testId" element={<TestDetailsPage />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/ranking" element={<RankingPage />} />
-          {/* <Route path="/notifications" element={<NotificationsPage />} /> */}
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route
             path="/tests/:testId/performance"
