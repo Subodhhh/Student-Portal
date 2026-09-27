@@ -19,7 +19,7 @@ import PerformancePage from "../pages/student/PerformancePage";
 
 function AppRoutes() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/Student-Portal">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
