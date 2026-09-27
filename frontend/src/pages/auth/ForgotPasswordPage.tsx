@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import "../../App.css";
 
 function ForgotPasswordPage() {
-  const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
@@ -61,13 +60,9 @@ function ForgotPasswordPage() {
                 {isLoading ? "Sending..." : "Send Reset Link"}
               </button>
 
-              <button
-                type="button"
-                className="back-to-login"
-                onClick={() => navigate("/login")}
-              >
+              <Link to="/login" className="back-to-login-link">
                 Back to Login
-              </button>
+              </Link>
             </form>
           </>
         ) : (
@@ -75,12 +70,12 @@ function ForgotPasswordPage() {
             <h1>Check Your Email</h1>
 
             <p className="forgot-password-description">
-              If the email is registered, a reset link has been sent.
+              A reset link has been sent.
             </p>
 
-            <button type="button" onClick={() => navigate("/login")}>
+            <Link to="/login" className="back-to-login-link">
               Back to Login
-            </button>
+            </Link>
           </>
         )}
       </div>
