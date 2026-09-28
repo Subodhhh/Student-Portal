@@ -16,6 +16,7 @@ import RankingPage from "../pages/student/RankingPage";
 import NotificationsPage from "../pages/student/NotificationsPage";
 import ProfilePage from "../pages/student/ProfilePage";
 import PerformancePage from "../pages/student/PerformancePage";
+import ResetPasswordPage from "../pages/auth/ResetPasswordPage";
 
 function AppRoutes() {
   return (
@@ -23,6 +24,7 @@ function AppRoutes() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         <Route element={<StudentLayout />}> 
           <Route path="/dashboard" element={<DashboardPage />} />
