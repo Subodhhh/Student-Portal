@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import "../../App.css";
 import { resetStudentPassword } from "../../services/authService";
 
 export default function ResetPasswordPage() {
@@ -15,6 +16,7 @@ export default function ResetPasswordPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+
     setError("");
     setMessage("");
 
@@ -53,39 +55,57 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
+    <div className="login-page">
+      <div className="login-card">
         <h1>Reset Password</h1>
-        <p>Enter your new password.</p>
+
+        <p className="forgot-password-description">
+          Enter your new password.
+        </p>
 
         <form onSubmit={handleSubmit}>
+          <label htmlFor="newPassword">New Password</label>
+
           <input
+            id="newPassword"
             type="password"
-            placeholder="New password"
+            placeholder="Enter your new password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              setError("");
+            }}
             disabled={loading}
           />
 
+          <label htmlFor="confirmPassword">Confirm Password</label>
+
           <input
+            id="confirmPassword"
             type="password"
-            placeholder="Confirm password"
+            placeholder="Confirm your new password"
             value={confirmPassword}
-            onChange={(event) =>
-              setConfirmPassword(event.target.value)
-            }
+            onChange={(event) => {
+              setConfirmPassword(event.target.value);
+              setError("");
+            }}
             disabled={loading}
           />
+
+          {error && <p className="login-error">{error}</p>}
+
+          {message && (
+            <p className="login-success">{message}</p>
+          )}
 
           <button type="submit" disabled={loading}>
             {loading ? "Resetting..." : "Reset Password"}
           </button>
+
+          <Link to="/login" className="back-to-login-link">
+            Back to Login
+          </Link>
         </form>
-
-        {message && <p>{message}</p>}
-        {error && <p>{error}</p>}
-
-        <Link to="/login">Back to Login</Link>
       </div>
     </div>
   );

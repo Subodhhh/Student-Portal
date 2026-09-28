@@ -39,7 +39,6 @@ function DashboardPage() {
           <p>Here is your latest test activity and performance overview.</p>
         </div>
 
-        <button>View Tests</button>
       </section>
 
       <section className="dashboard-stats">

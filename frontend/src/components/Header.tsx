@@ -27,7 +27,6 @@ function Header({ onMenuClick }: HeaderProps) {
 
         <div>
           <h1>Student Portal</h1>
-          <p>Welcome back</p>
         </div>
       </div>
 

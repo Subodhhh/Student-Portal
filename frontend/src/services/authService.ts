@@ -43,3 +43,22 @@ export async function resetStudentPassword(
 
   return response.json();
 }
+
+export async function forgotStudentPassword(email: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Password reset request failed.");
+  }
+
+  return response.json();
+}

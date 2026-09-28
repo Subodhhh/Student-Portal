@@ -36,6 +36,16 @@ const tests: Test[] = [
     duration: 60,
     questions: 45,
   },
+  {
+   id: 3,
+   name: "JEE Main Full Mock Test 02",
+   provider: "ABC Coaching Institute",
+   description: "Complete JEE Main pattern mock examination.",
+   exam: "JEE Main",
+   date: "26 Sep 2026",
+   duration: 180,
+   questions: 90,
+  }
 ];
 
 function TestsPage() {

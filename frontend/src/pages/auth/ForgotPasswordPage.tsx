@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import "../../App.css";
+import { forgotStudentPassword } from "../../services/authService";
 
 function ForgotPasswordPage() {
-
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
     setEmailError("");
@@ -19,12 +19,21 @@ function ForgotPasswordPage() {
       return;
     }
 
-    setIsLoading(true);
+    try {
+      setIsLoading(true);
 
-    setTimeout(() => {
-      setIsLoading(false);
+      await forgotStudentPassword(email);
+
       setIsSubmitted(true);
-    }, 1000);
+    } catch (error) {
+      setEmailError(
+        error instanceof Error
+          ? error.message
+          : "Password reset request failed.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -50,6 +59,7 @@ function ForgotPasswordPage() {
                   setEmail(event.target.value);
                   setEmailError("");
                 }}
+                disabled={isLoading}
               />
 
               {emailError && (
