@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../App.css";
+import { loginStudent } from "../../services/authService";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -36,9 +37,16 @@ function LoginPage() {
 
     setIsLoading(true);
 
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 1000);
+    loginStudent(studentId, password)
+      .then(() => {
+        navigate("/dashboard");
+      })
+      .catch((error: Error) => {
+        setPasswordError(error.message);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   }
 
   return (
