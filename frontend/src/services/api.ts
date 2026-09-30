@@ -1,0 +1,9 @@
+const AUTH_API_URL = import.meta.env.VITE_AUTH_API_URL;
+const PROFILE_API_URL = import.meta.env.VITE_PROFILE_API_URL;
+const ENROLLMENT_API_URL = import.meta.env.VITE_ENROLLMENT_API_URL;
+
+export {
+  AUTH_API_URL,
+  PROFILE_API_URL,
+  ENROLLMENT_API_URL,
+};

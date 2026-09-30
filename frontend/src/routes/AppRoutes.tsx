@@ -17,10 +17,11 @@ import NotificationsPage from "../pages/student/NotificationsPage";
 import ProfilePage from "../pages/student/ProfilePage";
 import PerformancePage from "../pages/student/PerformancePage";
 import ResetPasswordPage from "../pages/auth/ResetPasswordPage";
+import MyInstitutesPage from "../pages/student/MyInstitutesPage";
 
 function AppRoutes() {
   return (
-    <BrowserRouter basename="/Student-Portal">
+    <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -28,6 +29,7 @@ function AppRoutes() {
 
         <Route element={<StudentLayout />}> 
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/my-institutes" element={<MyInstitutesPage />} />
           <Route path="/tests" element={<TestsPage />} />
           <Route path="/scheduled-tests" element={<ScheduledTestsPage />} />
           <Route path="/tests/:testId" element={<TestDetailsPage />} />

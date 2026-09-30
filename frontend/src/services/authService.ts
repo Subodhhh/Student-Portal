@@ -1,7 +1,7 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+import { AUTH_API_URL } from "./api";
 
 export async function loginStudent(login: string, password: string) {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await fetch(`${AUTH_API_URL}/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -25,7 +25,7 @@ export async function resetStudentPassword(
   token: string,
   newPassword: string,
 ) {
-  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+  const response = await fetch(`${AUTH_API_URL}/auth/reset-password`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -45,7 +45,7 @@ export async function resetStudentPassword(
 }
 
 export async function forgotStudentPassword(email: string) {
-  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+  const response = await fetch(`${AUTH_API_URL}/auth/forgot-password`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

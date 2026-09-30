@@ -1,0 +1,268 @@
+.my-institutes-page {
+  width: 100%;
+}
+
+.my-institutes-header {
+  margin-bottom: 24px;
+}
+
+.my-institutes-header h1 {
+  margin: 0 0 6px;
+  color: #0f172a;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.my-institutes-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Institute cards */
+
+.institute-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
+}
+
+.institute-card {
+  position: relative;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.institute-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #2563eb;
+}
+
+.institute-card:hover {
+  transform: translateY(-2px);
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+/* Card header */
+
+.institute-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.institute-card-header h2 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* Status */
+
+.institute-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.institute-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.institute-status.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.institute-status.active::before {
+  background: #16a34a;
+}
+
+.institute-status.inactive {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.institute-status.inactive::before {
+  background: #64748b;
+}
+
+.institute-status.suspended {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.institute-status.suspended::before {
+  background: #dc2626;
+}
+
+/* Enrollment information */
+
+.institute-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.institute-detail {
+  padding: 13px 14px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+}
+
+.institute-detail span {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.institute-detail strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Batches */
+
+.batch-section {
+  padding-top: 18px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.batch-section h3 {
+  margin: 0 0 12px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.batch-list li {
+  position: relative;
+  padding: 11px 12px 11px 30px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.batch-list li::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+  transform: translateY(-50%);
+}
+
+.no-batches {
+  margin: 0;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 9px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Empty state */
+
+.my-institutes-page .empty-state {
+  padding: 48px 24px;
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  text-align: center;
+}
+
+.my-institutes-page .empty-state h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.my-institutes-page .empty-state p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Mobile */
+
+@media (max-width: 700px) {
+  .my-institutes-header {
+    margin-bottom: 20px;
+  }
+
+  .my-institutes-header h1 {
+    font-size: 24px;
+  }
+
+  .institute-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .institute-card {
+    padding: 18px;
+  }
+
+  .institute-details {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .my-institutes-header h1 {
+    font-size: 22px;
+  }
+
+  .institute-card-header h2 {
+    font-size: 18px;
+  }
+}

@@ -1,0 +1,66 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: student-auth-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - student-portal-network
+
+  student-authentication-service:
+    image: student-authentication-service:latest
+    container_name: student-authentication-service
+    env_file:
+      - ./backend/student-authentication-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8002:8000"
+    depends_on:
+      - redis
+    networks:
+      - student-portal-network
+
+  student-profile-service:
+    image: student-profile-service:latest
+    container_name: student-profile-service
+    env_file:
+      - ./backend/student-profile-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8003:8001"
+    depends_on:
+      - redis
+    networks:
+      - student-portal-network
+
+  student-enrollment-service:
+    image: student-enrollment-service:latest
+    container_name: student-enrollment-service
+    env_file:
+      - ./backend/student-enrollment-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8004:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+    networks:
+      - student-portal-network    
+
+  student-portal-frontend:
+    image: student-portal-frontend:latest
+    container_name: student-portal-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - student-authentication-service
+      - student-profile-service
+    networks:
+      - student-portal-network
+
+networks:
+  student-portal-network:
+    driver: bridge

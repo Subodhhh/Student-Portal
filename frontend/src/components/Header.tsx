@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { PROFILE_API_URL } from "../services/api";
 
 type HeaderProps = {
   onMenuClick?: () => void;
@@ -8,9 +9,41 @@ type HeaderProps = {
 function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [studentName, setStudentName] = useState(
+    () => sessionStorage.getItem("student_name") || "Student"
+  );
 
   const unreadNotifications = 3;
-  const studentName = "Student";
+
+  useEffect(() => {
+    const fetchStudentProfile = async () => {
+      try {
+        const response = await fetch(`${PROFILE_API_URL}/profile`, {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const student = await response.json();
+
+        const fullName = [student.first_name, student.last_name]
+          .filter(Boolean)
+          .join(" ");
+
+        if (fullName) {
+          setStudentName(fullName);
+          sessionStorage.setItem("student_name", fullName);
+        }
+      } catch (error) {
+        console.error("Failed to fetch student profile:", error);
+      }
+    };
+
+    fetchStudentProfile();
+  }, []);
+
   const studentInitial = studentName.charAt(0).toUpperCase();
 
   return (

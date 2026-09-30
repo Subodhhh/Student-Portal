@@ -1,27 +1,22 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, Numeric, String
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy import DateTime, Enum, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
 
-class Student(Base):
-    __tablename__ = "students"
+class Provider(Base):
+    __tablename__ = "providers"
 
-    student_id: Mapped[str] = mapped_column(
-        String(20),
+    provider_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
         primary_key=True,
     )
 
-    first_name: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-    )
-
-    last_name: Mapped[str] = mapped_column(
+    name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
     )
@@ -37,13 +32,13 @@ class Student(Base):
         nullable=True,
     )
 
-    password_hash: Mapped[str | None] = mapped_column(
-        String(255),
+    address: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
     )
 
     status: Mapped[str] = mapped_column(
-        Enum("ACTIVE", name="student_status"),
+        Enum("ACTIVE", "INACTIVE", name="provider_status"),
         nullable=False,
         default="ACTIVE",
     )

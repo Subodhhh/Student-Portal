@@ -1,136 +1,78 @@
-import StatCard from "../../components/StatCard";
+import { useEffect, useState } from "react";
+import { PROFILE_API_URL } from "../../services/api";
 import "../../styles/dashboard.css";
 
-const upcomingTests = [
-  {
-    name: "NEET Full Mock Test 01",
-    date: "25 Sep 2026",
-    time: "10:00 AM",
-    duration: "180 min",
-  },
-  {
-    name: "Physics Chapter Test",
-    date: "27 Sep 2026",
-    time: "02:00 PM",
-    duration: "60 min",
-  },
-];
-
-const recentResults = [
-  {
-    name: "NEET Mock Test 01",
-    score: "645 / 720",
-    percentage: "89.58%",
-  },
-  {
-    name: "Physics Test 05",
-    score: "82 / 100",
-    percentage: "82%",
-  },
-];
-
 function DashboardPage() {
+  const [studentName, setStudentName] = useState("Student");
+
+  useEffect(() => {
+    const fetchStudentProfile = async () => {
+      try {
+        const response = await fetch(`${PROFILE_API_URL}/profile`, {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const student = await response.json();
+
+        const fullName = [student.first_name, student.last_name]
+          .filter(Boolean)
+          .join(" ");
+
+        if (fullName) {
+          setStudentName(fullName);
+        }
+      } catch (error) {
+        console.error("Failed to fetch student profile:", error);
+      }
+    };
+
+    fetchStudentProfile();
+  }, []);
+
   return (
     <div className="dashboard-page">
       <section className="dashboard-welcome">
         <div>
-          <span className="dashboard-label">STUDENT DASHBOARD</span>
-          <h2>Welcome back, Student</h2>
-          <p>Here is your latest test activity and performance overview.</p>
+          <h2>Welcome back, {studentName}</h2>
+          <p>
+            Here is your latest test activity and performance overview.
+          </p>
         </div>
-
       </section>
 
-      <section className="dashboard-stats">
-        <StatCard
-          label="Total Tests"
-          value={24}
-          description="Tests completed"
-        />
-
-        <StatCard
-          label="Average Score"
-          value="84.6%"
-          description="Across completed tests"
-        />
-
-        <StatCard
-          label="Upcoming"
-          value={2}
-          description="Scheduled tests"
-        />
-
-        <StatCard
-          label="Current Rank"
-          value="#18"
-          description="Latest available ranking"
-        />
-      </section>
-
-      <section className="dashboard-grid">
-        <div className="dashboard-panel">
-          <div className="dashboard-panel-header">
+      <div className="dashboard-section-grid">
+        <section className="dashboard-section">
+          <div className="section-header">
             <div>
               <h3>Upcoming Tests</h3>
-              <p>Your next scheduled tests</p>
+              <p>You don't have any scheduled tests right now.</p>
             </div>
-
-            <button>View all</button>
           </div>
 
-          <div className="dashboard-list">
-            {upcomingTests.map((test) => (
-              <div className="dashboard-list-item" key={test.name}>
-                <div>
-                  <strong>{test.name}</strong>
-                  <p>
-                    {test.date} · {test.time}
-                  </p>
-                </div>
-
-                <span>{test.duration}</span>
-              </div>
-            ))}
+          <div className="section-empty">
+            <div className="section-empty-icon">✓</div>
+            <p>No upcoming tests available.</p>
           </div>
-        </div>
+        </section>
 
-        <div className="dashboard-panel">
-          <div className="dashboard-panel-header">
+        <section className="dashboard-section">
+          <div className="section-header">
             <div>
               <h3>Recent Results</h3>
-              <p>Your latest completed tests</p>
+              <p>Your completed test results will appear here.</p>
             </div>
-
-            <button>View all</button>
           </div>
 
-          <div className="dashboard-list">
-            {recentResults.map((result) => (
-              <div className="dashboard-list-item" key={result.name}>
-                <div>
-                  <strong>{result.name}</strong>
-                  <p>{result.score}</p>
-                </div>
-
-                <span className="result-percentage">
-                  {result.percentage}
-                </span>
-              </div>
-            ))}
+          <div className="section-empty">
+            <div className="section-empty-icon">—</div>
+            <p>No test results available.</p>
           </div>
-        </div>
-      </section>
-
-      <section className="dashboard-performance">
-        <span className="dashboard-label">PERFORMANCE</span>
-        <h3>Keep improving your consistency</h3>
-        <p>
-          Your current average score is 84.6%. Continue taking scheduled tests
-          to build your performance history.
-        </p>
-
-        <button>View Performance</button>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

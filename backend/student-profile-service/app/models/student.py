@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, Numeric, String
+from sqlalchemy import Date, DateTime, Enum, Numeric, String
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,11 @@ class Student(Base):
     last_name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
+    )
+
+    date_of_birth: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
     )
 
     email: Mapped[str] = mapped_column(
@@ -101,12 +106,9 @@ class Student(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
     )

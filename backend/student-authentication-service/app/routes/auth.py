@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
@@ -80,21 +79,15 @@ def login(
         )
 
     login_value = login_data.login.strip()
-    student = None
 
-    try:
-        student_id = UUID(login_value)
-        student = (
-            db.query(Student)
-            .filter(Student.student_id == student_id)
-            .first()
+    student = (
+        db.query(Student)
+        .filter(
+            (Student.student_id == login_value)
+            | (Student.email == login_value)
         )
-    except ValueError:
-        student = (
-            db.query(Student)
-            .filter(Student.email == login_value)
-            .first()
-        )
+        .first()
+    )
 
     if not student or not student.password_hash:
         raise HTTPException(

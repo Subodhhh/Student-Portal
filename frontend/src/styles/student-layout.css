@@ -1,7 +1,14 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
 .student-layout {
   min-height: 100vh;
   display: flex;
-  background: #f8fafc;
+  background: #f5f7fb;
   color: #0f172a;
 }
 
@@ -9,13 +16,21 @@
    SIDEBAR
    ========================= */
 
+.desktop-sidebar-container {
+  flex-shrink: 0;
+  align-self: stretch;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+}
+
 .student-sidebar {
   position: relative;
   z-index: 30;
   flex-shrink: 0;
-  min-height: 100vh;
+  width: 250px;
+  min-height: 100%;
+  box-sizing: border-box;
   background: #ffffff;
-  border-right: 1px solid #e2e8f0;
   padding: 20px 12px;
   transition: width 0.2s ease;
 }
@@ -95,6 +110,9 @@
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .student-nav a:hover {
@@ -136,7 +154,10 @@
 
 .student-main {
   min-width: 0;
+  min-height: 100vh;
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 /* =========================
@@ -145,6 +166,7 @@
 
 .student-header {
   min-height: 76px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -191,6 +213,9 @@
   background: #ffffff;
   color: #475569;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .notification-button:hover {
@@ -324,66 +349,14 @@
    ========================= */
 
 .student-content {
+  flex: 1;
   padding: 28px;
+  box-sizing: border-box;
 }
 
 /* =========================
-   TABLET
+   MOBILE HEADER
    ========================= */
-
-@media (max-width: 768px) {
-  .student-sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 250px;
-    height: 100vh;
-    min-height: 100vh;
-    transform: translateX(-100%);
-    transition: transform 0.2s ease;
-  }
-
-  .sidebar-expanded,
-  .sidebar-collapsed {
-    width: 250px;
-  }
-
-  .student-header {
-    padding: 14px 18px;
-  }
-
-  .student-content {
-    padding: 18px;
-  }
-}
-
-/* =========================
-   MOBILE
-   ========================= */
-
-@media (max-width: 600px) {
-  .student-header {
-    min-height: 64px;
-  }
-
-  .student-content {
-    padding: 16px;
-  }
-
-  .student-header-actions {
-    gap: 8px;
-  }
-
-  .notification-button,
-  .student-avatar {
-    width: 36px;
-    height: 36px;
-  }
-
-  .student-profile-dropdown {
-    right: -4px;
-  }
-}
 
 .student-header-left {
   display: flex;
@@ -414,17 +387,37 @@
   display: none;
 }
 
-.desktop-sidebar-container {
-  display: block;
-}
-
 @media (max-width: 768px) {
+  .desktop-sidebar-container {
+    display: none;
+  }
+
   .mobile-menu-button {
     display: flex;
   }
 
-  .desktop-sidebar-container {
-    display: none;
+  .student-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 250px;
+    height: 100vh;
+    min-height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar-expanded,
+  .sidebar-collapsed {
+    width: 250px;
+  }
+
+  .student-header {
+    padding: 14px 18px;
+  }
+
+  .student-content {
+    padding: 18px;
   }
 
   .mobile-sidebar-container {
@@ -448,12 +441,10 @@
     height: 100%;
     min-height: 100%;
     box-sizing: border-box;
+    transform: none;
   }
 
-  .mobile-sidebar-container .sidebar-collapsed {
-    width: 250px;
-  }
-
+  .mobile-sidebar-container .sidebar-collapsed,
   .mobile-sidebar-container .sidebar-expanded {
     width: 250px;
   }
@@ -482,5 +473,29 @@
     z-index: 90;
     display: block;
     background: rgba(15, 23, 42, 0.25);
+  }
+}
+
+@media (max-width: 600px) {
+  .student-header {
+    min-height: 64px;
+  }
+
+  .student-content {
+    padding: 16px;
+  }
+
+  .student-header-actions {
+    gap: 8px;
+  }
+
+  .notification-button,
+  .student-avatar {
+    width: 36px;
+    height: 36px;
+  }
+
+  .student-profile-dropdown {
+    right: -4px;
   }
 }
