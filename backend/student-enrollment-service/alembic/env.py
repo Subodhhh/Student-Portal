@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from app.config import settings
 from app.database import Base
 from app.models.batch import Batch  # noqa: F401
+from app.models.branch import Branch  # noqa: F401
 from app.models.enrollment import Enrollment  # noqa: F401
 from app.models.enrollment_batch import EnrollmentBatch  # noqa: F401
 from app.models.provider import Provider  # noqa: F401

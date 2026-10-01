@@ -19,6 +19,11 @@ class Enrollment(Base):
         nullable=False,
     )
 
+    branch_id: Mapped[str] = mapped_column(
+        ForeignKey("branches.branch_id"),
+        nullable=False,
+    )
+
     student_id: Mapped[str] = mapped_column(
         ForeignKey("students.student_id"),
         nullable=False,

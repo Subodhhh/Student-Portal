@@ -14,13 +14,24 @@ def get_my_enrollments(
 
     enrollments = {}
 
-    for enrollment, provider, batch in rows:
+    for enrollment, provider, branch, batch in rows:
         if enrollment.enrollment_id not in enrollments:
             enrollments[enrollment.enrollment_id] = {
                 "enrollment_id": enrollment.enrollment_id,
                 "provider": {
                     "provider_id": str(provider.provider_id),
                     "name": provider.name,
+                    "email": provider.email,
+                    "phone": provider.phone,
+                    "address": provider.address,
+                },
+                "branch": {
+                    "branch_id": str(branch.branch_id),
+                    "name": branch.name,
+                    "city": branch.city,
+                    "state": branch.state,
+                    "address": branch.address,
+                    "pincode": branch.pincode,
                 },
                 "status": enrollment.status,
                 "enrolled_at": enrollment.enrolled_at.date(),
@@ -32,6 +43,8 @@ def get_my_enrollments(
                 {
                     "batch_id": str(batch.batch_id),
                     "name": batch.name,
+                    "start_date": batch.start_date,
+                    "end_date": batch.end_date,
                 }
             )
 

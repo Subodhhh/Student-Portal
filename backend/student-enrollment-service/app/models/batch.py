@@ -14,8 +14,8 @@ class Batch(Base):
         primary_key=True,
     )
 
-    provider_id: Mapped[UUID] = mapped_column(
-        ForeignKey("providers.provider_id"),
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.branch_id"),
         nullable=False,
     )
 

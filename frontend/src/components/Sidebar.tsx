@@ -69,7 +69,7 @@ function Sidebar({ onNavigate }: SidebarProps) {
               <path d="M15 10h.01" />
             </svg>
           </span>
-          {isExpanded && <span>My Institutes</span>}
+          {isExpanded && <span>My Enrollments</span>}
         </NavLink>
 
         <NavLink to="/tests" onClick={onNavigate}>
