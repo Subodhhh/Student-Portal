@@ -45,3 +45,7 @@ ENV/
 
 # OS files
 Thumbs.db
+
+# Local authentication/session cookies
+cookies.txt
+**/cookies.txt
