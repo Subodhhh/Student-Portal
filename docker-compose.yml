@@ -48,6 +48,38 @@ services:
       - redis
       - student-authentication-service
     networks:
+      - student-portal-network   
+
+  student-test-service:
+    image: student-test-service:latest
+    container_name: student-test-service
+    env_file:
+      - ./backend/student-test-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8005:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+      - student-enrollment-service
+    networks:
+      - student-portal-network
+
+  student-attempt-service:
+    image: student-attempt-service:latest
+    container_name: student-attempt-service
+    env_file:
+      - ./backend/student-attempt-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8006:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+      - student-test-service
+    networks:
       - student-portal-network    
 
   student-portal-frontend:

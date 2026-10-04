@@ -1,59 +1,138 @@
 import { useEffect, useMemo, useState } from "react";
 import "../../styles/tests.css";
 import { getTestAttempt } from "../../utils/testAttemptStorage";
+import {
+  ENROLLMENT_API_URL,
+  TEST_API_URL,
+} from "../../services/api";
 
-type Test = {
-  id: number;
-  name: string;
-  provider: string;
-  exam: string;
-  description: string;
-  date: string;
-  duration: number;
-  questions: number;
+type Enrollment = {
+  enrollment_id: string;
+  provider: {
+    provider_id: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
+  branch: {
+    branch_id: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+    address: string | null;
+    pincode: string | null;
+  };
+  status: string;
+  enrolled_at: string;
+  batches: {
+    batch_id: string;
+    name: string;
+    start_date: string;
+    end_date: string;
+  }[];
 };
 
-const tests: Test[] = [
-  {
-    id: 1,
-    name: "NEET Full Mock Test 01",
-    provider: "ABC Coaching Institute",
-    exam: "NEET",
-    description:
-      "Complete NEET pattern mock examination.",
-    date: "25 Sep 2026",
-    duration: 180,
-    questions: 180,
-  },
-  {
-    id: 2,
-    name: "Physics Chapter Test",
-    provider: "ABC Coaching Institute",
-    exam: "Physics",
-    description:
-      "Practice test covering mechanics and motion.",
-    date: "24 Sep 2026",
-    duration: 60,
-    questions: 45,
-  },
-  {
-   id: 3,
-   name: "JEE Main Full Mock Test 02",
-   provider: "ABC Coaching Institute",
-   description: "Complete JEE Main pattern mock examination.",
-   exam: "JEE Main",
-   date: "26 Sep 2026",
-   duration: 180,
-   questions: 90,
+type Test = {
+  test_id: string;
+  name: string;
+  provider: {
+    provider_id: string;
+    name: string;
+  };
+  branch: {
+    branch_id: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+  };
+  description: string | null;
+  duration_minutes: number;
+  total_questions: number;
+  total_marks: number;
+  start_at: string | null;
+  end_at: string | null;
+  status: string;
+};
+
+function formatDate(date: string | null) {
+  if (!date) {
+    return "Date not specified";
   }
-];
+
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 function TestsPage() {
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [tests, setTests] = useState<Test[]>([]);
   const [search, setSearch] = useState("");
   const [selectedProvider, setSelectedProvider] =
     useState("All Providers");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [, setAttemptRefresh] = useState(0);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [
+          enrollmentsResponse,
+          testsResponse,
+        ] = await Promise.all([
+          fetch(
+            `${ENROLLMENT_API_URL}/enrollments`,
+            {
+              credentials: "include",
+            }
+          ),
+          fetch(`${TEST_API_URL}/tests`, {
+            credentials: "include",
+          }),
+        ]);
+
+        if (!enrollmentsResponse.ok) {
+          throw new Error(
+            `Failed to fetch enrollments: ${enrollmentsResponse.status}`
+          );
+        }
+
+        if (!testsResponse.ok) {
+          throw new Error(
+            `Failed to fetch tests: ${testsResponse.status}`
+          );
+        }
+
+        const enrollmentData: Enrollment[] =
+          await enrollmentsResponse.json();
+
+        const testData: Test[] =
+          await testsResponse.json();
+
+        setEnrollments(enrollmentData);
+        setTests(testData);
+      } catch (error) {
+        console.error(
+          "Failed to load tests:",
+          error
+        );
+
+        setError("Unable to load tests.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, []);
 
   useEffect(() => {
     function refreshAttempts() {
@@ -77,45 +156,46 @@ function TestsPage() {
 
   const providers = [
     "All Providers",
-    ...Array.from(
-      new Set(
-        tests.map(
-          (test) => test.provider
-        )
-      )
+    ...enrollments.map(
+      (enrollment) =>
+        enrollment.provider.name
     ),
   ];
 
   const filteredTests = useMemo(() => {
+    const searchText =
+      search.trim().toLowerCase();
+
     return tests.filter((test) => {
       const matchesProvider =
-        selectedProvider ===
-          "All Providers" ||
-        test.provider ===
+        selectedProvider === "All Providers" ||
+        test.provider.name ===
           selectedProvider;
 
-      const searchText =
-        search.toLowerCase();
+      const searchableText = [
+        test.name,
+        test.provider.name,
+        test.branch.name,
+        test.description ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
 
       const matchesSearch =
-        test.name
-          .toLowerCase()
-          .includes(searchText) ||
-        test.provider
-          .toLowerCase()
-          .includes(searchText) ||
-        test.exam
-          .toLowerCase()
-          .includes(searchText);
+        searchableText.includes(searchText);
 
       return (
         matchesProvider &&
         matchesSearch
       );
     });
-  }, [search, selectedProvider]);
+  }, [
+    tests,
+    search,
+    selectedProvider,
+  ]);
 
-  function openTest(testId: number) {
+  function openTest(testId: string) {
     window.open(
       `/tests/${testId}/attempt`,
       "_blank"
@@ -132,14 +212,6 @@ function TestsPage() {
             Tests currently available for
             you to take.
           </p>
-        </div>
-
-        <div className="tests-provider-count">
-          <span>
-            {providers.length - 1}
-          </span>
-
-          <small>Providers</small>
         </div>
       </div>
 
@@ -196,12 +268,27 @@ function TestsPage() {
         </div>
       </div>
 
-      {filteredTests.length > 0 ? (
+      {loading ? (
+        <div className="tests-empty">
+          <h3>Loading tests...</h3>
+
+          <p>
+            Please wait while we load your
+            available tests.
+          </p>
+        </div>
+      ) : error ? (
+        <div className="tests-empty">
+          <h3>Unable to load tests</h3>
+
+          <p>{error}</p>
+        </div>
+      ) : filteredTests.length > 0 ? (
         <div className="tests-list">
           {filteredTests.map((test) => {
             const attempt =
               getTestAttempt(
-                String(test.id)
+                test.test_id
               );
 
             const isResume =
@@ -217,7 +304,7 @@ function TestsPage() {
             return (
               <article
                 className="test-card"
-                key={test.id}
+                key={test.test_id}
               >
                 <div className="test-card-main">
                   <div className="test-card-title-row">
@@ -253,31 +340,38 @@ function TestsPage() {
                     </svg>
 
                     <span>
-                      {test.provider}
+                      {test.provider.name}
                     </span>
                   </div>
 
                   <p className="test-description">
-                    {test.description}
+                    {test.description ??
+                      "No description available."}
                   </p>
 
                   <div className="test-meta">
                     <span>
                       <strong>
-                        {test.exam}
+                        {test.branch.name}
                       </strong>
                     </span>
 
                     <span>
-                      {test.date}
+                      {formatDate(
+                        test.start_at
+                      )}
                     </span>
 
                     <span>
-                      {test.duration} min
+                      {test.duration_minutes} min
                     </span>
 
                     <span>
-                      {test.questions} Questions
+                      {test.total_questions} Questions
+                    </span>
+
+                    <span>
+                      {test.total_marks} Marks
                     </span>
                   </div>
                 </div>
@@ -300,7 +394,9 @@ function TestsPage() {
                           : ""
                       }
                       onClick={() =>
-                        openTest(test.id)
+                        openTest(
+                          test.test_id
+                        )
                       }
                     >
                       {isResume

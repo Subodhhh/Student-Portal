@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  getTestAttempt,
-  startTestAttempt,
-  updateTestAttempt,
-} from "../../utils/testAttemptStorage";
+
+import { ATTEMPT_API_URL, TEST_API_URL } from "../../services/api";
 import "../../styles/test-attempt.css";
 
 type Section = "Physics" | "Chemistry" | "Biology";
@@ -15,204 +12,111 @@ type QuestionStatus =
   | "answered"
   | "review";
 
+type ApiQuestion = {
+  question_id: string;
+  question_order: number;
+  question_text: string;
+  question_type: string;
+  option_a: string | null;
+  option_b: string | null;
+  option_c: string | null;
+  option_d: string | null;
+  marks: number;
+  negative_marks: number;
+  image_reference: string | null;
+};
+
+type TestResponse = {
+  test_id: string;
+  provider: {
+    provider_id: string;
+    name: string;
+  };
+  branch: {
+    branch_id: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+  };
+  name: string;
+  description: string | null;
+  duration_minutes: number;
+  total_questions: number;
+  total_marks: number;
+  start_at: string | null;
+  end_at: string | null;
+  status: string;
+  questions: ApiQuestion[];
+};
+
+type AttemptResponse = {
+  attempt_id: string;
+  test_id: string;
+  started_at: string;
+  expires_at: string;
+  status: "IN_PROGRESS" | "SUBMITTED" | "AUTO_SUBMITTED";
+};
+
+type AttemptAnswerResponse = {
+  answer_id: string;
+  attempt_id: string;
+  question_id: string;
+  selected_answer: string | null;
+  answered_at: string;
+  updated_at: string;
+};
+
 type Question = {
-  id: number;
+  id: string;
   section: Section;
   question: string;
   options: string[];
   answer: string | null;
   status: QuestionStatus;
+  imageReference: string | null;
 };
 
-const initialQuestions: Question[] = [
-  {
-    id: 1,
-    section: "Physics",
-    question:
-      "A body is moving with a uniform velocity. What can be said about its acceleration?",
-    options: [
-      "Zero",
-      "Constant but non-zero",
-      "Increasing",
-      "Decreasing",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 2,
-    section: "Physics",
-    question: "The SI unit of force is:",
-    options: [
-      "Joule",
-      "Newton",
-      "Watt",
-      "Pascal",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 3,
-    section: "Physics",
-    question:
-      "Which quantity has both magnitude and direction?",
-    options: [
-      "Speed",
-      "Distance",
-      "Mass",
-      "Velocity",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 4,
-    section: "Physics",
-    question:
-      "The acceleration due to gravity near the surface of Earth is approximately:",
-    options: [
-      "5.8 m/s²",
-      "7.8 m/s²",
-      "9.8 m/s²",
-      "12.8 m/s²",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 5,
-    section: "Chemistry",
-    question:
-      "The atomic number of carbon is:",
-    options: ["4", "6", "8", "12"],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 6,
-    section: "Chemistry",
-    question:
-      "The pH of a neutral solution at 25°C is:",
-    options: ["0", "5", "7", "14"],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 7,
-    section: "Chemistry",
-    question:
-      "Which of the following is a noble gas?",
-    options: [
-      "Oxygen",
-      "Nitrogen",
-      "Chlorine",
-      "Neon",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 8,
-    section: "Chemistry",
-    question:
-      "Water is chemically represented as:",
-    options: ["CO₂", "H₂O", "O₂", "H₂"],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 9,
-    section: "Biology",
-    question:
-      "The basic structural and functional unit of life is:",
-    options: [
-      "Tissue",
-      "Organ",
-      "Cell",
-      "Nucleus",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 10,
-    section: "Biology",
-    question:
-      "Which organelle is known as the powerhouse of the cell?",
-    options: [
-      "Ribosome",
-      "Mitochondria",
-      "Nucleus",
-      "Golgi apparatus",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 11,
-    section: "Biology",
-    question:
-      "Which blood cells are primarily responsible for immunity?",
-    options: [
-      "Red blood cells",
-      "White blood cells",
-      "Platelets",
-      "Plasma",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-  {
-    id: 12,
-    section: "Biology",
-    question:
-      "Photosynthesis mainly takes place in the:",
-    options: [
-      "Mitochondria",
-      "Nucleus",
-      "Chloroplast",
-      "Ribosome",
-    ],
-    answer: null,
-    status: "not-visited",
-  },
-];
-
-const sections: Array<
-  "All Sections" | Section
-> = [
+const sections: Array<"All Sections" | Section> = [
   "All Sections",
   "Physics",
   "Chemistry",
   "Biology",
 ];
 
+function getSection(questionOrder: number): Section {
+  if (questionOrder <= 45) {
+    return "Physics";
+  }
+
+  if (questionOrder <= 90) {
+    return "Chemistry";
+  }
+
+  return "Biology";
+}
+
 function TestAttemptPage() {
   const navigate = useNavigate();
   const { testId } = useParams();
 
-  const currentTestId = testId ?? "1";
+  const currentTestId = testId ?? "";
 
-  const [questions, setQuestions] =
-    useState<Question[]>(initialQuestions);
-
+  const [test, setTest] = useState<TestResponse | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedSection, setSelectedSection] =
-    useState<"All Sections" | Section>(
-      "All Sections"
-    );
+    useState<"All Sections" | Section>("All Sections");
 
-  const [currentQuestionId, setCurrentQuestionId] =
-    useState(1);
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
+    null
+  );
 
-  const [remainingSeconds, setRemainingSeconds] =
-    useState(0);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [attemptExpiresAt, setAttemptExpiresAt] = useState<number | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
 
-  const [attemptExpiresAt, setAttemptExpiresAt] =
-    useState<number | null>(null);
-
-  const [submitted, setSubmitted] =
-    useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const visibleQuestions = useMemo(() => {
     if (selectedSection === "All Sections") {
@@ -220,78 +124,182 @@ function TestAttemptPage() {
     }
 
     return questions.filter(
-      (question) =>
-        question.section === selectedSection
+      (question) => question.section === selectedSection
     );
   }, [questions, selectedSection]);
 
   const currentQuestion = questions.find(
-    (question) =>
-      question.id === currentQuestionId
+    (question) => question.id === currentQuestionId
   );
 
-  const currentVisibleIndex =
-    visibleQuestions.findIndex(
-      (question) =>
-        question.id === currentQuestionId
-    );
+  const currentVisibleIndex = visibleQuestions.findIndex(
+    (question) => question.id === currentQuestionId
+  );
 
   /*
-   * Load the existing attempt.
-   *
-   * If no attempt exists, create one.
-   *
-   * If the attempt was already submitted,
-   * show the submitted screen instead.
+   * Load test/questions from M4 and create/resume the real M5 attempt.
    */
   useEffect(() => {
-    const existingAttempt =
-      getTestAttempt(currentTestId);
+    async function loadTestAndAttempt() {
+      if (!currentTestId) {
+        setError("Invalid test.");
+        setLoading(false);
+        return;
+      }
 
-    if (
-      existingAttempt?.status === "SUBMITTED" ||
-      existingAttempt?.status === "AUTO_SUBMITTED"
-    ) {
-      setSubmitted(true);
-      return;
+      try {
+        setLoading(true);
+        setError("");
+
+        const testResponse = await fetch(
+          `${TEST_API_URL}/tests/${currentTestId}/start`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!testResponse.ok) {
+          throw new Error(`Failed to load test: ${testResponse.status}`);
+        }
+
+        const testData: TestResponse = await testResponse.json();
+
+        setTest(testData);
+
+        const mappedQuestions: Question[] = testData.questions.map(
+          (question) => {
+            const options = [
+              question.option_a,
+              question.option_b,
+              question.option_c,
+              question.option_d,
+            ].filter((option): option is string => Boolean(option));
+
+            return {
+              id: question.question_id,
+              section: getSection(question.question_order),
+              question: question.question_text,
+              options,
+              answer: null,
+              status: "not-visited",
+              imageReference: question.image_reference,
+            };
+          }
+        );
+
+        setQuestions(mappedQuestions);
+
+        if (mappedQuestions.length > 0) {
+          setCurrentQuestionId(mappedQuestions[0].id);
+        }
+
+        /*
+         * Start or resume the real backend attempt.
+         */
+        const attemptResponse = await fetch(
+          `${ATTEMPT_API_URL}/attempts/start`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              test_id: currentTestId,
+            }),
+          }
+        );
+
+        if (!attemptResponse.ok) {
+          throw new Error(
+            `Failed to start attempt: ${attemptResponse.status}`
+          );
+        }
+
+        const attemptData: AttemptResponse = await attemptResponse.json();
+
+        setAttemptId(attemptData.attempt_id);
+
+        const expiresAt = new Date(attemptData.expires_at).getTime();
+
+        setAttemptExpiresAt(expiresAt);
+
+        if (
+          attemptData.status === "SUBMITTED" ||
+          attemptData.status === "AUTO_SUBMITTED"
+        ) {
+          setSubmitted(true);
+          return;
+        }
+
+        /*
+         * Load previously saved answers from M5.
+         */
+        const answersResponse = await fetch(
+          `${ATTEMPT_API_URL}/attempts/${attemptData.attempt_id}/answers`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!answersResponse.ok) {
+          throw new Error(
+            `Failed to load saved answers: ${answersResponse.status}`
+          );
+        }
+
+        const savedAnswers: AttemptAnswerResponse[] =
+          await answersResponse.json();
+
+        setQuestions((previousQuestions) =>
+          previousQuestions.map((question) => {
+            const savedAnswer = savedAnswers.find(
+              (answer) => answer.question_id === question.id
+            );
+
+            if (!savedAnswer || !savedAnswer.selected_answer) {
+              return question;
+            }
+
+            const optionIndex =
+              savedAnswer.selected_answer.charCodeAt(0) - 65;
+
+            const selectedOption = question.options[optionIndex];
+
+            if (!selectedOption) {
+              return question;
+            }
+
+            return {
+              ...question,
+              answer: selectedOption,
+              status: "answered",
+            };
+          })
+        );
+      } catch (loadError) {
+        console.error("Failed to load test attempt:", loadError);
+        setError("Unable to load this test.");
+      } finally {
+        setLoading(false);
+      }
     }
 
-    const attempt =
-      existingAttempt ??
-      startTestAttempt(currentTestId, 180);
-
-    setAttemptExpiresAt(attempt.expiresAt);
-
-    const remaining = Math.max(
-      0,
-      Math.ceil(
-        (attempt.expiresAt - Date.now()) / 1000
-      )
-    );
-
-    setRemainingSeconds(remaining);
+    loadTestAndAttempt();
   }, [currentTestId]);
 
   /*
-   * Mark a question as visited when the student
-   * opens it for the first time.
+   * Mark the current question as visited.
    */
   useEffect(() => {
-    const currentQuestion = questions.find(
-      (question) =>
-        question.id === currentQuestionId
-    );
-
-    if (
-      !currentQuestion ||
-      currentQuestion.status !== "not-visited"
-    ) {
+    if (!currentQuestionId || submitted) {
       return;
     }
 
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
-        question.id === currentQuestionId
+        question.id === currentQuestionId &&
+        question.status === "not-visited"
           ? {
               ...question,
               status: "not-answered",
@@ -299,112 +307,112 @@ function TestAttemptPage() {
           : question
       )
     );
-  }, [currentQuestionId, questions]);
+  }, [currentQuestionId, submitted]);
 
   /*
-   * Composite test timer.
+   * Server-controlled timer.
    *
-   * The timer is calculated from expiresAt.
-   * It does NOT reset when the page reloads
-   * or the student returns to the test.
+   * The browser only displays the remaining time.
+   * The backend remains authoritative.
    */
   useEffect(() => {
-    if (
-      attemptExpiresAt === null ||
-      submitted
-    ) {
+    if (attemptExpiresAt === null || submitted) {
       return;
     }
 
     const expiresAt = attemptExpiresAt;
 
-    function updateTimer() {
+    async function updateTimer() {
       const remaining = Math.max(
         0,
-        Math.ceil(
-          (expiresAt - Date.now()) / 1000
-        )
+        Math.ceil((expiresAt - Date.now()) / 1000)
       );
 
       setRemainingSeconds(remaining);
+
+      if (remaining > 0 || !attemptId) {
+        return;
+      }
+
+      /*
+       * M5 lazily changes the attempt to AUTO_SUBMITTED
+       * when the backend sees that the expiry time has passed.
+       */
+      try {
+        const response = await fetch(
+          `${ATTEMPT_API_URL}/attempts/${attemptId}`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const attempt: AttemptResponse = await response.json();
+
+        if (attempt.status === "AUTO_SUBMITTED") {
+          setSubmitted(true);
+        }
+      } catch (timerError) {
+        console.error("Failed to verify attempt expiry:", timerError);
+      }
     }
 
     updateTimer();
 
-    const timer = window.setInterval(
-      updateTimer,
-      1000
-    );
+    const timer = window.setInterval(updateTimer, 1000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [attemptExpiresAt, submitted]);
-
-  /*
-   * Automatically submit when the composite
-   * timer reaches zero.
-   */
-  useEffect(() => {
-    if (
-      remainingSeconds > 0 ||
-      submitted ||
-      attemptExpiresAt === null
-    ) {
-      return;
-    }
-
-    updateTestAttempt(currentTestId, {
-      status: "AUTO_SUBMITTED",
-    });
-
-    setSubmitted(true);
-  }, [
-    remainingSeconds,
-    submitted,
-    attemptExpiresAt,
-    currentTestId,
-  ]);
+  }, [attemptExpiresAt, attemptId, submitted]);
 
   function formatTime(seconds: number) {
     const hours = Math.floor(seconds / 3600);
-
-    const minutes = Math.floor(
-      (seconds % 3600) / 60
-    );
-
+    const minutes = Math.floor((seconds % 3600) / 60);
     const remaining = seconds % 60;
 
     return [hours, minutes, remaining]
-      .map((value) =>
-        String(value).padStart(2, "0")
-      )
+      .map((value) => String(value).padStart(2, "0"))
       .join(":");
   }
 
-  function handleSectionChange(
-    section: "All Sections" | Section
-  ) {
+  function handleSectionChange(section: "All Sections" | Section) {
     setSelectedSection(section);
 
     const sectionQuestions =
       section === "All Sections"
         ? questions
-        : questions.filter(
-            (question) =>
-              question.section === section
-          );
+        : questions.filter((question) => question.section === section);
 
     if (sectionQuestions.length > 0) {
-      setCurrentQuestionId(
-        sectionQuestions[0].id
-      );
+      setCurrentQuestionId(sectionQuestions[0].id);
     }
   }
 
-  function handleAnswerSelect(
-    answer: string
-  ) {
+  async function handleAnswerSelect(answer: string) {
+    if (!currentQuestionId || !attemptId || submitted) {
+      return;
+    }
+
+    const currentQuestion = questions.find(
+      (question) => question.id === currentQuestionId
+    );
+
+    if (!currentQuestion) {
+      return;
+    }
+
+    const optionIndex = currentQuestion.options.indexOf(answer);
+
+    if (optionIndex === -1) {
+      return;
+    }
+
+    const selectedAnswer = String.fromCharCode(65 + optionIndex);
+
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
         question.id === currentQuestionId
@@ -416,9 +424,40 @@ function TestAttemptPage() {
           : question
       )
     );
+
+    try {
+      const response = await fetch(
+        `${ATTEMPT_API_URL}/attempts/${attemptId}/answers`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            question_id: currentQuestionId,
+            selected_answer: selectedAnswer,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          setSubmitted(true);
+        }
+
+        throw new Error(`Failed to save answer: ${response.status}`);
+      }
+    } catch (saveError) {
+      console.error("Failed to save answer:", saveError);
+    }
   }
 
-  function handleClearResponse() {
+  async function handleClearResponse() {
+    if (!currentQuestionId || !attemptId || submitted) {
+      return;
+    }
+
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
         question.id === currentQuestionId
@@ -430,9 +469,40 @@ function TestAttemptPage() {
           : question
       )
     );
+
+    try {
+      const response = await fetch(
+        `${ATTEMPT_API_URL}/attempts/${attemptId}/answers`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            question_id: currentQuestionId,
+            selected_answer: null,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          setSubmitted(true);
+        }
+
+        throw new Error(`Failed to clear answer: ${response.status}`);
+      }
+    } catch (clearError) {
+      console.error("Failed to clear answer:", clearError);
+    }
   }
 
   function handleMarkForReview() {
+    if (!currentQuestionId || submitted) {
+      return;
+    }
+
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
         question.id === currentQuestionId
@@ -449,13 +519,11 @@ function TestAttemptPage() {
 
   function moveToNextQuestion() {
     if (
-      currentVisibleIndex <
-      visibleQuestions.length - 1
+      currentVisibleIndex >= 0 &&
+      currentVisibleIndex < visibleQuestions.length - 1
     ) {
       setCurrentQuestionId(
-        visibleQuestions[
-          currentVisibleIndex + 1
-        ].id
+        visibleQuestions[currentVisibleIndex + 1].id
       );
     }
   }
@@ -463,9 +531,7 @@ function TestAttemptPage() {
   function moveToPreviousQuestion() {
     if (currentVisibleIndex > 0) {
       setCurrentQuestionId(
-        visibleQuestions[
-          currentVisibleIndex - 1
-        ].id
+        visibleQuestions[currentVisibleIndex - 1].id
       );
     }
   }
@@ -474,25 +540,83 @@ function TestAttemptPage() {
     moveToNextQuestion();
   }
 
-  function handleSubmit() {
-  const confirmed = window.confirm(
-    "Are you sure you want to submit the test?"
-  );
+  async function handleSubmit() {
+    if (!attemptId || submitted) {
+      return;
+    }
 
-  if (!confirmed) {
-    return;
+    const confirmed = window.confirm(
+      "Are you sure you want to submit the test?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${ATTEMPT_API_URL}/attempts/${attemptId}/submit`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to submit attempt: ${response.status}`);
+      }
+
+      const attempt: AttemptResponse = await response.json();
+
+      setSubmitted(true);
+
+      if (attempt.status === "AUTO_SUBMITTED") {
+        return;
+      }
+
+      /*
+       * Result/performance evaluation is not part of M5 yet.
+       * Keep the existing frontend flow for now.
+       */
+      navigate(`/tests/${currentTestId}/performance`);
+    } catch (submitError) {
+      console.error("Failed to submit test:", submitError);
+      setError("Unable to submit the test. Please try again.");
+    }
   }
 
-  updateTestAttempt(currentTestId, {
-    status: "AUTO_SUBMITTED",
-  });
+  if (loading) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>Loading Test...</h2>
+          <p>
+            Please wait while we load the test and questions.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
-  navigate(
-    `/tests/${currentTestId}/performance`
-  );  
-}
+  if (error || !test) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>Unable to Load Test</h2>
+          <p>{error || "Test not found."}</p>
 
-  if (!currentQuestion || submitted) {
+          <button
+            type="button"
+            onClick={() => navigate("/tests")}
+          >
+            Back to Tests
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (submitted) {
     return (
       <section className="test-attempt-submitted">
         <div className="test-attempt-submitted-card">
@@ -503,18 +627,36 @@ function TestAttemptPage() {
           <h2>Test Submitted</h2>
 
           <p>
-            Your test has been submitted
-            successfully. Your result will be
-            available after evaluation.
+            Your test has been submitted successfully.
+            Your result will be available after evaluation.
           </p>
 
           <button
             type="button"
-            onClick={() =>
-              navigate("/results")
-            }
+            onClick={() => navigate("/results")}
           >
             Go to Results
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!currentQuestion) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>No Questions Available</h2>
+
+          <p>
+            Questions for this test are not available yet.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => navigate("/tests")}
+          >
+            Back to Tests
           </button>
         </div>
       </section>
@@ -526,10 +668,14 @@ function TestAttemptPage() {
       <header className="test-attempt-header">
         <div className="test-attempt-header-left">
           <span className="test-attempt-provider">
-            ABC Coaching Institute
+            {test.provider.name}
           </span>
 
-          <h1>NEET Full Mock Test 01</h1>
+          <h1>{test.name}</h1>
+
+          <span>
+            {test.branch.name}
+          </span>
         </div>
 
         <div className="test-attempt-header-right">
@@ -559,9 +705,7 @@ function TestAttemptPage() {
                 ? "test-attempt-section active"
                 : "test-attempt-section"
             }
-            onClick={() =>
-              handleSectionChange(section)
-            }
+            onClick={() => handleSectionChange(section)}
           >
             {section}
           </button>
@@ -573,12 +717,12 @@ function TestAttemptPage() {
           <div className="test-attempt-question-header">
             <div>
               <span>
-                Question {currentQuestion.id} of{" "}
-                {questions.length}
+                Question {currentVisibleIndex + 1}
               </span>
 
               <strong>
-                {currentQuestion.section}
+                Question {currentVisibleIndex + 1} of{" "}
+                {visibleQuestions.length}
               </strong>
             </div>
 
@@ -591,24 +735,28 @@ function TestAttemptPage() {
           </div>
 
           <div className="test-attempt-question">
-            <h2>
-              {currentQuestion.question}
-            </h2>
+            <h2>{currentQuestion.question}</h2>
+
+            {currentQuestion.imageReference && (
+              <div className="test-attempt-question-image">
+                <img
+                  src={currentQuestion.imageReference}
+                  alt="Question diagram"
+                />
+              </div>
+            )}
 
             <div className="test-attempt-options">
               {currentQuestion.options.map(
                 (option, index) => {
                   const optionLetter =
-                    String.fromCharCode(
-                      65 + index
-                    );
+                    String.fromCharCode(65 + index);
 
                   return (
                     <label
                       key={option}
                       className={
-                        currentQuestion.answer ===
-                        option
+                        currentQuestion.answer === option
                           ? "test-attempt-option selected"
                           : "test-attempt-option"
                       }
@@ -618,13 +766,10 @@ function TestAttemptPage() {
                         name={`question-${currentQuestion.id}`}
                         value={option}
                         checked={
-                          currentQuestion.answer ===
-                          option
+                          currentQuestion.answer === option
                         }
                         onChange={() =>
-                          handleAnswerSelect(
-                            option
-                          )
+                          handleAnswerSelect(option)
                         }
                       />
 
@@ -646,9 +791,7 @@ function TestAttemptPage() {
             <button
               type="button"
               className="secondary-button"
-              onClick={
-                handleClearResponse
-              }
+              onClick={handleClearResponse}
             >
               Clear Response
             </button>
@@ -656,9 +799,7 @@ function TestAttemptPage() {
             <button
               type="button"
               className="secondary-button"
-              onClick={
-                handleMarkForReview
-              }
+              onClick={handleMarkForReview}
             >
               Mark for Review
             </button>
@@ -667,12 +808,8 @@ function TestAttemptPage() {
               <button
                 type="button"
                 className="secondary-button"
-                disabled={
-                  currentVisibleIndex === 0
-                }
-                onClick={
-                  moveToPreviousQuestion
-                }
+                disabled={currentVisibleIndex === 0}
+                onClick={moveToPreviousQuestion}
               >
                 Previous
               </button>
@@ -680,8 +817,10 @@ function TestAttemptPage() {
               <button
                 type="button"
                 className="primary-button"
-                onClick={
-                  handleSaveAndNext
+                onClick={handleSaveAndNext}
+                disabled={
+                  currentVisibleIndex ===
+                  visibleQuestions.length - 1
                 }
               >
                 Save & Next
@@ -698,7 +837,7 @@ function TestAttemptPage() {
 
             <div>
               <strong>Student</strong>
-              <span>STU001</span>
+              <span>STU000001</span>
             </div>
           </div>
 
@@ -713,23 +852,22 @@ function TestAttemptPage() {
 
             <div className="question-palette">
               {visibleQuestions.map(
-                (question) => (
+                (question, index) => (
                   <button
                     key={question.id}
                     type="button"
-                    className={`palette-question ${question.status} ${
-                      question.id ===
-                      currentQuestion.id
+                    className={`palette-question ${
+                      question.status
+                    } ${
+                      question.id === currentQuestion.id
                         ? "current"
                         : ""
                     }`}
                     onClick={() =>
-                      setCurrentQuestionId(
-                        question.id
-                      )
+                      setCurrentQuestionId(question.id)
                     }
                   >
-                    {question.id}
+                    {index + 1}
                   </button>
                 )
               )}

@@ -502,3 +502,49 @@
     font-size: 11px;
   }
 }
+
+.tests-provider-section {
+  margin-top: 24px;
+}
+
+.tests-provider-header {
+  margin-bottom: 12px;
+}
+
+.tests-provider-header h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.tests-provider-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.tests-provider-branch svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tests-provider-empty {
+  padding: 24px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.tests-provider-empty h4 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: #334155;
+}
+
+.tests-provider-empty p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
