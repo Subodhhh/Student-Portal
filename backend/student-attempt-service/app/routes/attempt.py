@@ -6,24 +6,48 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_student
 from app.database import get_db
-from app.repositories.attempt_answer_repository import get_answers_by_attempt
-from app.schemas.attempt import AttemptResponse, StartAttemptRequest
+from app.repositories.attempt_answer_repository import (
+    get_answers_by_attempt,
+)
+from app.repositories.attempt_repository import (
+    get_attempt_by_test,
+    get_completed_attempts,
+)
+from app.schemas.attempt import (
+    AttemptResponse,
+    AttemptSummaryResponse,
+    AttemptWorkspaceResponse,
+    StartAttemptRequest,
+)
 from app.schemas.attempt_answer import (
     AttemptAnswerResponse,
     SaveAnswerRequest,
 )
-from app.services.attempt_answer_service import save_answer
+from app.services.attempt_answer_service import (
+    clear_response,
+    mark_for_review,
+    save_answer,
+    visit_question,
+)
 from app.services.attempt_service import (
     get_attempt,
+    get_attempt_summary,
+    get_attempt_workspace,
     start_attempt,
     submit_attempt,
 )
 
 
-router = APIRouter(prefix="/attempts", tags=["Attempts"])
+router = APIRouter(
+    prefix="/attempts",
+    tags=["Attempts"],
+)
 
 
-@router.post("/start", response_model=AttemptResponse)
+@router.post(
+    "/start",
+    response_model=AttemptResponse,
+)
 def start_test_attempt(
     request: StartAttemptRequest,
     student_id: str = Depends(get_current_student),
@@ -97,14 +121,80 @@ def start_test_attempt(
             detail="You are not eligible to attempt this test",
         )
 
-    attempt = start_attempt(
+    return start_attempt(
         db=db,
         student_id=student_id,
         test_id=request.test_id,
         duration_minutes=test["duration_minutes"],
     )
 
+
+@router.get(
+    "/test/{test_id}",
+    response_model=AttemptResponse,
+)
+def get_test_attempt_by_test(
+    test_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    attempt = get_attempt_by_test(
+        db=db,
+        student_id=student_id,
+        test_id=test_id,
+    )
+
+    if not attempt:
+        raise HTTPException(
+            status_code=404,
+            detail="No attempt found",
+        )
+
     return attempt
+
+
+@router.get(
+    "/completed",
+    response_model=list[AttemptResponse],
+)
+def get_completed_test_attempts(
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return get_completed_attempts(
+        db=db,
+        student_id=student_id,
+    )
+
+@router.get(
+    "/{attempt_id}/summary",
+    response_model=AttemptSummaryResponse,
+)
+def get_attempt_summary_data(
+    attempt_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return get_attempt_summary(
+        db=db,
+        attempt_id=attempt_id,
+        student_id=student_id,
+    )
+
+@router.get(
+    "/{attempt_id}/workspace",
+    response_model=AttemptWorkspaceResponse,
+)
+def get_attempt_workspace_data(
+    attempt_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return get_attempt_workspace(
+        db=db,
+        attempt_id=attempt_id,
+        student_id=student_id,
+    )
 
 
 @router.get(
@@ -132,6 +222,24 @@ def get_test_attempt(
 
 
 @router.post(
+    "/{attempt_id}/questions/{question_id}/visit",
+    response_model=AttemptAnswerResponse,
+)
+def visit_test_question(
+    attempt_id: UUID,
+    question_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return visit_question(
+        db=db,
+        attempt_id=attempt_id,
+        student_id=student_id,
+        question_id=question_id,
+    )
+
+
+@router.post(
     "/{attempt_id}/answers",
     response_model=AttemptAnswerResponse,
 )
@@ -147,6 +255,42 @@ def save_test_answer(
         student_id=student_id,
         question_id=request.question_id,
         selected_answer=request.selected_answer,
+    )
+
+
+@router.post(
+    "/{attempt_id}/questions/{question_id}/clear",
+    response_model=AttemptAnswerResponse,
+)
+def clear_test_response(
+    attempt_id: UUID,
+    question_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return clear_response(
+        db=db,
+        attempt_id=attempt_id,
+        student_id=student_id,
+        question_id=question_id,
+    )
+
+
+@router.post(
+    "/{attempt_id}/questions/{question_id}/mark-review",
+    response_model=AttemptAnswerResponse,
+)
+def mark_test_question_for_review(
+    attempt_id: UUID,
+    question_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return mark_for_review(
+        db=db,
+        attempt_id=attempt_id,
+        student_id=student_id,
+        question_id=question_id,
     )
 
 

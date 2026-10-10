@@ -1,89 +1,132 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import PageHeader from "../../components/PageHeader";
-import EmptyState from "../../components/EmptyState";
-import { getTestAttempt } from "../../utils/testAttemptStorage";
+
+import {
+  ATTEMPT_API_URL,
+  TEST_API_URL,
+} from "../../services/api";
+
 import "../../styles/scheduled-tests.css";
 
-type ScheduledTest = {
-  id: number;
+type Test = {
+  test_id: string;
   name: string;
-  provider: string;
-  date: string;
-  time: string;
-  duration: string;
-  status:
-    | "Active"
-    | "Upcoming"
-    | "Missed"
-    | "Completed"
-    | "Left In Between";
+  description: string | null;
+  duration_minutes: number;
+  total_questions: number;
+  total_marks: number;
+  start_at: string | null;
+  end_at: string | null;
+  status: string;
+
+  provider: {
+    provider_id: string;
+    name: string;
+  };
+
+  branch: {
+    branch_id: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+  };
 };
 
-const scheduledTests: ScheduledTest[] = [
-  {
-    id: 2,
-    name: "Physics Chapter Test",
-    provider: "ABC Coaching Institute",
-    date: "25 Sep 2026",
-    time: "10:00 AM - 11:00 AM",
-    duration: "60 min",
-    status: "Active",
-  },
-  {
-    id: 1,
-    name: "NEET Full Mock Test 01",
-    provider: "ABC Coaching Institute",
-    date: "27 Sep 2026",
-    time: "10:00 AM - 01:00 PM",
-    duration: "180 min",
-    status: "Upcoming",
-  },
-  {
-    id: 3,
-    name: "Chemistry Practice Test",
-    provider: "XYZ Academy",
-    date: "22 Sep 2026",
-    time: "02:00 PM - 03:00 PM",
-    duration: "60 min",
-    status: "Completed",
-  },
-  {
-    id: 4,
-    name: "Biology Revision Test",
-    provider: "XYZ Academy",
-    date: "20 Sep 2026",
-    time: "10:00 AM - 11:00 AM",
-    duration: "60 min",
-    status: "Missed",
-  },
-  {
-    id: 5,
-    name: "Physics Test 05",
-    provider: "ABC Coaching Institute",
-    date: "18 Sep 2026",
-    time: "04:00 PM - 05:00 PM",
-    duration: "60 min",
-    status: "Left In Between",
-  },
-  {
-    id: 6,
-    name: "Mathematics Test 05",
-    provider: "Subodh Coaching Institute",
-    date: "18 Sep 2026",
-    time: "04:00 PM - 05:00 PM",
-    duration: "60 min",
-    status: "Left In Between",
-  },
-];
+type Attempt = {
+  attempt_id: string;
+  test_id: string;
+  started_at: string;
+  expires_at: string;
+  submitted_at?: string | null;
+  status:
+    | "IN_PROGRESS"
+    | "SUBMITTED"
+    | "AUTO_SUBMITTED";
+};
+
+type CompletedTest = {
+  test: Test;
+  attempt: Attempt;
+};
 
 const filters = [
   "Active",
   "Upcoming",
   "Missed",
   "Completed",
-  "Left In Between",
 ];
+
+function formatDate(date: string | null) {
+  if (!date) {
+    return "Date not specified";
+  }
+
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatTime(date: string | null) {
+  if (!date) {
+    return "";
+  }
+
+  return new Date(date).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatTimeRange(
+  startAt: string | null,
+  endAt: string | null
+) {
+  if (!startAt || !endAt) {
+    return "Time not specified";
+  }
+
+  return `${formatTime(startAt)} - ${formatTime(endAt)}`;
+}
+
+function EmptyState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="scheduled-tests-empty-card">
+      <div className="scheduled-tests-empty">
+        <div className="scheduled-tests-empty-icon">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <rect
+              x="5"
+              y="3"
+              width="14"
+              height="18"
+              rx="2"
+            />
+            <path d="M9 8h6" />
+            <path d="M9 12h6" />
+            <path d="M9 16h3" />
+          </svg>
+        </div>
+
+        <h3>{title}</h3>
+
+        <p>{description}</p>
+      </div>
+    </div>
+  );
+}
 
 function ScheduledTestsPage() {
   const navigate = useNavigate();
@@ -91,49 +134,288 @@ function ScheduledTestsPage() {
   const [activeFilter, setActiveFilter] =
     useState("Active");
 
-  const [, setAttemptRefresh] =
-    useState(0);
+  const [activeTests, setActiveTests] = useState<Test[]>(
+    []
+  );
+
+  const [upcomingTests, setUpcomingTests] =
+    useState<Test[]>([]);
+
+  const [missedTests, setMissedTests] = useState<Test[]>(
+    []
+  );
+
+  const [completedTests, setCompletedTests] = useState<
+    CompletedTest[]
+  >([]);
+
+  const [attempts, setAttempts] = useState<
+    Record<string, Attempt | null>
+  >({});
+
+  const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    function refreshAttempts() {
-      setAttemptRefresh(
-        (value) => value + 1
-      );
-    }
-
-    window.addEventListener(
-      "focus",
-      refreshAttempts
-    );
-
-    return () => {
-      window.removeEventListener(
-        "focus",
-        refreshAttempts
-      );
-    };
+    loadTests();
   }, []);
 
-  const filteredTests =
-    scheduledTests.filter(
-      (test) =>
-        test.status === activeFilter
-    );
+  async function loadTests() {
+    try {
+      setLoading(true);
+      setError("");
 
-  function openTest(testId: number) {
-    window.open(
-      `/tests/${testId}/attempt`,
-      "_blank"
-    );
+      const [
+        activeResponse,
+        upcomingResponse,
+        missedResponse,
+        completedResponse,
+      ] = await Promise.all([
+        fetch(`${TEST_API_URL}/tests`, {
+          credentials: "include",
+        }),
+
+        fetch(`${TEST_API_URL}/tests/scheduled`, {
+          credentials: "include",
+        }),
+
+        fetch(`${TEST_API_URL}/tests/missed`, {
+          credentials: "include",
+        }),
+
+        fetch(`${ATTEMPT_API_URL}/attempts/completed`, {
+          credentials: "include",
+        }),
+      ]);
+
+      if (
+        !activeResponse.ok ||
+        !upcomingResponse.ok ||
+        !missedResponse.ok ||
+        !completedResponse.ok
+      ) {
+        throw new Error(
+          "Failed to load scheduled tests."
+        );
+      }
+
+      const activeData: Test[] =
+        await activeResponse.json();
+
+      const upcomingData: Test[] =
+        await upcomingResponse.json();
+
+      const missedData: Test[] =
+        await missedResponse.json();
+
+      const completedAttempts: Attempt[] =
+        await completedResponse.json();
+
+      /*
+       * Get attempt status for every active test.
+       */
+      const attemptResults = await Promise.all(
+        activeData.map(async (test) => {
+          const response = await fetch(
+            `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
+            {
+              credentials: "include",
+            }
+          );
+
+          if (response.status === 404) {
+            return {
+              testId: test.test_id,
+              attempt: null,
+            };
+          }
+
+          if (!response.ok) {
+            throw new Error(
+              "Failed to load attempt."
+            );
+          }
+
+          const attempt: Attempt =
+            await response.json();
+
+          return {
+            testId: test.test_id,
+            attempt,
+          };
+        })
+      );
+
+      const attemptMap: Record<
+        string,
+        Attempt | null
+      > = {};
+
+      attemptResults.forEach(
+        ({ testId, attempt }) => {
+          attemptMap[testId] = attempt;
+        }
+      );
+
+      setAttempts(attemptMap);
+
+      /*
+       * Submitted tests should not appear
+       * under Active.
+       */
+      const availableActiveTests =
+        activeData.filter((test) => {
+          const attempt = attemptMap[test.test_id];
+
+          return (
+            !attempt ||
+            attempt.status === "IN_PROGRESS"
+          );
+        });
+
+      setActiveTests(availableActiveTests);
+
+      setUpcomingTests(upcomingData);
+
+      setMissedTests(missedData);
+
+      /*
+       * Keep only the latest completed attempt
+       * for each test.
+       */
+      const latestAttempts = new Map<
+        string,
+        Attempt
+      >();
+
+      completedAttempts.forEach((attempt) => {
+        if (!latestAttempts.has(attempt.test_id)) {
+          latestAttempts.set(
+            attempt.test_id,
+            attempt
+          );
+        }
+      });
+
+      /*
+       * Load test details for completed tests.
+       */
+      const completedResults = await Promise.all(
+        Array.from(latestAttempts.values()).map(
+          async (attempt) => {
+            const response = await fetch(
+              `${TEST_API_URL}/tests/${attempt.test_id}/details`,
+              {
+                credentials: "include",
+              }
+            );
+
+            if (!response.ok) {
+              return null;
+            }
+
+            const test: Test =
+              await response.json();
+
+            return {
+              test,
+              attempt,
+            };
+          }
+        )
+      );
+
+      setCompletedTests(
+        completedResults.filter(
+          (item): item is CompletedTest =>
+            item !== null
+        )
+      );
+    } catch (loadError) {
+      console.error(
+        "Failed to load scheduled tests:",
+        loadError
+      );
+
+      setError(
+        "Unable to load scheduled tests."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
+
+  function getCurrentTests() {
+    switch (activeFilter) {
+      case "Active":
+        return activeTests;
+
+      case "Upcoming":
+        return upcomingTests;
+
+      case "Missed":
+        return missedTests;
+
+      default:
+        return [];
+    }
+  }
+
+  function openTest(testId: string) {
+    navigate(`/tests/${testId}/attempt`);
+  }
+
+  function openDetails(testId: string) {
+    navigate(`/tests/${testId}`);
+  }
+
+  function openResult(attemptId: string) {
+    navigate(`/tests/result/${attemptId}`);
+  }
+
+  function getEmptyState() {
+    const states: Record<
+      string,
+      {
+        title: string;
+        description: string;
+      }
+    > = {
+      Active: {
+        title: "No active tests",
+        description:
+          "There are no tests currently available for you to take.",
+      },
+
+      Upcoming: {
+        title: "No upcoming tests",
+        description:
+          "There are no upcoming tests scheduled for you.",
+      },
+
+      Missed: {
+        title: "No missed tests",
+        description:
+          "There are no missed tests in this category.",
+      },
+
+      Completed: {
+        title: "No completed tests",
+        description:
+          "You have not completed any tests yet.",
+      },
+    };
+
+    return states[activeFilter];
+  }
+
+  const currentTests = getCurrentTests();
+
+  const emptyState = getEmptyState();
 
   return (
     <div className="scheduled-tests-page">
-      <PageHeader
-        title="Scheduled Tests"
-        description="View tests scheduled for you by your enrolled providers."
-      />
-
       <div className="scheduled-test-tabs">
         {filters.map((filter) => (
           <button
@@ -153,116 +435,202 @@ function ScheduledTestsPage() {
         ))}
       </div>
 
-      <div className="scheduled-test-list">
-        {filteredTests.length > 0 ? (
-          filteredTests.map((test) => {
+      {loading ? (
+        <EmptyState
+          title="Loading tests"
+          description="Please wait while we load your tests."
+        />
+      ) : error ? (
+        <EmptyState
+          title="Unable to load tests"
+          description={error}
+        />
+      ) : activeFilter === "Completed" ? (
+        completedTests.length > 0 ? (
+          <div className="scheduled-test-list">
+            {completedTests.map(
+              ({ test, attempt }) => (
+                <article
+                  className="scheduled-test-card"
+                  key={attempt.attempt_id}
+                >
+                  <div className="scheduled-test-main">
+                    <div className="scheduled-test-title-row">
+                      <h3>{test.name}</h3>
+
+                      <span className="scheduled-test-status scheduled-test-status-completed">
+                        Completed
+                      </span>
+                    </div>
+
+                    <div className="scheduled-test-provider">
+                      <span>
+                        {test.provider.name}
+                      </span>
+
+                      {test.branch?.name && (
+                        <span>
+                          {" "}
+                          · {test.branch.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="scheduled-test-meta">
+                      <span>
+                        {formatDate(test.start_at)}
+                      </span>
+
+                      <span>
+                        {formatTimeRange(
+                          test.start_at,
+                          test.end_at
+                        )}
+                      </span>
+
+                      <span>
+                        {test.duration_minutes} min
+                      </span>
+
+                      <span>
+                        {test.total_questions} Questions
+                      </span>
+
+                      <span>
+                        {test.total_marks} Marks
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="scheduled-test-action">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openResult(
+                          attempt.attempt_id
+                        )
+                      }
+                    >
+                      View Result
+                    </button>
+                  </div>
+                </article>
+              )
+            )}
+          </div>
+        ) : (
+          <EmptyState
+            title={emptyState.title}
+            description={emptyState.description}
+          />
+        )
+      ) : currentTests.length > 0 ? (
+        <div className="scheduled-test-list">
+          {currentTests.map((test) => {
             const attempt =
-              getTestAttempt(
-                String(test.id)
-              );
+              attempts[test.test_id];
 
-            const isResume =
-              attempt?.status ===
-              "IN_PROGRESS";
-
-            const isSubmitted =
-              attempt?.status ===
-                "SUBMITTED" ||
-              attempt?.status ===
-                "AUTO_SUBMITTED";
+            const isInProgress =
+              attempt?.status === "IN_PROGRESS";
 
             return (
               <article
                 className="scheduled-test-card"
-                key={test.id}
+                key={test.test_id}
               >
                 <div className="scheduled-test-main">
                   <div className="scheduled-test-title-row">
                     <h3>{test.name}</h3>
 
                     <span
-                      className={`scheduled-test-status scheduled-test-status-${test.status
-                        .toLowerCase()
-                        .replaceAll(
-                          " ",
-                          "-"
-                        )}`}
+                      className={`scheduled-test-status scheduled-test-status-${activeFilter.toLowerCase()}`}
                     >
-                      {test.status}
+                      {activeFilter}
                     </span>
                   </div>
 
                   <div className="scheduled-test-provider">
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path d="M3 21h18" />
-                      <path d="M5 21V5l7-3 7 3v16" />
-                      <path d="M9 9h1" />
-                      <path d="M14 9h1" />
-                      <path d="M9 13h1" />
-                      <path d="M14 13h1" />
-                      <path d="M10 21v-4h4v4" />
-                    </svg>
-
                     <span>
-                      {test.provider}
+                      {test.provider.name}
                     </span>
+
+                    {test.branch?.name && (
+                      <span>
+                        {" "}
+                        · {test.branch.name}
+                      </span>
+                    )}
                   </div>
+
+                  {test.description && (
+                    <p className="scheduled-test-description">
+                      {test.description}
+                    </p>
+                  )}
 
                   <div className="scheduled-test-meta">
                     <span>
-                      {test.date}
+                      {formatDate(test.start_at)}
                     </span>
 
                     <span>
-                      {test.time}
+                      {formatTimeRange(
+                        test.start_at,
+                        test.end_at
+                      )}
                     </span>
 
                     <span>
-                      {test.duration}
+                      {test.duration_minutes} min
+                    </span>
+
+                    <span>
+                      {test.total_questions} Questions
+                    </span>
+
+                    <span>
+                      {test.total_marks} Marks
                     </span>
                   </div>
                 </div>
 
                 <div className="scheduled-test-action">
-                  {test.status ===
-                    "Active" &&
-                  !isSubmitted ? (
+                  {activeFilter === "Active" && (
                     <button
                       type="button"
                       className={
-                        isResume
+                        isInProgress
                           ? "resume-test-button"
                           : ""
                       }
                       onClick={() =>
-                        openTest(test.id)
+                        openTest(test.test_id)
                       }
                     >
-                      {isResume
+                      {isInProgress
                         ? "Resume Test"
                         : "Start Test"}
                     </button>
-                  ) : isSubmitted ? (
-                    <button
-                      type="button"
-                      className="submitted-test-button"
-                      disabled
-                    >
-                      Submitted
-                    </button>
-                  ) : (
+                  )}
+
+                  {activeFilter === "Upcoming" && (
                     <button
                       type="button"
                       className="scheduled-test-details-button"
                       onClick={() =>
-                        navigate(
-                          `/tests/${test.id}`
-                        )
+                        openDetails(test.test_id)
+                      }
+                    >
+                      View Details
+                    </button>
+                  )}
+
+                  {activeFilter === "Missed" && (
+                    <button
+                      type="button"
+                      className="scheduled-test-details-button"
+                      onClick={() =>
+                        openDetails(test.test_id)
                       }
                     >
                       View Details
@@ -271,14 +639,14 @@ function ScheduledTestsPage() {
                 </div>
               </article>
             );
-          })
-        ) : (
-          <EmptyState
-            title={`No ${activeFilter.toLowerCase()} tests`}
-            description="There are no tests in this category."
-          />
-        )}
-      </div>
+          })}
+        </div>
+      ) : (
+        <EmptyState
+          title={emptyState.title}
+          description={emptyState.description}
+        />
+      )}
     </div>
   );
 }

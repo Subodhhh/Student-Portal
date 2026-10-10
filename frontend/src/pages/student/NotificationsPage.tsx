@@ -1,69 +1,293 @@
-import PageHeader from "../../components/PageHeader";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { NOTIFICATION_API_URL } from "../../services/api";
+
 import "../../styles/notifications.css";
 
-type Notification = {
-  id: number;
-  title: string;
-  message: string;
-  time: string;
-  unread: boolean;
+type NotificationMetadata = {
+  test_id?: string;
+  attempt_id?: string;
 };
 
-const notifications: Notification[] = [
-  {
-    id: 1,
-    title: "New Test Scheduled",
-    message: "NEET Full Mock Test 02 has been scheduled for your batch.",
-    time: "Today, 10:30 AM",
-    unread: true,
-  },
-  {
-    id: 2,
-    title: "Test Result Available",
-    message: "Your result for NEET Full Mock Test 01 is now available.",
-    time: "Yesterday, 6:15 PM",
-    unread: true,
-  },
-  {
-    id: 3,
-    title: "Test Reminder",
-    message: "Your upcoming test starts tomorrow at 10:00 AM.",
-    time: "Yesterday, 9:00 AM",
-    unread: false,
-  },
-];
+type Notification = {
+  notification_id: string;
+  event_type: string;
+  title: string;
+  message: string;
+  created_at: string;
+  metadata: NotificationMetadata | null;
+  is_read: boolean;
+  notification_recipient_id: string;
+};
 
 function NotificationsPage() {
+  const navigate = useNavigate();
+
+  const [notifications, setNotifications] = useState<
+    Notification[]
+  >([]);
+
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const response = await fetch(
+          `${NOTIFICATION_API_URL}/notifications`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch notifications: ${response.status}`
+          );
+        }
+
+        const data = await response.json();
+
+        const formattedNotifications: Notification[] =
+          data.map((notification: any) => ({
+            notification_id: notification.notification_id,
+            event_type: notification.event_type,
+            title: notification.title,
+            message: notification.message,
+            created_at: notification.created_at,
+            metadata: notification.metadata,
+            is_read: notification.recipient.is_read,
+            notification_recipient_id:
+              notification.recipient
+                .notification_recipient_id,
+          }));
+
+        setNotifications(formattedNotifications);
+      } catch (error) {
+        console.error(
+          "Failed to fetch notifications:",
+          error
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNotifications();
+  }, []);
+
+  async function markAsRead(
+    notificationRecipientId: string
+  ): Promise<boolean> {
+    try {
+      const response = await fetch(
+        `${NOTIFICATION_API_URL}/notifications/${notificationRecipientId}/read`,
+        {
+          method: "PATCH",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to mark notification as read: ${response.status}`
+        );
+      }
+
+      setNotifications((current) =>
+        current.map((notification) =>
+          notification.notification_recipient_id ===
+          notificationRecipientId
+            ? {
+                ...notification,
+                is_read: true,
+              }
+            : notification
+        )
+      );
+
+      return true;
+    } catch (error) {
+      console.error(
+        "Failed to mark notification as read:",
+        error
+      );
+
+      return false;
+    }
+  }
+
+  async function handleNotificationClick(
+    notification: Notification
+  ) {
+    /*
+     * Mark the notification as read first.
+     */
+    if (!notification.is_read) {
+      const markedAsRead = await markAsRead(
+        notification.notification_recipient_id
+      );
+
+      if (!markedAsRead) {
+        return;
+      }
+    }
+
+    const testId = notification.metadata?.test_id;
+    const attemptId = notification.metadata?.attempt_id;
+
+    /*
+     * Navigate based on notification event type.
+     */
+    switch (notification.event_type) {
+      case "TEST_SCHEDULED":
+      case "TEST_REMINDER":
+        if (testId) {
+          navigate(`/tests/${testId}`);
+        }
+        break;
+
+      case "TEST_STARTED":
+        if (testId) {
+          navigate(`/tests/${testId}/attempt`);
+        }
+        break;
+
+      case "TEST_SUBMITTED":
+      case "TEST_TIMEOUT":
+        if (attemptId) {
+          navigate(`/tests/result/${attemptId}`);
+        } else if (testId) {
+          navigate(`/tests/${testId}/performance`);
+        }
+        break;
+
+      case "RESULT_PUBLISHED":
+        if (testId) {
+          navigate(`/tests/${testId}/performance`);
+        } else {
+          navigate("/results");
+        }
+        break;
+
+      case "RANKING_UPDATED":
+        navigate("/ranking");
+        break;
+
+      case "SYSTEM_ANNOUNCEMENT":
+      case "SYSTEM_MAINTENANCE":
+        /*
+         * No dedicated announcement/maintenance page exists yet.
+         * Keep the student on the Notifications page.
+         */
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  async function markAllAsRead() {
+    try {
+      const response = await fetch(
+        `${NOTIFICATION_API_URL}/notifications/read-all`,
+        {
+          method: "PATCH",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to mark all notifications as read: ${response.status}`
+        );
+      }
+
+      setNotifications((current) =>
+        current.map((notification) => ({
+          ...notification,
+          is_read: true,
+        }))
+      );
+    } catch (error) {
+      console.error(
+        "Failed to mark all notifications as read:",
+        error
+      );
+    }
+  }
+
+  function formatNotificationTime(
+    createdAt: string
+  ) {
+    return new Date(createdAt).toLocaleString(
+      "en-IN",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }
+    );
+  }
+
+  const hasUnreadNotifications = notifications.some(
+    (notification) => !notification.is_read
+  );
+
   return (
     <div className="notifications-page">
-      <PageHeader
-        title="Notifications"
-        description="View your latest test and account notifications."
-      />
-
       <section className="notifications-card">
         <div className="notifications-header">
           <h2>All Notifications</h2>
-          <button type="button">Mark all as read</button>
+
+          <button
+            type="button"
+            onClick={markAllAsRead}
+            disabled={!hasUnreadNotifications}
+          >
+            Mark all as read
+          </button>
         </div>
 
         <div className="notifications-list">
-          {notifications.map((notification) => (
-            <article
-              key={notification.id}
-              className={`notification-item ${
-                notification.unread ? "unread" : ""
-              }`}
-            >
-              <div className="notification-dot" />
+          {loading ? (
+            <p>Loading notifications...</p>
+          ) : notifications.length === 0 ? (
+            <p>No notifications available.</p>
+          ) : (
+            notifications.map((notification) => (
+              <article
+                key={
+                  notification.notification_recipient_id
+                }
+                className={`notification-item ${
+                  !notification.is_read
+                    ? "unread"
+                    : ""
+                }`}
+                onClick={() =>
+                  handleNotificationClick(
+                    notification
+                  )
+                }
+              >
+                <div className="notification-dot" />
 
-              <div className="notification-content">
-                <h3>{notification.title}</h3>
-                <p>{notification.message}</p>
-                <span>{notification.time}</span>
-              </div>
-            </article>
-          ))}
+                <div className="notification-content">
+                  <h3>{notification.title}</h3>
+
+                  <p>{notification.message}</p>
+
+                  <span>
+                    {formatNotificationTime(
+                      notification.created_at
+                    )}
+                  </span>
+                </div>
+              </article>
+            ))
+          )}
         </div>
       </section>
     </div>

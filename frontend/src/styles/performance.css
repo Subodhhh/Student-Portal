@@ -73,14 +73,45 @@
 }
 
 .performance-summary-card {
+  position: relative;
   display: grid;
   grid-template-columns: 1.4fr repeat(4, 1fr);
   align-items: center;
   gap: 0;
   padding: 24px;
+  overflow: hidden;
   border: 1px solid #dce5ef;
   border-radius: 12px;
   background: #ffffff;
+
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.performance-summary-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: #2563eb;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.performance-summary-card:hover {
+  transform: translateY(-3px);
+  border-color: #93c5fd;
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.12),
+    0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.performance-summary-card:hover::before {
+  opacity: 1;
 }
 
 .performance-score {
@@ -145,10 +176,40 @@
 }
 
 .performance-card {
+  position: relative;
   overflow: hidden;
   border: 1px solid #dce5ef;
   border-radius: 12px;
   background: #ffffff;
+
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.performance-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: #2563eb;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.performance-card:hover {
+  transform: translateY(-3px);
+  border-color: #93c5fd;
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.12),
+    0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.performance-card:hover::before {
+  opacity: 1;
 }
 
 .performance-card-header {
@@ -277,14 +338,45 @@
 }
 
 .performance-footer-card {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 20px;
   padding: 20px 22px;
+  overflow: hidden;
   border: 1px solid #dce5ef;
   border-radius: 12px;
   background: #ffffff;
+
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.performance-footer-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: #2563eb;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.performance-footer-card:hover {
+  transform: translateY(-3px);
+  border-color: #93c5fd;
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.12),
+    0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.performance-footer-card:hover::before {
+  opacity: 1;
 }
 
 .performance-footer-card h3 {

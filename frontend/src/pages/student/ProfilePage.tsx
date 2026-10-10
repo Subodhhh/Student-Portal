@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import PageHeader from "../../components/PageHeader";
 import { PROFILE_API_URL } from "../../services/api";
 import "../../styles/profile.css";
 
@@ -163,11 +162,6 @@ function ProfilePage() {
   if (loading) {
     return (
       <div className="profile-page">
-        <PageHeader
-          title="Profile"
-          description="View and manage your student account information."
-        />
-
         <section className="profile-card">
           <p>Loading profile...</p>
         </section>
@@ -178,11 +172,6 @@ function ProfilePage() {
   if (error && !profile) {
     return (
       <div className="profile-page">
-        <PageHeader
-          title="Profile"
-          description="View and manage your student account information."
-        />
-
         <section className="profile-card">
           <p>Unable to load your profile.</p>
           <p>{error}</p>
@@ -203,11 +192,6 @@ function ProfilePage() {
 
   return (
     <div className="profile-page">
-      <PageHeader
-        title="Profile"
-        description="View and manage your student account information."
-      />
-
       <section className="profile-card">
         <div className="profile-card-header">
           <div className="profile-avatar">{avatarLetter}</div>

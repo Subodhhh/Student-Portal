@@ -20,6 +20,44 @@ def get_active_attempt(
     return db.scalars(query).first()
 
 
+def get_attempt_by_test(
+    db: Session,
+    student_id: str,
+    test_id: UUID,
+) -> TestAttempt | None:
+    query = (
+        select(TestAttempt)
+        .where(
+            TestAttempt.student_id == student_id,
+            TestAttempt.test_id == test_id,
+        )
+        .order_by(TestAttempt.started_at.desc())
+    )
+
+    return db.scalars(query).first()
+
+
+def get_completed_attempts(
+    db: Session,
+    student_id: str,
+) -> list[TestAttempt]:
+    query = (
+        select(TestAttempt)
+        .where(
+            TestAttempt.student_id == student_id,
+            TestAttempt.status.in_(
+                [
+                    AttemptStatus.SUBMITTED,
+                    AttemptStatus.AUTO_SUBMITTED,
+                ]
+            ),
+        )
+        .order_by(TestAttempt.submitted_at.desc())
+    )
+
+    return db.scalars(query).all()
+
+
 def get_attempt_by_id(
     db: Session,
     attempt_id: UUID,

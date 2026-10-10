@@ -2,8 +2,18 @@
   width: 100%;
 }
 
+/* =========================
+   PAGE TITLE
+   ========================= */
+
 .my-institutes-header {
-  margin-bottom: 24px;
+  width: 100%;
+  margin-bottom: 28px;
+  padding: 26px 28px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
 }
 
 .my-institutes-header h1 {
@@ -11,6 +21,7 @@
   color: #0f172a;
   font-size: 28px;
   font-weight: 700;
+  line-height: 1.25;
   letter-spacing: -0.3px;
 }
 
@@ -18,9 +29,12 @@
   margin: 0;
   color: #64748b;
   font-size: 14px;
+  line-height: 1.5;
 }
 
-/* Institute cards */
+/* =========================
+   INSTITUTE GRID
+   ========================= */
 
 .institute-grid {
   display: grid;
@@ -28,7 +42,11 @@
   gap: 20px;
 }
 
-.institute-card {
+/* =========================
+   INSTITUTE CARD
+   ========================= */
+
+.my-institutes-page .institute-card {
   position: relative;
   overflow: hidden;
   background: #ffffff;
@@ -36,29 +54,60 @@
   border-radius: 16px;
   padding: 22px;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+
   transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
-.institute-card::before {
+/* =========================
+   TOP BLUE HOVER LINE
+   ========================= */
+
+.my-institutes-page .institute-card::before {
   content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+
+  width: 100%;
   height: 4px;
+
   background: #2563eb;
+
+  opacity: 0;
+
+  transition:
+    opacity 0.18s ease,
+    height 0.18s ease;
+
+  pointer-events: none;
 }
 
-.institute-card:hover {
-  transform: translateY(-2px);
-  border-color: #cbd5e1;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+/* =========================
+   STRONG HOVER STATE
+   ========================= */
+
+.my-institutes-page .institute-card:hover {
+  transform: translateY(-3px);
+
+  border-color: #93c5fd;
+
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.12),
+    0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
-/* Card header */
+.my-institutes-page .institute-card:hover::before {
+  opacity: 1;
+  height: 4px;
+}
+
+/* =========================
+   CARD HEADER
+   ========================= */
 
 .institute-card-header {
   display: flex;
@@ -76,7 +125,9 @@
   line-height: 1.3;
 }
 
-/* Status */
+/* =========================
+   STATUS
+   ========================= */
 
 .institute-status {
   display: inline-flex;
@@ -123,7 +174,9 @@
   background: #dc2626;
 }
 
-/* Enrollment information */
+/* =========================
+   ENROLLMENT INFORMATION
+   ========================= */
 
 .institute-details {
   display: grid;
@@ -154,7 +207,16 @@
   font-weight: 600;
 }
 
-/* Batches */
+.institute-detail small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* =========================
+   BATCHES
+   ========================= */
 
 .batch-section {
   padding-top: 18px;
@@ -179,6 +241,8 @@
 
 .batch-list li {
   position: relative;
+  display: flex;
+  align-items: center;
   padding: 11px 12px 11px 30px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -200,6 +264,17 @@
   transform: translateY(-50%);
 }
 
+.batch-list li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-list li small {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .no-batches {
   margin: 0;
   padding: 12px;
@@ -209,7 +284,37 @@
   font-size: 14px;
 }
 
-/* Empty state */
+/* =========================
+   VIEW DETAILS BUTTON
+   ========================= */
+
+.view-details-button {
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px 14px;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.view-details-button:hover {
+  background: #eff6ff;
+  border-color: #1d4ed8;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12);
+}
+
+/* =========================
+   EMPTY STATE
+   ========================= */
 
 .my-institutes-page .empty-state {
   padding: 48px 24px;
@@ -232,11 +337,113 @@
   font-size: 14px;
 }
 
-/* Mobile */
+/* =========================
+   MODAL
+   ========================= */
+
+.enrollment-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.enrollment-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+
+  overflow-y: auto;
+
+  padding: 24px;
+
+  border-radius: 14px;
+  background: #ffffff;
+
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+}
+
+.enrollment-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  padding-bottom: 18px;
+
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.enrollment-modal-header h2 {
+  margin: 0 0 8px;
+  color: #0f172a;
+}
+
+.modal-close-button {
+  border: none;
+  background: transparent;
+
+  font-size: 28px;
+  line-height: 1;
+
+  color: #64748b;
+  cursor: pointer;
+}
+
+.modal-close-button:hover {
+  color: #0f172a;
+}
+
+.enrollment-modal-section {
+  padding: 18px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.enrollment-modal-section:last-child {
+  border-bottom: none;
+}
+
+.enrollment-modal-section h3 {
+  margin: 0 0 10px;
+  color: #334155;
+  font-size: 15px;
+}
+
+.enrollment-modal-section p {
+  margin: 5px 0;
+  color: #475569;
+}
+
+.modal-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  padding: 10px 12px;
+  margin-top: 8px;
+
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.modal-batch span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* =========================
+   MOBILE
+   ========================= */
 
 @media (max-width: 700px) {
   .my-institutes-header {
     margin-bottom: 20px;
+    padding: 20px;
   }
 
   .my-institutes-header h1 {
@@ -258,6 +465,10 @@
 }
 
 @media (max-width: 420px) {
+  .my-institutes-header {
+    padding: 18px;
+  }
+
   .my-institutes-header h1 {
     font-size: 22px;
   }
@@ -265,121 +476,4 @@
   .institute-card-header h2 {
     font-size: 18px;
   }
-}
-
-.institute-detail small {
-  display: block;
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 13px;
-}
-
-.batch-list li {
-  display: flex;
-  align-items: center;
-}
-
-.batch-list li > div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.batch-list li small {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.view-details-button {
-  width: 100%;
-  margin-top: 20px;
-  padding: 10px 14px;
-  border: 1px solid #2563eb;
-  border-radius: 8px;
-  background: white;
-  color: #2563eb;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.view-details-button:hover {
-  background: #eff6ff;
-}
-
-.enrollment-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(15, 23, 42, 0.45);
-}
-
-.enrollment-modal {
-  width: 100%;
-  max-width: 560px;
-  max-height: 85vh;
-  overflow-y: auto;
-  padding: 24px;
-  border-radius: 14px;
-  background: white;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
-}
-
-.enrollment-modal-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-bottom: 18px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.enrollment-modal-header h2 {
-  margin: 0 0 8px;
-}
-
-.modal-close-button {
-  border: none;
-  background: transparent;
-  font-size: 28px;
-  line-height: 1;
-  color: #64748b;
-  cursor: pointer;
-}
-
-.enrollment-modal-section {
-  padding: 18px 0;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.enrollment-modal-section:last-child {
-  border-bottom: none;
-}
-
-.enrollment-modal-section h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-}
-
-.enrollment-modal-section p {
-  margin: 5px 0;
-  color: #475569;
-}
-
-.modal-batch {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  margin-top: 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-}
-
-.modal-batch span {
-  color: #64748b;
-  font-size: 13px;
 }

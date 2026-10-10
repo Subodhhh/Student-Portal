@@ -48,6 +48,9 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+
+  --hover-border: #d5deea;
+  --hover-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
 }
 
 * {
@@ -87,6 +90,10 @@ a {
   color: #1e3a8a;
 }
 
+/* =========================
+   SCROLLBAR
+   ========================= */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -103,4 +110,159 @@ a {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* =========================
+   GLOBAL CARD HOVER
+   ========================= */
+
+/*
+   All major portal cards use the same interaction:
+   - no movement
+   - subtle shadow
+   - blue horizontal line across the TOP on hover
+*/
+
+.test-card,
+.scheduled-test-card,
+.result-card,
+.ranking-panel,
+.notifications-card,
+.profile-card,
+.performance-card,
+.performance-summary-card,
+.performance-footer-card,
+.institute-card,
+.dashboard-panel,
+.dashboard-performance,
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+/* Top blue accent */
+
+.test-card::before,
+.scheduled-test-card::before,
+.result-card::before,
+.ranking-panel::before,
+.notifications-card::before,
+.profile-card::before,
+.performance-card::before,
+.performance-summary-card::before,
+.performance-footer-card::before,
+.institute-card::before,
+.dashboard-panel::before,
+.dashboard-performance::before,
+.stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+/* Card hover */
+
+.test-card:hover,
+.scheduled-test-card:hover,
+.result-card:hover,
+.ranking-panel:hover,
+.notifications-card:hover,
+.profile-card:hover,
+.performance-card:hover,
+.performance-summary-card:hover,
+.performance-footer-card:hover,
+.institute-card:hover,
+.dashboard-panel:hover,
+.dashboard-performance:hover,
+.stat-card:hover {
+  border-color: var(--hover-border);
+  box-shadow: var(--hover-shadow);
+}
+
+.test-card:hover::before,
+.scheduled-test-card:hover::before,
+.result-card:hover::before,
+.ranking-panel:hover::before,
+.notifications-card:hover::before,
+.profile-card:hover::before,
+.performance-card:hover::before,
+.performance-summary-card:hover::before,
+.performance-footer-card:hover::before,
+.institute-card:hover::before,
+.dashboard-panel:hover::before,
+.dashboard-performance:hover::before,
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+/* =========================
+   REUSABLE PORTAL CARD
+   ========================= */
+
+.portal-hover-card {
+  position: relative;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.portal-hover-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.portal-hover-card:hover {
+  border-color: var(--hover-border);
+  box-shadow: var(--hover-shadow);
+}
+
+.portal-hover-card:hover::before {
+  opacity: 1;
+}
+
+/* =========================
+   GLOBAL FOCUS
+   ========================= */
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+/* =========================
+   REDUCED MOTION
+   ========================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

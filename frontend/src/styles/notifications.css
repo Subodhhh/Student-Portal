@@ -1,31 +1,56 @@
 .notifications-page {
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .notifications-card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  position: relative;
   overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+
+  /* Override global card hover styles */
+  transform: none !important;
+  box-shadow: none !important;
+  border-color: #e2e8f0 !important;
 }
+
+/* Remove the global blue line from the main card */
+.notifications-card::before {
+  display: none !important;
+}
+
+.notifications-card:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* =========================
+   HEADER
+   ========================= */
 
 .notifications-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .notifications-header h2 {
   margin: 0;
-  font-size: 18px;
-  color: #1f2937;
+  color: #0f172a;
+  font-size: 16px;
 }
 
 .notifications-header button {
-  border: none;
+  padding: 0;
+  border: 0;
   background: transparent;
   color: #2563eb;
   font-size: 14px;
@@ -33,25 +58,98 @@
   cursor: pointer;
 }
 
+.notifications-header button:hover {
+  color: #1d4ed8;
+}
+
+.notifications-header button:disabled {
+  color: #94a3b8;
+  cursor: default;
+}
+
+/* =========================
+   NOTIFICATION LIST
+   ========================= */
+
 .notifications-list {
   display: flex;
   flex-direction: column;
 }
 
 .notification-item {
+  position: relative;
   display: flex;
   gap: 14px;
-  padding: 20px 24px;
-  border-bottom: 1px solid #f0f1f3;
+  min-height: 92px;
+  padding: 20px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+  cursor: pointer;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.notification-item:nth-child(even) {
+  background: #f8fbff;
 }
 
 .notification-item:last-child {
-  border-bottom: none;
+  border-bottom: 0;
 }
 
-.notification-item.unread {
-  background: #f8fbff;
+/* =========================
+   INDIVIDUAL NOTIFICATION
+   ========================= */
+
+.notification-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: #2563eb;
+  opacity: 0;
+
+  transition: opacity 0.15s ease;
 }
+
+.notification-item:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+
+  box-shadow:
+    0 6px 16px rgba(37, 99, 235, 0.1),
+    0 2px 5px rgba(15, 23, 42, 0.05);
+}
+
+.notification-item:hover::before {
+  opacity: 1;
+}
+
+/* =========================
+   UNREAD NOTIFICATION
+   ========================= */
+
+.notification-item.unread {
+  background: #eff6ff;
+}
+
+.notification-item.unread:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+
+  box-shadow:
+    0 8px 20px rgba(37, 99, 235, 0.12),
+    0 3px 7px rgba(15, 23, 42, 0.06);
+}
+
+/* =========================
+   NOTIFICATION DOT
+   ========================= */
 
 .notification-dot {
   width: 8px;
@@ -66,14 +164,20 @@
   background: #2563eb;
 }
 
+/* =========================
+   CONTENT
+   ========================= */
+
 .notification-content {
+  min-width: 0;
   flex: 1;
 }
 
 .notification-content h3 {
   margin: 0 0 6px;
+  color: #0f172a;
   font-size: 15px;
-  color: #1f2937;
+  font-weight: 600;
 }
 
 .notification-content p {
@@ -88,6 +192,10 @@
   font-size: 12px;
 }
 
+/* =========================
+   MOBILE
+   ========================= */
+
 @media (max-width: 640px) {
   .notifications-header,
   .notification-item {
@@ -97,5 +205,9 @@
   .notifications-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .notification-item {
+    min-height: auto;
   }
 }

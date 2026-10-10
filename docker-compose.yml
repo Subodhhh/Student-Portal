@@ -82,6 +82,53 @@ services:
     networks:
       - student-portal-network    
 
+  student-result-service:
+    image: student-result-service:latest
+    container_name: student-result-service
+    env_file:
+      - ./backend/student-result-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8007:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+      - student-attempt-service
+    networks:
+      - student-portal-network
+
+  student-ranking-service:
+    image: student-ranking-service:latest
+    container_name: student-ranking-service
+    env_file:
+      - ./backend/student-ranking-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8008:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+      - student-result-service
+    networks:
+      - student-portal-network
+
+  student-notification-service:
+    image: student-notification-service:latest
+    container_name: student-notification-service
+    env_file:
+      - ./backend/student-notification-service/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8009:8001"
+    depends_on:
+      - redis
+      - student-authentication-service
+    networks:
+      - student-portal-network
+
   student-portal-frontend:
     image: student-portal-frontend:latest
     container_name: student-portal-frontend

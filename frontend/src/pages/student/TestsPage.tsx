@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import "../../styles/tests.css";
-import { getTestAttempt } from "../../utils/testAttemptStorage";
+
 import {
   ENROLLMENT_API_URL,
+  ATTEMPT_API_URL,
   TEST_API_URL,
 } from "../../services/api";
 
@@ -55,6 +56,14 @@ type Test = {
   status: string;
 };
 
+type Attempt = {
+  attempt_id: string;
+  test_id: string;
+  started_at: string;
+  expires_at: string;
+  status: "IN_PROGRESS" | "SUBMITTED" | "AUTO_SUBMITTED";
+};
+
 function formatDate(date: string | null) {
   if (!date) {
     return "Date not specified";
@@ -70,13 +79,16 @@ function formatDate(date: string | null) {
 function TestsPage() {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [tests, setTests] = useState<Test[]>([]);
+  const [attempts, setAttempts] = useState<
+    Record<string, Attempt | null>
+  >({});
+
   const [search, setSearch] = useState("");
   const [selectedProvider, setSelectedProvider] =
     useState("All Providers");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const [, setAttemptRefresh] = useState(0);
 
   useEffect(() => {
     async function fetchData() {
@@ -84,20 +96,15 @@ function TestsPage() {
         setLoading(true);
         setError("");
 
-        const [
-          enrollmentsResponse,
-          testsResponse,
-        ] = await Promise.all([
-          fetch(
-            `${ENROLLMENT_API_URL}/enrollments`,
-            {
+        const [enrollmentsResponse, testsResponse] =
+          await Promise.all([
+            fetch(`${ENROLLMENT_API_URL}/enrollments`, {
               credentials: "include",
-            }
-          ),
-          fetch(`${TEST_API_URL}/tests`, {
-            credentials: "include",
-          }),
-        ]);
+            }),
+            fetch(`${TEST_API_URL}/tests`, {
+              credentials: "include",
+            }),
+          ]);
 
         if (!enrollmentsResponse.ok) {
           throw new Error(
@@ -119,12 +126,56 @@ function TestsPage() {
 
         setEnrollments(enrollmentData);
         setTests(testData);
+
+        const attemptResults = await Promise.all(
+          testData.map(async (test) => {
+            const response = await fetch(
+              `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
+              {
+                credentials: "include",
+              }
+            );
+
+            if (response.status === 404) {
+              return {
+                testId: test.test_id,
+                attempt: null,
+              };
+            }
+
+            if (!response.ok) {
+              throw new Error(
+                `Failed to fetch attempt: ${response.status}`
+              );
+            }
+
+            const attempt: Attempt =
+              await response.json();
+
+            return {
+              testId: test.test_id,
+              attempt,
+            };
+          })
+        );
+
+        const attemptMap: Record<
+          string,
+          Attempt | null
+        > = {};
+
+        attemptResults.forEach(
+          ({ testId, attempt }) => {
+            attemptMap[testId] = attempt;
+          }
+        );
+
+        setAttempts(attemptMap);
       } catch (error) {
         console.error(
           "Failed to load tests:",
           error
         );
-
         setError("Unable to load tests.");
       } finally {
         setLoading(false);
@@ -134,43 +185,36 @@ function TestsPage() {
     fetchData();
   }, []);
 
-  useEffect(() => {
-    function refreshAttempts() {
-      setAttemptRefresh(
-        (value) => value + 1
-      );
-    }
-
-    window.addEventListener(
-      "focus",
-      refreshAttempts
-    );
-
-    return () => {
-      window.removeEventListener(
-        "focus",
-        refreshAttempts
-      );
-    };
-  }, []);
-
   const providers = [
     "All Providers",
-    ...enrollments.map(
-      (enrollment) =>
-        enrollment.provider.name
+    ...Array.from(
+      new Set(
+        enrollments.map(
+          (enrollment) =>
+            enrollment.provider.name
+        )
+      )
     ),
   ];
 
   const filteredTests = useMemo(() => {
-    const searchText =
-      search.trim().toLowerCase();
+    const searchText = search.trim().toLowerCase();
 
     return tests.filter((test) => {
+      const attempt = attempts[test.test_id];
+
+      const isSubmitted =
+        attempt?.status === "SUBMITTED" ||
+        attempt?.status === "AUTO_SUBMITTED";
+
+      // Submitted tests belong in Scheduled Tests -> Completed.
+      if (isSubmitted) {
+        return false;
+      }
+
       const matchesProvider =
         selectedProvider === "All Providers" ||
-        test.provider.name ===
-          selectedProvider;
+        test.provider.name === selectedProvider;
 
       const searchableText = [
         test.name,
@@ -184,13 +228,11 @@ function TestsPage() {
       const matchesSearch =
         searchableText.includes(searchText);
 
-      return (
-        matchesProvider &&
-        matchesSearch
-      );
+      return matchesProvider && matchesSearch;
     });
   }, [
     tests,
+    attempts,
     search,
     selectedProvider,
   ]);
@@ -204,17 +246,6 @@ function TestsPage() {
 
   return (
     <section className="tests-page">
-      <div className="tests-page-header">
-        <div>
-          <h2>Tests</h2>
-
-          <p>
-            Tests currently available for
-            you to take.
-          </p>
-        </div>
-      </div>
-
       <div className="tests-filters">
         <div className="tests-search">
           <svg
@@ -251,9 +282,7 @@ function TestsPage() {
             id="provider"
             value={selectedProvider}
             onChange={(event) =>
-              setSelectedProvider(
-                event.target.value
-              )
+              setSelectedProvider(event.target.value)
             }
           >
             {providers.map((provider) => (
@@ -273,8 +302,7 @@ function TestsPage() {
           <h3>Loading tests...</h3>
 
           <p>
-            Please wait while we load your
-            available tests.
+            Please wait while we load your available tests.
           </p>
         </div>
       ) : error ? (
@@ -287,38 +315,23 @@ function TestsPage() {
         <div className="tests-list">
           {filteredTests.map((test) => {
             const attempt =
-              getTestAttempt(
-                test.test_id
-              );
+              attempts[test.test_id];
 
             const isResume =
-              attempt?.status ===
-              "IN_PROGRESS";
-
-            const isSubmitted =
-              attempt?.status ===
-                "SUBMITTED" ||
-              attempt?.status ===
-                "AUTO_SUBMITTED";
+              attempt?.status === "IN_PROGRESS";
 
             return (
               <article
-                className="test-card"
+                className="test-card portal-hover-card"
                 key={test.test_id}
               >
                 <div className="test-card-main">
                   <div className="test-card-title-row">
                     <h3>{test.name}</h3>
 
-                    <span
-                      className={
-                        isSubmitted
-                          ? "test-status test-status-submitted"
-                          : "test-status test-status-available"
-                      }
-                    >
-                      {isSubmitted
-                        ? "Submitted"
+                    <span className="test-status test-status-available">
+                      {isResume
+                        ? "In Progress"
                         : "Available"}
                     </span>
                   </div>
@@ -357,9 +370,7 @@ function TestsPage() {
                     </span>
 
                     <span>
-                      {formatDate(
-                        test.start_at
-                      )}
+                      {formatDate(test.start_at)}
                     </span>
 
                     <span>
@@ -377,33 +388,21 @@ function TestsPage() {
                 </div>
 
                 <div className="test-card-action">
-                  {isSubmitted ? (
-                    <button
-                      type="button"
-                      className="submitted-test-button"
-                      disabled
-                    >
-                      Submitted
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className={
-                        isResume
-                          ? "resume-test-button"
-                          : ""
-                      }
-                      onClick={() =>
-                        openTest(
-                          test.test_id
-                        )
-                      }
-                    >
-                      {isResume
-                        ? "Resume Test"
-                        : "Start Test"}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className={
+                      isResume
+                        ? "resume-test-button"
+                        : ""
+                    }
+                    onClick={() =>
+                      openTest(test.test_id)
+                    }
+                  >
+                    {isResume
+                      ? "Resume Test"
+                      : "Start Test"}
+                  </button>
                 </div>
               </article>
             );
@@ -435,9 +434,8 @@ function TestsPage() {
           <h3>No available tests</h3>
 
           <p>
-            There are no available tests
-            matching your current search or
-            provider selection.
+            There are no available tests matching your
+            current search or provider selection.
           </p>
         </div>
       )}

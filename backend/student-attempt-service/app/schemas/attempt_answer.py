@@ -14,5 +14,7 @@ class AttemptAnswerResponse(BaseModel):
     attempt_id: UUID
     question_id: UUID
     selected_answer: str | None
-    answered_at: datetime
+    question_state: str
+    visited_at: datetime | None
+    answered_at: datetime | None
     updated_at: datetime

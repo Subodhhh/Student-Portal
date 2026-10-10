@@ -1,44 +1,166 @@
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import "../../styles/test-details.css";
 
-const test = {
-  name: "NEET Full Mock Test 01",
-  provider: "ABC Coaching Institute",
-  exam: "NEET",
-  testType: "Full Length Mock Test",
-  status: "Upcoming",
-  questions: 180,
-  marks: 720,
-  duration: "180 Minutes",
-  date: "25 Sep 2026",
-  time: "10:00 AM - 01:00 PM",
-  description:
-    "Complete NEET pattern mock examination covering Physics, Chemistry and Biology.",
-  instructions: [
-    "The test contains 180 questions.",
-    "The total duration of the test is 180 minutes.",
-    "The timer will start when you begin the test.",
-    "Make sure you have a stable internet connection before starting.",
-    "Once the test is submitted, you cannot attempt it again.",
-  ],
+import "../../styles/test-details.css";
+import { TEST_API_URL } from "../../services/api";
+
+type Test = {
+  test_id: string;
+  name: string;
+  description: string | null;
+  duration_minutes: number;
+  total_questions: number;
+  total_marks: number;
+  start_at: string | null;
+  end_at: string | null;
+  status: string;
+
+  provider: {
+    provider_id: string;
+    name: string;
+  };
+
+  branch: {
+    branch_id: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+  };
 };
+
+function formatDate(date: string | null) {
+  if (!date) {
+    return "Date not specified";
+  }
+
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatTime(date: string | null) {
+  if (!date) {
+    return "";
+  }
+
+  return new Date(date).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function TestDetailsPage() {
   const navigate = useNavigate();
   const { testId } = useParams();
 
+  const [test, setTest] = useState<Test | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadTest() {
+      if (!testId) {
+        setError("Test not found.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch(
+          `${TEST_API_URL}/tests/${testId}/details`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load test: ${response.status}`
+          );
+        }
+
+        const data: Test = await response.json();
+
+        setTest(data);
+      } catch (loadError) {
+        console.error(
+          "Failed to load test details:",
+          loadError
+        );
+
+        setError("Unable to load test details.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadTest();
+  }, [testId]);
+
   function handleTakeTest() {
+    if (!testId) {
+      return;
+    }
+
     navigate(`/tests/${testId}/attempt`);
   }
+
+  if (loading) {
+    return (
+      <section className="test-details-page">
+        <button
+          className="test-details-back"
+          type="button"
+          onClick={() => navigate("/scheduled-tests")}
+        >
+          ← Back to Scheduled Tests
+        </button>
+
+        <div className="test-details-description">
+          <p>Loading test details...</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (error || !test) {
+    return (
+      <section className="test-details-page">
+        <button
+          className="test-details-back"
+          type="button"
+          onClick={() => navigate("/scheduled-tests")}
+        >
+          ← Back to Scheduled Tests
+        </button>
+
+        <div className="test-details-description">
+          <p>{error || "Test not found."}</p>
+        </div>
+      </section>
+    );
+  }
+
+  const isAvailable =
+    test.status === "ACTIVE" &&
+    test.start_at !== null &&
+    test.end_at !== null &&
+    new Date() >= new Date(test.start_at) &&
+    new Date() <= new Date(test.end_at);
 
   return (
     <section className="test-details-page">
       <button
         className="test-details-back"
         type="button"
-        onClick={() => navigate("/tests")}
+        onClick={() => navigate("/scheduled-tests")}
       >
-        ← Back to Tests
+        ← Back to Scheduled Tests
       </button>
 
       <div className="test-details-header">
@@ -61,47 +183,60 @@ function TestDetailsPage() {
               </svg>
             </span>
 
-            <span>{test.provider}</span>
+            <span>{test.provider.name}</span>
+
+            {test.branch?.name && (
+              <span> · {test.branch.name}</span>
+            )}
           </div>
 
           <h2>{test.name}</h2>
-          <p>{test.testType}</p>
+
+          <p>
+            {test.description ||
+              "Test details provided by your provider."}
+          </p>
         </div>
 
         <span
           className={`test-details-status ${
-            test.status === "Available"
+            isAvailable
               ? "test-details-status-available"
               : "test-details-status-upcoming"
           }`}
         >
-          {test.status}
+          {isAvailable ? "Available" : "Upcoming"}
         </span>
       </div>
 
       <div className="test-details-description">
-        <p>{test.description}</p>
+        <p>
+          {test.description ||
+            "No additional description has been provided for this test."}
+        </p>
       </div>
 
       <div className="test-details-grid">
         <div className="test-detail-item">
-          <span>Exam</span>
-          <strong>{test.exam}</strong>
+          <span>Provider</span>
+          <strong>{test.provider.name}</strong>
         </div>
 
         <div className="test-detail-item">
           <span>Questions</span>
-          <strong>{test.questions}</strong>
+          <strong>{test.total_questions}</strong>
         </div>
 
         <div className="test-detail-item">
           <span>Total Marks</span>
-          <strong>{test.marks}</strong>
+          <strong>{test.total_marks}</strong>
         </div>
 
         <div className="test-detail-item">
           <span>Duration</span>
-          <strong>{test.duration}</strong>
+          <strong>
+            {test.duration_minutes} Minutes
+          </strong>
         </div>
       </div>
 
@@ -111,29 +246,27 @@ function TestDetailsPage() {
         <div className="test-schedule-info">
           <div>
             <span>Date</span>
-            <strong>{test.date}</strong>
+            <strong>
+              {formatDate(test.start_at)}
+            </strong>
           </div>
 
           <div>
             <span>Test Window</span>
-            <strong>{test.time}</strong>
+            <strong>
+              {formatTime(test.start_at)} -{" "}
+              {formatTime(test.end_at)}
+            </strong>
           </div>
         </div>
       </div>
 
-      <div className="test-details-section">
-        <h3>Instructions</h3>
-
-        <ul className="test-instructions">
-          {test.instructions.map((instruction, index) => (
-            <li key={index}>{instruction}</li>
-          ))}
-        </ul>
-      </div>
-
-      {test.status === "Available" && (
+      {isAvailable && (
         <div className="test-details-action">
-          <button type="button" onClick={handleTakeTest}>
+          <button
+            type="button"
+            onClick={handleTakeTest}
+          >
             Take Test
           </button>
         </div>

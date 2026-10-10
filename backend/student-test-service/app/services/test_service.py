@@ -1,9 +1,15 @@
 from sqlalchemy.orm import Session
 
-from app.repositories.question_repository import get_questions_by_test
+from app.repositories.question_repository import (
+    get_questions_by_test,
+)
+
 from app.repositories.test_repository import (
     get_active_tests,
+    get_scheduled_tests,
+    get_missed_tests,
     get_test_by_id,
+    get_test_for_student,
 )
 
 
@@ -48,11 +54,55 @@ def get_test(
     return format_test(row)
 
 
+def get_test_details(
+    db: Session,
+    test_id,
+    student_id: str,
+):
+    row = get_test_for_student(
+        db=db,
+        test_id=test_id,
+        student_id=student_id,
+    )
+
+    return format_test(row)
+
+
 def get_available_tests(
     db: Session,
     student_id: str,
 ):
     rows = get_active_tests(
+        db=db,
+        student_id=student_id,
+    )
+
+    return [
+        format_test(row)
+        for row in rows
+    ]
+
+
+def get_scheduled_tests_for_student(
+    db: Session,
+    student_id: str,
+):
+    rows = get_scheduled_tests(
+        db=db,
+        student_id=student_id,
+    )
+
+    return [
+        format_test(row)
+        for row in rows
+    ]
+
+
+def get_missed_tests_for_student(
+    db: Session,
+    student_id: str,
+):
+    rows = get_missed_tests(
         db=db,
         student_id=student_id,
     )
@@ -88,6 +138,7 @@ def get_test_for_start(
         {
             "question_id": question.question_id,
             "question_order": question.question_order,
+            "subject": question.subject,
             "question_text": question.question_text,
             "question_type": question.question_type,
             "option_a": question.option_a,

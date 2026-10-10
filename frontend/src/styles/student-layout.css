@@ -8,8 +8,8 @@ body,
 .student-layout {
   min-height: 100vh;
   display: flex;
-  background: #f5f7fb;
-  color: #0f172a;
+  background: var(--page-background);
+  color: var(--text-primary);
 }
 
 /* =========================
@@ -19,8 +19,8 @@ body,
 .desktop-sidebar-container {
   flex-shrink: 0;
   align-self: stretch;
-  background: #ffffff;
-  border-right: 1px solid #e2e8f0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
 }
 
 .student-sidebar {
@@ -30,7 +30,7 @@ body,
   width: 250px;
   min-height: 100%;
   box-sizing: border-box;
-  background: #ffffff;
+  background: var(--surface);
   padding: 20px 12px;
   transition: width 0.2s ease;
 }
@@ -53,10 +53,11 @@ body,
 
 .student-logo {
   padding: 0 8px;
-  color: #2563eb;
+  color: var(--primary);
   font-size: 19px;
   font-weight: 700;
   white-space: nowrap;
+  letter-spacing: -0.2px;
 }
 
 .sidebar-collapsed .student-sidebar-top {
@@ -77,19 +78,23 @@ body,
   width: 30px;
   height: 30px;
   padding: 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--surface);
   color: #475569;
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .sidebar-toggle:hover {
-  background: #eff6ff;
+  background: var(--primary-light);
   border-color: #bfdbfe;
-  color: #2563eb;
+  color: var(--primary);
 }
 
 .student-nav {
@@ -99,6 +104,7 @@ body,
 }
 
 .student-nav a {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -117,12 +123,12 @@ body,
 
 .student-nav a:hover {
   background: #f8fafc;
-  color: #2563eb;
+  color: var(--primary);
 }
 
 .student-nav a.active {
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--primary-light);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -165,25 +171,62 @@ body,
    ========================= */
 
 .student-header {
-  min-height: 76px;
+  min-height: 82px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
+  gap: 24px;
+  padding: 12px 28px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
-.student-header h1 {
+.student-header-left {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* =========================
+   PAGE TITLE
+   ========================= */
+
+.student-page-heading {
+  position: relative;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+/* Strong visible blue accent */
+
+.student-page-heading::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 4px;
+  border-radius: 999px;
+  background: #2563eb;
+}
+
+.student-page-heading h1 {
   margin: 0;
-  font-size: 20px;
+  color: #0f172a;
+  font-size: 23px;
+  font-weight: 750;
+  line-height: 1.2;
+  letter-spacing: -0.55px;
 }
 
-.student-header p {
-  margin: 4px 0 0;
+.student-page-heading p {
+  margin: 5px 0 0;
   color: #64748b;
   font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 /* =========================
@@ -194,10 +237,11 @@ body,
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 /* =========================
-   NOTIFICATION BUTTON
+   NOTIFICATION
    ========================= */
 
 .notification-button {
@@ -208,19 +252,23 @@ body,
   width: 40px;
   height: 40px;
   padding: 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--surface);
   color: #475569;
   cursor: pointer;
   transition:
     background 0.15s ease,
-    color 0.15s ease;
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .notification-button:hover {
-  background: #f8fafc;
-  color: #2563eb;
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .notification-badge {
@@ -230,9 +278,9 @@ body,
   min-width: 17px;
   height: 17px;
   padding: 0 4px;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--surface);
   border-radius: 999px;
-  background: #2563eb;
+  background: var(--primary);
   color: #ffffff;
   font-size: 9px;
   font-weight: 700;
@@ -256,6 +304,7 @@ body,
   border: 0;
   background: transparent;
   cursor: pointer;
+  border-radius: 50%;
 }
 
 .student-avatar {
@@ -264,11 +313,20 @@ body,
   justify-content: center;
   width: 40px;
   height: 40px;
+  border: 1px solid #bfdbfe;
   border-radius: 50%;
   background: #dbeafe;
-  color: #2563eb;
+  color: var(--primary);
   font-size: 14px;
   font-weight: 700;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.student-avatar-button:hover .student-avatar {
+  background: #bfdbfe;
+  border-color: #93c5fd;
 }
 
 .student-profile-dropdown {
@@ -278,10 +336,10 @@ body,
   z-index: 50;
   width: 220px;
   padding: 8px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
 }
 
 .student-profile-info {
@@ -295,15 +353,19 @@ body,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .student-profile-info strong {
-  color: #0f172a;
+  overflow: hidden;
+  color: var(--text-primary);
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .student-profile-info div span {
-  color: #64748b;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -317,7 +379,7 @@ body,
 .student-profile-divider {
   height: 1px;
   margin: 6px 0;
-  background: #e2e8f0;
+  background: var(--border);
 }
 
 .student-profile-dropdown > button {
@@ -330,6 +392,9 @@ body,
   text-align: left;
   font-size: 13px;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .student-profile-dropdown > button:hover {
@@ -337,11 +402,11 @@ body,
 }
 
 .student-profile-dropdown .logout-button {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .student-profile-dropdown .logout-button:hover {
-  background: #fef2f2;
+  background: var(--danger-background);
 }
 
 /* =========================
@@ -355,14 +420,8 @@ body,
 }
 
 /* =========================
-   MOBILE HEADER
+   MOBILE
    ========================= */
-
-.student-header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 
 .mobile-menu-button {
   display: none;
@@ -370,10 +429,11 @@ body,
   justify-content: center;
   width: 38px;
   height: 38px;
+  flex-shrink: 0;
   padding: 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: #475569;
   font-size: 19px;
   cursor: pointer;
@@ -386,6 +446,22 @@ body,
 .mobile-sidebar-overlay {
   display: none;
 }
+
+/* =========================
+   FOCUS
+   ========================= */
+
+.notification-button:focus-visible,
+.student-avatar-button:focus-visible,
+.sidebar-toggle:focus-visible,
+.mobile-menu-button:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+/* =========================
+   TABLET / MOBILE
+   ========================= */
 
 @media (max-width: 768px) {
   .desktop-sidebar-container {
@@ -413,11 +489,20 @@ body,
   }
 
   .student-header {
-    padding: 14px 18px;
+    min-height: 72px;
+    padding: 12px 18px;
   }
 
   .student-content {
     padding: 18px;
+  }
+
+  .student-page-heading h1 {
+    font-size: 20px;
+  }
+
+  .student-page-heading p {
+    font-size: 12px;
   }
 
   .mobile-sidebar-container {
@@ -473,6 +558,7 @@ body,
     z-index: 90;
     display: block;
     background: rgba(15, 23, 42, 0.25);
+    backdrop-filter: blur(1px);
   }
 }
 
@@ -497,5 +583,28 @@ body,
 
   .student-profile-dropdown {
     right: -4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .student-page-heading {
+    padding-left: 12px;
+  }
+
+  .student-page-heading::before {
+    width: 3px;
+  }
+
+  .student-page-heading h1 {
+    font-size: 18px;
+    letter-spacing: -0.3px;
+  }
+
+  .student-page-heading p {
+    display: none;
+  }
+
+  .student-header {
+    gap: 10px;
   }
 }

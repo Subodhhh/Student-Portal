@@ -18,6 +18,7 @@ import RankingPage from "../pages/student/RankingPage";
 import NotificationsPage from "../pages/student/NotificationsPage";
 import ProfilePage from "../pages/student/ProfilePage";
 import PerformancePage from "../pages/student/PerformancePage";
+import TestResultPage from "../pages/student/TestResultPage";
 
 import ProtectedRoute from "../components/ProtectedRoute";
 
@@ -89,6 +90,11 @@ function AppRoutes() {
             <Route
               path="/tests/:testId/performance"
               element={<PerformancePage />}
+            />
+
+            <Route
+              path="/tests/result/:attemptId"
+              element={<TestResultPage />}
             />
           </Route>
         </Route>

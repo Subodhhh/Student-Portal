@@ -52,14 +52,36 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   background: #ffffff;
+  position: relative;
+  overflow: hidden;
   transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.scheduled-test-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: #2563eb;
+  opacity: 0;
+  transition: opacity 0.18s ease;
 }
 
 .scheduled-test-card:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  transform: translateY(-3px);
+  border-color: #93c5fd;
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.12),
+    0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.scheduled-test-card:hover::before {
+  opacity: 1;
 }
 
 .scheduled-test-main {
@@ -172,15 +194,15 @@
 }
 
 .scheduled-test-action .scheduled-test-details-button {
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
 }
 
 .scheduled-test-action .scheduled-test-details-button:hover {
-  border-color: #94a3b8;
-  background: #f8fafc;
-  color: #0f172a;
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
 }
 
 @media (max-width: 768px) {
@@ -236,4 +258,61 @@
   color: #ffffff !important;
   cursor: default !important;
   opacity: 0.9;
+}
+
+.scheduled-tests-empty {
+  min-height: 430px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.scheduled-tests-empty-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: #eef5ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+
+.scheduled-tests-empty-icon svg {
+  width: 34px;
+  height: 34px;
+  color: #2563eb;
+  stroke-width: 1.8;
+}
+
+.scheduled-tests-empty h3 {
+  margin: 0 0 10px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.scheduled-tests-empty p {
+  margin: 0;
+  max-width: 520px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.scheduled-tests-empty-card {
+  min-height: 430px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scheduled-tests-empty {
+  width: 100%;
 }

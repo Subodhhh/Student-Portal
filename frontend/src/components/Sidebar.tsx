@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 
 type SidebarProps = {
   onNavigate?: () => void;
 };
 
 function Sidebar({ onNavigate }: SidebarProps) {
+  const location = useLocation();
+
+  const isTestResultPage =
+    location.pathname.startsWith("/tests/result/");
+
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -72,7 +77,7 @@ function Sidebar({ onNavigate }: SidebarProps) {
           {isExpanded && <span>My Enrollments</span>}
         </NavLink>
 
-        <NavLink to="/tests" onClick={onNavigate}>
+        <NavLink to="/tests" end onClick={onNavigate}>
           <span className="sidebar-nav-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <rect x="5" y="3" width="14" height="18" rx="2" />
@@ -98,7 +103,7 @@ function Sidebar({ onNavigate }: SidebarProps) {
           {isExpanded && <span>Scheduled Tests</span>}
         </NavLink>
 
-        <NavLink to="/results" onClick={onNavigate}>
+        <NavLink to="/results" onClick={onNavigate} className={isTestResultPage ? "active" : undefined}>
           <span className="sidebar-nav-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <rect x="4" y="3" width="16" height="18" rx="2" />

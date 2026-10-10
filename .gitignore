@@ -49,3 +49,6 @@ Thumbs.db
 # Local authentication/session cookies
 cookies.txt
 **/cookies.txt
+
+# All cookie/session files
+*cookie*.txt

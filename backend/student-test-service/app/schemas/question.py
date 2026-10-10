@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class QuestionResponse(BaseModel):
     question_id: UUID
     question_order: int
+    subject: str | None
     question_text: str
     question_type: str
     option_a: str | None

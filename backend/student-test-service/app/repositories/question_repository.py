@@ -13,7 +13,10 @@ def get_questions_by_test(
     query = (
         select(Question)
         .where(Question.test_id == test_id)
-        .order_by(Question.question_order)
+        .order_by(
+            Question.subject.asc().nulls_last(),
+            Question.question_order,
+        )
     )
 
     return list(

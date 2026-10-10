@@ -29,6 +29,11 @@ class Question(Base):
             "ix_questions_test_id",
             "test_id",
         ),
+        Index(
+            "ix_questions_test_subject",
+            "test_id",
+            "subject",
+        ),
     )
 
     question_id: Mapped[UUID] = mapped_column(
@@ -40,6 +45,11 @@ class Question(Base):
         PGUUID(as_uuid=True),
         ForeignKey("tests.test_id", ondelete="CASCADE"),
         nullable=False,
+    )
+
+    subject: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
     )
 
     question_order: Mapped[int] = mapped_column(

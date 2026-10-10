@@ -1,19 +1,91 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { PROFILE_API_URL } from "../services/api";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  PROFILE_API_URL,
+  NOTIFICATION_API_URL,
+} from "../services/api";
 
 type HeaderProps = {
   onMenuClick?: () => void;
 };
 
+const pageTitles: Record<
+  string,
+  {
+    title: string;
+    subtitle: string;
+  }
+> = {
+  "/dashboard": {
+    title: "Dashboard",
+    subtitle: "Overview of your tests and performance.",
+  },
+  "/my-institutes": {
+    title: "My Enrollments",
+    subtitle: "View your providers, branches, and batches.",
+  },
+  "/tests": {
+    title: "Tests",
+    subtitle: "Browse and attempt your available tests.",
+  },
+  "/scheduled-tests": {
+    title: "Scheduled Tests",
+    subtitle: "View your upcoming scheduled tests.",
+  },
+  "/results": {
+    title: "Results",
+    subtitle: "View your test results and performance.",
+  },
+  "/ranking": {
+    title: "Ranking",
+    subtitle: "Compare your performance with other students.",
+  },
+  "/profile": {
+    title: "Profile",
+    subtitle: "View and manage your profile information.",
+  },
+  "/notifications": {
+    title: "Notifications",
+    subtitle: "View your latest notifications and updates.",
+  },
+  "/performance": {
+    title: "Performance",
+    subtitle: "Track your overall test performance.",
+  },
+};
+
 function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [profileOpen, setProfileOpen] = useState(false);
+
   const [studentName, setStudentName] = useState(
     () => sessionStorage.getItem("student_name") || "Student"
   );
 
-  const unreadNotifications = 3;
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  const isTestResultPage =
+    location.pathname.startsWith("/tests/result/");
+
+  const isTestPerformancePage =
+    /^\/tests\/[^/]+\/performance$/.test(
+      location.pathname
+    );
+
+  const currentPage = isTestResultPage
+    ? {
+        title: "Test Performance",
+        subtitle: "View your performance and detailed test results.",
+      }
+    : isTestPerformancePage
+    ? {
+        title: "Test Performance",
+        subtitle: "View your performance and detailed test results.",
+      }
+    : pageTitles[location.pathname] ||
+      pageTitles["/dashboard"];
 
   useEffect(() => {
     const fetchStudentProfile = async () => {
@@ -44,6 +116,33 @@ function Header({ onMenuClick }: HeaderProps) {
     fetchStudentProfile();
   }, []);
 
+  useEffect(() => {
+    const fetchUnreadNotificationCount = async () => {
+      try {
+        const response = await fetch(
+          `${NOTIFICATION_API_URL}/notifications/unread-count`,
+          {
+            credentials: "include",
+          }
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json();
+        setUnreadNotifications(data.unread_count ?? 0);
+      } catch (error) {
+        console.error(
+          "Failed to fetch unread notification count:",
+          error
+        );
+      }
+    };
+
+    fetchUnreadNotificationCount();
+  }, []);
+
   const studentInitial = studentName.charAt(0).toUpperCase();
 
   return (
@@ -58,8 +157,9 @@ function Header({ onMenuClick }: HeaderProps) {
           ☰
         </button>
 
-        <div>
-          <h1>Student Portal</h1>
+        <div className="student-page-heading">
+          <h1>{currentPage.title}</h1>
+          <p>{currentPage.subtitle}</p>
         </div>
       </div>
 
@@ -85,7 +185,9 @@ function Header({ onMenuClick }: HeaderProps) {
 
           {unreadNotifications > 0 && (
             <span className="notification-badge">
-              {unreadNotifications > 99 ? "99+" : unreadNotifications}
+              {unreadNotifications > 99
+                ? "99+"
+                : unreadNotifications}
             </span>
           )}
         </button>

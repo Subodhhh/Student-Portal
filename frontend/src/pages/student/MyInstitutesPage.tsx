@@ -75,11 +75,6 @@ function MyInstitutesPage() {
 
   return (
     <div className="page-container my-institutes-page">
-      <div className="my-institutes-header">
-        <h1>My Enrollments</h1>
-        <p>View your providers, branches, and batches.</p>
-      </div>
-
       {enrollments.length === 0 ? (
         <div className="empty-state">
           <h3>No providers yet</h3>
@@ -173,6 +168,7 @@ function MyInstitutesPage() {
             <div className="enrollment-modal-header">
               <div>
                 <h2>{selectedEnrollment.provider.name}</h2>
+
                 <span
                   className={`institute-status ${selectedEnrollment.status.toLowerCase()}`}
                 >
