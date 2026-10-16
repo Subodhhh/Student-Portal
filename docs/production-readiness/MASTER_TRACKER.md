@@ -6,8 +6,8 @@ Nothing is committed or pushed without explicit authorization. Secrets live only
 ## Verified facts (2026-10-16)
 
 * Neon (read-only inspection, credentials never printed):
-  * `backend/student-authentication-service/.env` → Neon branch **subodh_dev** (20 Student tables only).
-  * `backend/institute-services.env` → Neon branch **institute_portal_test** (77 tables: Institute tables plus a
+  * `student-backend/student-authentication-service/.env` → Neon branch **subodh_dev** (20 Student tables only).
+  * `deploy/institute/institute.env` → Neon branch **institute_portal_test** (77 tables: Institute tables plus a
     stale copy of the Student tables taken when the branch was created).
   * Same role/database name on both; server TimeZone = GMT.
 * `subodh_dev` FKs: `tests.provider_id → providers`, `tests.branch_id → branches`, `enrollments.student_id → students`, … so any exam the

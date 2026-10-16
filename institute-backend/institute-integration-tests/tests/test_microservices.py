@@ -270,7 +270,7 @@ NEW_ROUTES = {
 
 
 def test_all_legacy_routes_still_exist():
-    legacy_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "institute-backend"))
+    legacy_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legacy-monolith"))
     if not os.path.isdir(legacy_dir):
         pytest.skip("legacy monolith not present")
     sys.path.insert(0, legacy_dir)

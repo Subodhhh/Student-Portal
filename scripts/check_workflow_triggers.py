@@ -57,12 +57,13 @@ def check() -> list:
     if not paths:
         errors.append("deploy-pages.yml has no push path filter: any push to dev redeploys the Student Portal")
     else:
-        for p in ("institute-frontend/src/App.tsx", "backend/institute-backend/app/main.py", "docs/institute-portal/README.md",
-                  "backend/student-test-service/app/main.py", ".github/workflows/institute-backend-ci.yml",
+        for p in ("institute-frontend/src/App.tsx", "institute-backend/legacy-monolith/app/main.py", "docs/institute-portal/README.md",
+                  "student-backend/student-test-service/app/main.py", ".github/workflows/institute-backend-ci.yml",
                   "scripts/check_workflow_triggers.py"):
             if triggers(p, paths):
                 errors.append(f"{p} must NOT trigger the Student Pages deployment")
-        for p in ("frontend/src/App.tsx", "frontend/package.json", "frontend/package-lock.json", "frontend/public/favicon.svg",
+        for p in ("student-frontend/src/App.tsx", "student-frontend/package.json", "student-frontend/package-lock.json",
+                  "student-frontend/public/favicon.svg",
                   ".github/workflows/deploy-pages.yml"):
             if not triggers(p, paths):
                 errors.append(f"{p} MUST still trigger the Student Pages deployment")
@@ -95,8 +96,8 @@ def check() -> list:
                          ("tests/test_internal_answer_key.py", "the answer-key correction tests"),
                          ("verify-institute-services-on-postgres.sh", "the service migration verification on PostgreSQL"),
                          ("gen_gateway_conf.py --check", "the gateway-configuration freshness check"),
-                         ("docker build -f backend/institute-", "the Institute service image builds"),
-                         ("backend/institute-integration-tests", "the cross-service integration suite")):
+                         ("docker build -f institute-backend/institute-", "the Institute service image builds"),
+                         ("institute-backend/institute-integration-tests", "the cross-service integration suite")):
         if needle not in all_ci:
             errors.append(f"no CI workflow runs {what} ({needle!r} not found)")
     return errors

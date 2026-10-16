@@ -25,12 +25,12 @@ prep() {   # $1 = database name: baseline students table + the real Student chai
   local url="$PGBASE/$1"
   psql "$PSQL_BASE/$1" -q -c "create table students (student_id varchar(20) primary key, first_name varchar(255) not null default '', last_name varchar(255) not null default '', email varchar(255) unique not null default gen_random_uuid()::text, phone varchar(20), status varchar(20) not null default 'ACTIVE', deleted_at timestamp)"
   for svc in student-enrollment-service student-test-service student-attempt-service student-result-service student-notification-service; do
-    (cd "$ROOT/backend/$svc" && PYTHONPATH=. DATABASE_URL="$url" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
+    (cd "$ROOT/student-backend/$svc" && PYTHONPATH=. DATABASE_URL="$url" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
   done
 }
 services_up() {   # $1 = database name
   for s in "${SERVICES[@]}"; do
-    (cd "$ROOT/backend/institute-$s-service" && PYTHONPATH=".:$ROOT/backend/institute-common" DATABASE_URL="$PGBASE/$1" CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
+    (cd "$ROOT/institute-backend/institute-$s-service" && PYTHONPATH=".:$ROOT/institute-backend/institute-common" DATABASE_URL="$PGBASE/$1" CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
     echo "  applied $s chain on $1"
   done
 }
@@ -38,7 +38,7 @@ inventory() { python3 "$ROOT/scripts/pg_schema_inventory.py" "$PGBASE/$1" --skip
 
 echo "== A: legacy chain"
 prep inst_verify_legacy
-(cd "$ROOT/backend/institute-backend" && DATABASE_URL="$PGBASE/inst_verify_legacy" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
+(cd "$ROOT/institute-backend/legacy-monolith" && DATABASE_URL="$PGBASE/inst_verify_legacy" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
 inventory inst_verify_legacy '^(.*_alembic_version)$' > /tmp/inv_A.txt
 
 echo "== B: service chains on an empty database"
@@ -57,9 +57,9 @@ echo "  adopted schema identical to the fresh one; pre-existing objects untouche
 
 echo "== alembic check per service"
 for s in "${SERVICES[@]}"; do
-  (cd "$ROOT/backend/institute-$s-service" && PYTHONPATH=".:$ROOT/backend/institute-common" DATABASE_URL="$PGBASE/inst_verify_services" CORS_ORIGINS=http://x alembic check)
+  (cd "$ROOT/institute-backend/institute-$s-service" && PYTHONPATH=".:$ROOT/institute-backend/institute-common" DATABASE_URL="$PGBASE/inst_verify_services" CORS_ORIGINS=http://x alembic check)
 done
 
 echo "== integration suite on PostgreSQL"
-cd "$ROOT/backend/institute-integration-tests"
+cd "$ROOT/institute-backend/institute-integration-tests"
 TEST_DATABASE_URL="$PGBASE/inst_verify_services" python3 -m pytest -q

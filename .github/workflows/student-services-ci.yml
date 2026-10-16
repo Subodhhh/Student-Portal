@@ -6,10 +6,10 @@ name: Student services CI
 
 on:
   pull_request:
-    paths: ["backend/student-*/**", "backend/institute-backend/tests/test_schema_ownership.py", ".github/workflows/student-services-ci.yml"]
+    paths: ["student-backend/**", "institute-backend/legacy-monolith/tests/test_schema_ownership.py", ".github/workflows/student-services-ci.yml"]
   push:
     branches: [dev, QA, main, "feature/institute-portal"]
-    paths: ["backend/student-*/**", ".github/workflows/student-services-ci.yml"]
+    paths: ["student-backend/**", ".github/workflows/student-services-ci.yml"]
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
             tests: tests/test_internal_notifications.py
     defaults:
       run:
-        working-directory: backend/${{ matrix.service }}
+        working-directory: student-backend/${{ matrix.service }}
     env:
       DATABASE_URL: sqlite://
       REDIS_URL: redis://localhost:6379/0
@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/${{ matrix.service }}/requirements.txt
+          cache-dependency-path: student-backend/${{ matrix.service }}/requirements.txt
       - name: Install (the service's own requirements, as its Docker image would)
         run: pip install -r requirements.txt pytest httpx ${{ matrix.extra }}
       - name: Tests

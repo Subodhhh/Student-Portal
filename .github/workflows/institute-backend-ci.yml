@@ -2,10 +2,10 @@ name: Institute backend CI
 
 on:
   pull_request:
-    paths: ["backend/institute-backend/**", "backend/student-*/**", "scripts/**", ".github/workflows/institute-backend-ci.yml", "docs/institute-portal/**"]
+    paths: ["institute-backend/legacy-monolith/**", "student-backend/**", "scripts/**", "tests/**", ".github/workflows/institute-backend-ci.yml", "docs/institute-portal/**"]
   push:
     branches: [dev, QA, main, "feature/institute-portal"]
-    paths: ["backend/institute-backend/**", "backend/student-*/**", "scripts/**", ".github/workflows/institute-backend-ci.yml"]
+    paths: ["institute-backend/legacy-monolith/**", "student-backend/**", "scripts/**", "tests/**", ".github/workflows/institute-backend-ci.yml"]
 
 permissions:
   contents: read
@@ -15,14 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend/institute-backend
+        working-directory: institute-backend/legacy-monolith
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/institute-backend/requirements-dev.txt
+          cache-dependency-path: institute-backend/legacy-monolith/requirements-dev.txt
       - run: pip install -r requirements-dev.txt ruff pip-audit
       - name: Lint
         run: ruff check app tests
@@ -55,9 +55,9 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
       - name: Install (Institute + the Student services whose migrations are replayed)
         run: |
-          pip install -r backend/institute-backend/requirements-dev.txt pytest httpx
+          pip install -r institute-backend/legacy-monolith/requirements-dev.txt pytest httpx
           for s in student-enrollment-service student-test-service student-attempt-service student-result-service student-notification-service; do
-            pip install -r backend/$s/requirements.txt
+            pip install -r student-backend/$s/requirements.txt
           done
       - name: Verify migrations and run the suite on PostgreSQL
         run: scripts/verify-institute-on-postgres.sh

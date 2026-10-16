@@ -33,16 +33,16 @@ fi
 psql "$PSQL_URL" -q -c "create table students (student_id varchar(20) primary key, first_name varchar(255) not null default '', last_name varchar(255) not null default '', email varchar(255) unique not null default gen_random_uuid()::text, phone varchar(20), status varchar(20) not null default 'ACTIVE', deleted_at timestamp)"
 
 for svc in student-enrollment-service student-test-service student-attempt-service student-result-service student-notification-service; do
-  (cd "$ROOT/backend/$svc" && PYTHONPATH=. DATABASE_URL="$PGURL" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
+  (cd "$ROOT/student-backend/$svc" && PYTHONPATH=. DATABASE_URL="$PGURL" REDIS_URL=redis://x CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
   echo "applied $svc chain"
 done
 
-cd "$ROOT/backend/institute-backend"
+cd "$ROOT/institute-backend/legacy-monolith"
 export DATABASE_URL="$PGURL" REDIS_URL=redis://x CORS_ORIGINS=http://x
 alembic upgrade head >/dev/null && echo "applied institute chain"
 alembic check
 TEST_DATABASE_URL="$PGURL" python3 -m pytest -q -k "not migrations"
 
 # Re-evaluation uses PostgreSQL-only SQL: prove it scores exactly like the production evaluator on the real tables.
-cd "$ROOT/backend/student-result-service"
+cd "$ROOT/student-backend/student-result-service"
 DATABASE_URL="$PGURL" TEST_DATABASE_URL="$PGURL" python3 -m pytest -q tests/test_corrections_pg.py

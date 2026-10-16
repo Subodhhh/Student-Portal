@@ -8,7 +8,8 @@ import pytest
 from app import models  # noqa: F401
 from app.database import Base
 
-BACKEND = Path(__file__).resolve().parents[2]
+# <repo>/institute-backend/legacy-monolith/tests -> <repo>/student-backend
+BACKEND = Path(__file__).resolve().parents[3] / "student-backend"
 # Mapped for querying only; created by other services' chains.
 EXTERNAL = {"students", "providers", "branches", "batches", "enrollments", "enrollment_batches"}
 

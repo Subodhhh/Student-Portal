@@ -1,14 +1,14 @@
 # Institute Portal
 
 A separate staff-facing application in this monorepo, alongside the Student Portal. It has its own
-frontend (`institute-frontend/`) and one backend (`backend/institute-backend/`). Student identities,
+frontend (`institute-frontend/`) and one backend (`institute-backend/legacy-monolith/`). Student identities,
 exam delivery, attempts and evaluation stay in the existing Student services.
 
 > **The backend is now split into seven services behind a gateway: see [MICROSERVICES.md](MICROSERVICES.md).** The sections below describe the
-> behaviour (unchanged) and were written for the monolith, which is kept in `backend/institute-backend` until the services are verified.
+> behaviour (unchanged) and were written for the monolith, which is kept in `institute-backend/legacy-monolith` until the services are verified.
 >
 > Status: working on branch `feature/institute-portal`; runs locally against the Neon test branches (Institute: `institute_portal_test`,
-> Student: `subodh_dev`) and is verified end to end by `scripts/e2e/platform_e2e.py` and `scripts/e2e/ui_walkthrough.py`. Still **not
+> Student: `subodh_dev`) and is verified end to end by `tests/e2e/platform_e2e.py` and `tests/e2e/ui_walkthrough.py`. Still **not
 > production-ready** (see [OPERATIONS.md](OPERATIONS.md#blockers-and-open-decisions)): no production database, email provider or domain.
 
 ## Architecture and ownership
@@ -32,7 +32,7 @@ attempt and notification services, one optional setting (`INSTITUTE_SERVICE_API_
 `result_history` (migration `b2d4e1a9c7f3`, append-only trigger on PostgreSQL), and the notification service has an opt-in `NOTIFICATION_CREATE_API_KEYS` guard for its legacy `POST /notifications`, a re-evaluation service and the
 `/internal/v1/results/adjust`, `/tests/{id}/reevaluate` and `/tests/{id}/results/history` endpoints. The Student login API, session
 format, public routes, attempts, evaluation and scheduled-exam behaviour are not modified (route tables were compared with the
-original commit). `docker-compose.yml` gains three services. `deploy-pages.yml` now has a path filter (`frontend/**` and itself) so
+original commit). `docker-compose.yml` gains three services. `deploy-pages.yml` now has a path filter (`student-frontend/**` and itself) so
 Institute-only changes no longer redeploy the Student Portal; every Student frontend change still triggers it
 (`scripts/check_workflow_triggers.py` asserts both).
 
@@ -292,14 +292,14 @@ _Total: 113 operations._
 
 ```bash
 # backend: SQLite + fake Redis, never touches a real database
-cd backend/institute-backend && pip install -r requirements-dev.txt && ruff check app tests && pytest -q
+cd institute-backend/legacy-monolith && pip install -r requirements-dev.txt && ruff check app tests && pytest -q
 # frontend
 cd institute-frontend && npm ci && npm run lint && npm test && npm run build
 # Student-service tests (each service in its own environment; in-memory SQLite). Needs `pip install pytest httpx`.
-cd backend/student-test-service && DATABASE_URL=sqlite:// pytest tests/test_internal_exams.py tests/test_internal_answer_key.py
-cd backend/student-result-service && DATABASE_URL=sqlite:// pytest tests/test_internal_results.py tests/test_internal_corrections.py
-cd backend/student-attempt-service && DATABASE_URL=sqlite:// REDIS_URL=redis://x pytest tests/test_internal_attempts.py
-cd backend/student-notification-service && DATABASE_URL=sqlite:// pytest tests/test_internal_notifications.py
+cd student-backend/student-test-service && DATABASE_URL=sqlite:// pytest tests/test_internal_exams.py tests/test_internal_answer_key.py
+cd student-backend/student-result-service && DATABASE_URL=sqlite:// pytest tests/test_internal_results.py tests/test_internal_corrections.py
+cd student-backend/student-attempt-service && DATABASE_URL=sqlite:// REDIS_URL=redis://x pytest tests/test_internal_attempts.py
+cd student-backend/student-notification-service && DATABASE_URL=sqlite:// pytest tests/test_internal_notifications.py
 # everything against a disposable local PostgreSQL (refuses non-local, non-empty or non-disposable databases); also runs the
 # result-service re-evaluation parity test and the trigger tests
 PGURL=postgresql+psycopg://postgres@127.0.0.1:5432/inst_verify scripts/verify-institute-on-postgres.sh

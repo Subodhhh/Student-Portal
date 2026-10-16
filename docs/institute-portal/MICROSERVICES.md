@@ -1,10 +1,10 @@
 # Institute Portal: microservices
 
 The Institute backend is now seven independently deployable FastAPI services behind one gateway. The original monolith
-(`backend/institute-backend`) is kept unchanged and can still be started with `docker compose --profile legacy up`; remove it once the
+(`institute-backend/legacy-monolith`) is kept unchanged and can still be started with `docker compose --profile legacy up`; remove it once the
 services are verified in your environment.
 
-| Service (`backend/…`) | Package | Owns (writes) | Public API (via the gateway) |
+| Service (`institute-backend/…`) | Package | Owns (writes) | Public API (via the gateway) |
 |---|---|---|---|
 | `institute-identity-service` | `inst_identity` | `staff`, `staff_tokens`, `staff_role_assignments`, `institute_audit_logs` | `/auth/*`, `/staff*`, `/audit-logs`; internal: session introspection, audit ingestion |
 | `institute-organization-service` | `inst_organization` | `providers`, `branches`\* | `/providers*`, `/branches*` |
@@ -34,13 +34,13 @@ Every service except identity also owns a small audit spool table `inst_<service
 
 ## Gateway
 
-`backend/institute-gateway/nginx.conf` is **generated** from the services' route definitions (`python scripts/gen_gateway_conf.py`, `--check`
+`institute-backend/institute-gateway/nginx.conf` is **generated** from the services' route definitions (`python scripts/gen_gateway_conf.py`, `--check`
 in CI). One public origin (`:8010`) keeps cookies, CORS and CSRF exactly as they were. `/internal/` is never proxied.
 
 ## Running it
 
 ```bash
-cp backend/institute-services.env.example backend/institute-services.env      # DATABASE_URL, Student service keys…  (never commit)
+cp deploy/institute/institute.env.example deploy/institute/institute.env      # DATABASE_URL, Student service keys…  (never commit)
 # root .env: INSTITUTE_IDENTITY_KEY, INSTITUTE_ACADEMICS_KEY, INSTITUTE_OPERATIONS_KEY, INSTITUTE_PAPER_KEY  (openssl rand -base64 48)
 docker compose build && docker compose up -d
 # per service, with the migration role:  alembic upgrade head   (order: identity, organization, academics, enrollment, paper, exam, operations)
@@ -87,4 +87,4 @@ Keys are per contract (root `.env`), interpolated into both ends by docker-compo
 * OCR: `OCR_ENGINE=tesseract` (enabled in docker-compose) reads printed pages in the numbered layout; handwriting and poor scans are
   rejected by the per-question confidence bar, and every OCR draft still needs human preview and approval.
 * Contributions share a *paper* (the existing share granularity), not a single version.
-* Docker image builds and the 18-check black-box run (`scripts/e2e/run-stack.sh`) were executed in the sandbox, not in your environment.
+* Docker image builds and the 18-check black-box run (`tests/e2e/run-stack.sh`) were executed in the sandbox, not in your environment.

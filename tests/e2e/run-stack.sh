@@ -14,7 +14,7 @@ docker network create $NET >/dev/null
 docker run -d --name $N-pg --network $NET -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=inst $PG_IMAGE >/dev/null
 docker run -d --name $N-redis --network $NET $REDIS_IMAGE >/dev/null
 until docker exec $N-pg pg_isready -U postgres -d inst >/dev/null 2>&1; do sleep 1; done; sleep 2
-docker exec -i $N-pg psql -U postgres -d inst -q -v ON_ERROR_STOP=1 < scripts/e2e/student_chain_schema.sql
+docker exec -i $N-pg psql -U postgres -d inst -q -v ON_ERROR_STOP=1 < tests/e2e/student_chain_schema.sql
 
 DB="postgresql+psycopg://postgres@$N-pg/inst"
 common=(-e APP_ENV=dev -e DATABASE_URL=$DB -e CORS_ORIGINS=http://localhost:8081 -e SESSION_COOKIE_SECURE=false -e EMAIL_BACKEND=console
@@ -33,11 +33,11 @@ done
 for s in identity organization academics enrollment paper exam operations; do
   docker run -d --name $N-$s --network $NET "${common[@]}" -e INTERNAL_API_KEYS="${INTERNAL[$s]:-}" institute-$s-service:latest >/dev/null
 done
-sed "s/institute-\([a-z]*\)-service:8000/$N-\1:8000/" backend/institute-gateway/nginx.conf > /tmp/$N-nginx.conf
+sed "s/institute-\([a-z]*\)-service:8000/$N-\1:8000/" institute-backend/institute-gateway/nginx.conf > /tmp/$N-nginx.conf
 docker run -d --name $N-gateway --network $NET -p 18010:80 -v /tmp/$N-nginx.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine >/dev/null
 for s in identity organization academics enrollment paper exam operations; do
   for i in $(seq 1 40); do docker exec $N-$s python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/ready', timeout=2)" >/dev/null 2>&1 && break; sleep 1; done
   docker exec $N-$s python -c "import urllib.request as u; print('$s ready', u.urlopen('http://127.0.0.1:8000/ready', timeout=2).status)"
 done
 docker exec -e INSTITUTE_ADMIN_PASSWORD=$PW $N-identity python -m inst_identity.cli create-super-admin e2e-admin@example.com "E2E Admin"
-python3 scripts/e2e/institute_e2e.py http://127.0.0.1:18010 $N-identity STF000001 "$PW"
+python3 tests/e2e/institute_e2e.py http://127.0.0.1:18010 $N-identity STF000001 "$PW"

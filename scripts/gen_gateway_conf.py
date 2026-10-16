@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Generate backend/institute-gateway/nginx.conf from the services' own route definitions (same table the tests use).
+"""Generate institute-backend/institute-gateway/nginx.conf from the services' own route definitions (same table the tests use).
 
     python scripts/gen_gateway_conf.py            # (re)write the file
     python scripts/gen_gateway_conf.py --check    # exit 1 if the committed file is stale
-Needs the service packages importable (see backend/institute-integration-tests/tests/conftest.py for the paths)."""
+Needs the service packages importable (see institute-backend/institute-integration-tests/tests/conftest.py for the paths)."""
 import glob
 import os
 import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-for d in glob.glob(f"{ROOT}/backend/institute-*-service") + [f"{ROOT}/backend/institute-common"]:
+for d in glob.glob(f"{ROOT}/institute-backend/institute-*-service") + [f"{ROOT}/institute-backend/institute-common"]:
     sys.path.insert(0, d)
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("CORS_ORIGINS", "http://localhost")
@@ -27,7 +27,7 @@ from inst_paper.main import app as paper  # noqa: E402
 
 SERVICES = {"identity": identity, "organization": organization, "academics": academics, "enrollment": enrollment,
             "paper": paper, "exam": exam, "operations": operations}
-OUT = f"{ROOT}/backend/institute-gateway/nginx.conf"
+OUT = f"{ROOT}/institute-backend/institute-gateway/nginx.conf"
 
 
 def render() -> str:
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     if "--check" in sys.argv:
         current = open(OUT).read() if os.path.exists(OUT) else ""
         if current != text:
-            sys.exit("backend/institute-gateway/nginx.conf is stale: run python scripts/gen_gateway_conf.py")
+            sys.exit("institute-backend/institute-gateway/nginx.conf is stale: run python scripts/gen_gateway_conf.py")
         print("gateway configuration is up to date")
     else:
         open(OUT, "w").write(text)
