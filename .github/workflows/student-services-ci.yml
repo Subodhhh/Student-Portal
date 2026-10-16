@@ -1,0 +1,65 @@
+name: Student services CI
+
+# Regression tests for the existing Student Portal backends plus the additive /internal/v1 APIs the Institute Portal uses.
+# Everything runs against in-memory SQLite or throwaway service containers on localhost. No repository secrets, no deployment,
+# no production database: the only credentials here are the throwaway ones of the containers started below.
+
+on:
+  pull_request:
+    paths: ["backend/student-*/**", "backend/institute-backend/tests/test_schema_ownership.py", ".github/workflows/student-services-ci.yml"]
+  push:
+    branches: [dev, QA, main, "feature/institute-portal"]
+    paths: ["backend/student-*/**", ".github/workflows/student-services-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  service:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # test_auth.py is the pre-existing Student test; it needs a real Redis. test_password_reset.py needs a seeded
+          # database (it uses DATABASE_URL) and is deliberately NOT run here: never point it at a real database.
+          - service: student-authentication-service
+            tests: tests/test_auth.py tests/test_internal_students.py
+            extra: fakeredis
+          - service: student-test-service
+            tests: tests/test_internal_exams.py tests/test_internal_answer_key.py
+          - service: student-result-service
+            tests: tests/test_internal_results.py tests/test_internal_corrections.py
+          - service: student-attempt-service
+            tests: tests/test_internal_attempts.py
+          - service: student-notification-service
+            tests: tests/test_internal_notifications.py
+    defaults:
+      run:
+        working-directory: backend/${{ matrix.service }}
+    env:
+      DATABASE_URL: sqlite://
+      REDIS_URL: redis://localhost:6379/0
+      CORS_ORIGINS: http://localhost
+      SESSION_COOKIE_SECURE: "false"
+      RESEND_API_KEY: ""
+      EMAIL_FROM: ""
+      FRONTEND_RESET_URL: http://localhost/reset
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/${{ matrix.service }}/requirements.txt
+      - name: Install (the service's own requirements, as its Docker image would)
+        run: pip install -r requirements.txt pytest httpx ${{ matrix.extra }}
+      - name: Tests
+        run: pytest -q ${{ matrix.tests }}

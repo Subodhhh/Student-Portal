@@ -94,3 +94,6 @@ class ResultDetailsResponse(BaseModel):
     result: ResultResponse
     subjects: list[SubjectPerformance]
     questions: list[QuestionReview]
+    # False while the test can still be started by others: questions is then empty and review opens at review_available_at.
+    review_available: bool = True
+    review_available_at: datetime | None = None

@@ -1,137 +1,189 @@
+# Local stack for both portals.
+#   Student Portal  -> http://localhost:8080  (Student services, Neon branch subodh_dev via backend/student-services.env)
+#   Institute Portal -> http://localhost:8081 (Institute services behind the gateway on :8010, Neon branch institute_portal_test
+#                                              via backend/institute-services.env)
+# Service-to-service keys live only in the root .env (git-ignored) and are interpolated into BOTH ends of each contract below.
+# Copy backend/student-services.env.example and backend/institute-services.env.example; never commit the copies.
+
+x-student-env: &student_env
+  - {path: ./backend/student-services.env, required: true}
+
+x-student-health: &student_health
+  test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
 services:
   redis:
     image: redis:7-alpine
     container_name: student-auth-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - student-portal-network
 
+  # ---- Student Portal -----------------------------------------------------------------------------------------------------
   student-authentication-service:
+    build: ./backend/student-authentication-service
     image: student-authentication-service:latest
     container_name: student-authentication-service
-    env_file:
-      - ./backend/student-authentication-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_AUTH_SERVICE_KEY:-}
     ports:
       - "8002:8000"
+    healthcheck:
+      <<: *student_health
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
     depends_on:
-      - redis
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-profile-service:
+    build: ./backend/student-profile-service
     image: student-profile-service:latest
     container_name: student-profile-service
-    env_file:
-      - ./backend/student-profile-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
     ports:
       - "8003:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-enrollment-service:
+    build: ./backend/student-enrollment-service
     image: student-enrollment-service:latest
     container_name: student-enrollment-service
-    env_file:
-      - ./backend/student-enrollment-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      # Institute -> Student read-projection sync (providers, branches, batches, enrollments).
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_ENROLLMENT_SERVICE_KEY:-}
     ports:
       - "8004:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
+      redis: {condition: service_healthy}
     networks:
-      - student-portal-network   
+      - student-portal-network
 
   student-test-service:
+    build: ./backend/student-test-service
     image: student-test-service:latest
     container_name: student-test-service
-    env_file:
-      - ./backend/student-test-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_TEST_SERVICE_KEY:-}
     ports:
       - "8005:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
-      - student-enrollment-service
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-attempt-service:
+    build: ./backend/student-attempt-service
     image: student-attempt-service:latest
     container_name: student-attempt-service
-    env_file:
-      - ./backend/student-attempt-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_ATTEMPT_SERVICE_KEY:-}
     ports:
       - "8006:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
-      - student-test-service
+      redis: {condition: service_healthy}
     networks:
-      - student-portal-network    
+      - student-portal-network
 
   student-result-service:
+    build: ./backend/student-result-service
     image: student-result-service:latest
     container_name: student-result-service
-    env_file:
-      - ./backend/student-result-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_RESULT_SERVICE_KEY:-}
     ports:
       - "8007:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
-      - student-attempt-service
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-ranking-service:
+    build: ./backend/student-ranking-service
     image: student-ranking-service:latest
     container_name: student-ranking-service
-    env_file:
-      - ./backend/student-ranking-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
     ports:
       - "8008:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
-      - student-result-service
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-notification-service:
+    build: ./backend/student-notification-service
     image: student-notification-service:latest
     container_name: student-notification-service
-    env_file:
-      - ./backend/student-notification-service/.env
+    restart: unless-stopped
+    env_file: *student_env
     environment:
       REDIS_URL: redis://student-auth-redis:6379
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_NOTIFICATION_SERVICE_KEY:-}
+      NOTIFICATION_CREATE_API_KEYS: ${STUDENT_NOTIFICATION_CREATE_KEY:-}
     ports:
       - "8009:8001"
+    healthcheck: *student_health
     depends_on:
-      - redis
-      - student-authentication-service
+      redis: {condition: service_healthy}
     networks:
       - student-portal-network
 
   student-portal-frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH_API_URL: http://localhost:8002
+        VITE_PROFILE_API_URL: http://localhost:8003
+        VITE_ENROLLMENT_API_URL: http://localhost:8004
+        VITE_TEST_API_URL: http://localhost:8005
+        VITE_ATTEMPT_API_URL: http://localhost:8006
+        VITE_RESULT_API_URL: http://localhost:8007
+        VITE_RANKING_API_URL: http://localhost:8008
+        VITE_NOTIFICATION_API_URL: http://localhost:8009
     image: student-portal-frontend:latest
     container_name: student-portal-frontend
+    restart: unless-stopped
     ports:
       - "8080:80"
     depends_on:
@@ -139,6 +191,224 @@ services:
       - student-profile-service
     networks:
       - student-portal-network
+
+  # ---- Institute Portal --------------------------------------------------------------------------------------------------
+  # Seven independently deployable services behind one gateway. Database URL and shared settings come from
+  # backend/institute-services.env; keys from the root .env. Only the gateway and the frontend publish ports.
+  institute-identity-service:
+    build: {context: ./backend, dockerfile: institute-identity-service/Dockerfile}
+    image: institute-identity-service:latest
+    container_name: institute-identity-service
+    restart: unless-stopped
+    env_file: &institute_env
+      - {path: ./backend/institute-services.env, required: true}
+    environment:
+      SERVICE_NAME: institute-identity
+      REDIS_URL: redis://student-auth-redis:6379
+      INTERNAL_API_KEYS: ${INSTITUTE_IDENTITY_KEY:-}
+      ACADEMICS_SERVICE_URL: http://institute-academics-service:8000
+      ACADEMICS_SERVICE_API_KEY: ${INSTITUTE_ACADEMICS_KEY:-}
+    depends_on:
+      redis: {condition: service_healthy}
+    networks: [student-portal-network]
+
+  institute-organization-service:
+    build: {context: ./backend, dockerfile: institute-organization-service/Dockerfile}
+    image: institute-organization-service:latest
+    container_name: institute-organization-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
+      ENROLLMENT_SERVICE_API_KEY: ${INSTITUTE_ENROLLMENT_KEY:-}
+    depends_on: [institute-identity-service]
+    networks: [student-portal-network]
+
+  institute-academics-service:
+    build: {context: ./backend, dockerfile: institute-academics-service/Dockerfile}
+    image: institute-academics-service:latest
+    container_name: institute-academics-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      INTERNAL_API_KEYS: ${INSTITUTE_ACADEMICS_KEY:-}
+      ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
+      ENROLLMENT_SERVICE_API_KEY: ${INSTITUTE_ENROLLMENT_KEY:-}
+    depends_on: [institute-identity-service]
+    networks: [student-portal-network]
+
+  institute-enrollment-service:
+    build: {context: ./backend, dockerfile: institute-enrollment-service/Dockerfile}
+    image: institute-enrollment-service:latest
+    container_name: institute-enrollment-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      INTERNAL_API_KEYS: ${INSTITUTE_ENROLLMENT_KEY:-}
+      STUDENT_SERVICE_URL: http://student-authentication-service:8000
+      STUDENT_SERVICE_API_KEY: ${STUDENT_AUTH_SERVICE_KEY:-}
+      STUDENT_ENROLLMENT_SERVICE_URL: http://student-enrollment-service:8001
+      STUDENT_ENROLLMENT_SERVICE_API_KEY: ${STUDENT_ENROLLMENT_SERVICE_KEY:-}
+    depends_on:
+      - institute-identity-service
+      - student-authentication-service
+      - student-enrollment-service
+    networks: [student-portal-network]
+
+  institute-paper-service:
+    build: {context: ./backend, dockerfile: institute-paper-service/Dockerfile}
+    image: institute-paper-service:latest
+    container_name: institute-paper-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      INTERNAL_API_KEYS: ${INSTITUTE_PAPER_KEY:-}
+      # Printed-text OCR for scanned (PNG/JPEG) papers. Tesseract's scores are font-dependent and not probabilities (perfect print
+      # measures ~0.89-0.96), so the bar is 0.85 on the scoring-critical lines; weaker reads (handwriting, poor scans) reject the whole
+      # paper, the strict validator still applies, and every OCR draft needs a person's preview and approval before use.
+      OCR_ENGINE: tesseract
+      OCR_MIN_CONFIDENCE: "0.85"
+    volumes:
+      - institute-files:/var/institute/files
+    depends_on: [institute-identity-service]
+    networks: [student-portal-network]
+
+  institute-exam-service:
+    build: {context: ./backend, dockerfile: institute-exam-service/Dockerfile}
+    image: institute-exam-service:latest
+    container_name: institute-exam-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment: &exam_env
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      OPERATIONS_SERVICE_URL: http://institute-operations-service:8000
+      OPERATIONS_SERVICE_API_KEY: ${INSTITUTE_OPERATIONS_KEY:-}
+      PAPER_SERVICE_URL: http://institute-paper-service:8000
+      PAPER_SERVICE_API_KEY: ${INSTITUTE_PAPER_KEY:-}
+      ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
+      ENROLLMENT_SERVICE_API_KEY: ${INSTITUTE_ENROLLMENT_KEY:-}
+      STUDENT_TEST_SERVICE_URL: http://student-test-service:8001
+      STUDENT_TEST_SERVICE_API_KEY: ${STUDENT_TEST_SERVICE_KEY:-}
+      STUDENT_RESULT_SERVICE_URL: http://student-result-service:8001
+      STUDENT_RESULT_SERVICE_API_KEY: ${STUDENT_RESULT_SERVICE_KEY:-}
+      STUDENT_ATTEMPT_SERVICE_URL: http://student-attempt-service:8001
+      STUDENT_ATTEMPT_SERVICE_API_KEY: ${STUDENT_ATTEMPT_SERVICE_KEY:-}
+      STUDENT_NOTIFICATION_SERVICE_URL: http://student-notification-service:8001
+      STUDENT_NOTIFICATION_SERVICE_API_KEY: ${STUDENT_NOTIFICATION_SERVICE_KEY:-}
+      STUDENT_SERVICE_URL: http://student-authentication-service:8000
+      STUDENT_SERVICE_API_KEY: ${STUDENT_AUTH_SERVICE_KEY:-}
+    depends_on: [institute-identity-service, institute-operations-service, institute-paper-service]
+    networks: [student-portal-network]
+
+  institute-exam-worker:
+    # Generates due exam plans, delivers the outbox to the Student services and the staff inbox, syncs assignment status. Idempotent.
+    image: institute-exam-service:latest
+    container_name: institute-exam-worker
+    restart: unless-stopped
+    env_file: *institute_env
+    environment: *exam_env
+    command: ["sh", "-c", "while true; do python -m inst_exam.worker run-once; sleep 30; done"]
+    healthcheck:
+      disable: true
+    depends_on: [institute-exam-service]
+    networks: [student-portal-network]
+
+  institute-operations-service:
+    build: {context: ./backend, dockerfile: institute-operations-service/Dockerfile}
+    image: institute-operations-service:latest
+    container_name: institute-operations-service
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      IDENTITY_SERVICE_URL: http://institute-identity-service:8000
+      IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
+      INTERNAL_API_KEYS: ${INSTITUTE_OPERATIONS_KEY:-}
+      # Readiness probes for the Super Admin "Service health" page (public /ready only; no keys are used for these).
+      ORGANIZATION_SERVICE_URL: http://institute-organization-service:8000
+      ACADEMICS_SERVICE_URL: http://institute-academics-service:8000
+      ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
+      PAPER_SERVICE_URL: http://institute-paper-service:8000
+      EXAM_SERVICE_URL: http://institute-exam-service:8000
+    depends_on: [institute-identity-service]
+    networks: [student-portal-network]
+
+  institute-gateway:
+    # Single public origin for the Institute UI; routes /api/v1/* to the owning service (generated: scripts/gen_gateway_conf.py).
+    build: ./backend/institute-gateway
+    image: institute-gateway:latest
+    container_name: institute-gateway
+    restart: unless-stopped
+    ports:
+      - "8010:80"
+    depends_on:
+      - institute-identity-service
+      - institute-organization-service
+      - institute-academics-service
+      - institute-enrollment-service
+      - institute-paper-service
+      - institute-exam-service
+      - institute-operations-service
+    networks: [student-portal-network]
+
+  institute-portal-frontend:
+    build:
+      context: ./institute-frontend
+      args:
+        VITE_INSTITUTE_API_URL: ${VITE_INSTITUTE_API_URL:-http://localhost:8010}
+    image: institute-portal-frontend:latest
+    container_name: institute-portal-frontend
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - institute-gateway
+    networks:
+      - student-portal-network
+
+  # ---- Legacy Institute monolith: kept until the services above are verified in your environment (docker compose --profile legacy up) ----
+  institute-backend:
+    profiles: ["legacy"]
+    build: ./backend/institute-backend
+    image: institute-backend:latest
+    container_name: institute-backend
+    env_file:
+      - ./backend/institute-backend/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    ports:
+      - "8012:8001"
+    volumes:
+      - institute-files:/var/institute/files
+    depends_on:
+      - redis
+    networks:
+      - student-portal-network
+
+  institute-worker:
+    profiles: ["legacy"]
+    image: institute-backend:latest
+    container_name: institute-worker
+    env_file:
+      - ./backend/institute-backend/.env
+    environment:
+      REDIS_URL: redis://student-auth-redis:6379
+    command: ["sh", "-c", "while true; do python -m app.worker run-once; sleep 60; done"]
+    depends_on:
+      - institute-backend
+    networks:
+      - student-portal-network
+
+volumes:
+  institute-files:
 
 networks:
   student-portal-network:

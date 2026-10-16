@@ -5,6 +5,12 @@ from redis import Redis
 
 from app.config import settings
 
+# One client (and connection pool) per process, not one per request.
+redis_client = Redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+)
+
 
 def get_current_student(
     session_id: str | None = Cookie(default=None),
@@ -15,12 +21,7 @@ def get_current_student(
             detail="Not authenticated",
         )
 
-    redis = Redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-    )
-
-    session_data = redis.get(
+    session_data = redis_client.get(
         f"student_session:{session_id}"
     )
 

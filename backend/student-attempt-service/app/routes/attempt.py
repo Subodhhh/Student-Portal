@@ -53,9 +53,13 @@ def start_test_attempt(
     student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
+    # start_at/end_at are naive timestamps compared with NOW() in the connection's session time zone, exactly like the
+    # test service's listings, so "open" here means the same thing as "listed as available" there.
     test = db.execute(
         text("""
-            SELECT test_id, duration_minutes, status
+            SELECT test_id, duration_minutes, status,
+                   (start_at IS NULL OR NOW() >= start_at) AS has_opened,
+                   (end_at IS NULL OR NOW() <= end_at) AS still_open
             FROM tests
             WHERE test_id = :test_id
         """),
@@ -68,11 +72,32 @@ def start_test_attempt(
             detail="Test not found",
         )
 
-    if test["status"] != "ACTIVE":
-        raise HTTPException(
-            status_code=400,
-            detail="Test is not active",
-        )
+    existing_attempt = get_attempt_by_test(
+        db=db,
+        student_id=student_id,
+        test_id=request.test_id,
+    )
+
+    if existing_attempt is None:
+        # A new attempt may only begin inside the availability window. An attempt that already started is resumed
+        # below whatever the time (it keeps its own full-duration deadline, even past the window's end).
+        if test["status"] != "ACTIVE":
+            raise HTTPException(
+                status_code=400,
+                detail="Test is not active",
+            )
+
+        if not test["has_opened"]:
+            raise HTTPException(
+                status_code=400,
+                detail="This test has not opened yet",
+            )
+
+        if not test["still_open"]:
+            raise HTTPException(
+                status_code=400,
+                detail="The availability window for this test has closed",
+            )
 
     eligible = db.execute(
         text("""

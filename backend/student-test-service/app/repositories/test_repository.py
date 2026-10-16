@@ -405,3 +405,22 @@ def get_missed_tests(
         query,
         {"student_id": student_id},
     ).mappings().all()
+
+def has_running_attempt(
+    db: Session,
+    test_id,
+    student_id: str,
+) -> bool:
+    return db.execute(
+        text(
+            """
+            SELECT 1
+            FROM test_attempts
+            WHERE test_id = :test_id
+              AND student_id = :student_id
+              AND status = 'IN_PROGRESS'
+              AND expires_at > NOW()
+            """
+        ),
+        {"test_id": test_id, "student_id": student_id},
+    ).first() is not None

@@ -19,6 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # students.student_id is VARCHAR(20) in every real database, so the reference column must match it (a UUID column
+    # here made the foreign key impossible and the migration could never apply).
+    if sa.inspect(op.get_bind()).has_table("password_setup_reset_tokens"):
+        return
     op.create_table(
         "password_setup_reset_tokens",
         sa.Column(
@@ -29,7 +33,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "student_id",
-            postgresql.UUID(as_uuid=True),
+            sa.String(length=20),
             nullable=False,
         ),
         sa.Column(

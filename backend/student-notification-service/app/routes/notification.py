@@ -1,9 +1,11 @@
+import hmac
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_student
+from app.config import settings
 from app.database import get_db
 from app.models.notification import RecipientType
 from app.schemas.notification import (
@@ -28,8 +30,34 @@ router = APIRouter(
 )
 
 
+def require_create_key(
+    x_service_key: str | None = Header(default=None),
+) -> None:
+    """Require a configured service key for notification creation."""
+    keys = [
+        key.strip()
+        for key in settings.notification_create_api_keys.split(",")
+        if key.strip()
+    ]
+
+    if not keys:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification creation is not configured",
+        )
+
+    if not x_service_key or not any(
+        hmac.compare_digest(x_service_key, key) for key in keys
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid service credentials",
+        )
+
+
 @router.post(
     "",
+    dependencies=[Depends(require_create_key)],
     response_model=NotificationResponse,
     status_code=status.HTTP_201_CREATED,
 )

@@ -9,6 +9,10 @@ type NotificationMetadata = {
   attempt_id?: string;
 };
 
+type NotificationApiRow = Omit<Notification, "is_read" | "notification_recipient_id"> & {
+  recipient: { is_read: boolean; notification_recipient_id: string };
+};
+
 type Notification = {
   notification_id: string;
   event_type: string;
@@ -48,7 +52,7 @@ function NotificationsPage() {
         const data = await response.json();
 
         const formattedNotifications: Notification[] =
-          data.map((notification: any) => ({
+          (data as NotificationApiRow[]).map((notification) => ({
             notification_id: notification.notification_id,
             event_type: notification.event_type,
             title: notification.title,

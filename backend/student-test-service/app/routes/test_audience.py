@@ -3,8 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_student
 from app.database import get_db
+from app.routes.internal import require_service_key
 from app.schemas.test_audience import (
     TestAudienceCreate,
     TestAudienceResponse,
@@ -14,9 +14,12 @@ from app.services.test_audience_service import (
     get_test_audiences,
 )
 
+# Who may take a test is an administrative decision: these routes are for trusted services only (the same scoped service key
+# as /internal/v1). A student session must never be able to add itself (or anyone) to a test's audience or list it.
 router = APIRouter(
     prefix="/tests",
     tags=["Test Audiences"],
+    dependencies=[Depends(require_service_key)],
 )
 
 
@@ -27,7 +30,6 @@ router = APIRouter(
 def create_test_audience(
     test_id: UUID,
     audience_data: TestAudienceCreate,
-    student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
     return add_test_audience(
@@ -43,7 +45,6 @@ def create_test_audience(
 )
 def get_audiences(
     test_id: UUID,
-    student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
     return get_test_audiences(

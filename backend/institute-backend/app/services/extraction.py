@@ -1,0 +1,420 @@
+"""Question-sheet extraction. Treats the upload as hostile: bounded size/rows/cells,
+strict UTF-8, no formula evaluation, and ALL-OR-NOTHING validation: if any row fails the
+whole paper is rejected and nothing is guessed or partially imported.
+
+Expected header (CSV or the first row of a one-sheet .xlsx, case-insensitive):
+  question, option_a, option_b, option_c, option_d, correct, marks, negative_marks[, explanation, topic]
+
+Every format ends in the same validator (`_validate_rows`). Image papers need an OCR backend that is NOT bundled or enabled by default
+(see `OcrBackend`); without one they are rejected with a clear message.
+"""
+import csv
+import io
+import posixpath
+import re
+import struct
+import zipfile
+from collections.abc import Iterable
+from typing import Protocol
+from xml.etree import ElementTree as ET
+from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
+
+REQUIRED = ["question", "option_a", "option_b", "option_c", "option_d", "correct", "marks", "negative_marks"]
+OPTIONAL = ["explanation", "topic"]
+MAX_CELL = 5000
+
+
+@dataclass
+class ExtractedQuestion:
+    row: int
+    stem: str
+    options: dict[str, str]
+    correct: str
+    marks: Decimal
+    negative: Decimal
+    explanation: str | None
+    topic: str | None
+
+
+@dataclass
+class ExtractionResult:
+    questions: list[ExtractedQuestion] = field(default_factory=list)
+    errors: list[dict] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and bool(self.questions)
+
+
+def _err(row: int | None, field_: str | None, message: str) -> dict:
+    return {"row": row, "field": field_, "message": message}
+
+
+def _dec(value: str) -> Decimal | None:
+    try:
+        d = Decimal(value.strip())
+    except (InvalidOperation, AttributeError):
+        return None
+    return d if d.is_finite() and abs(d) < Decimal("10000") else None
+
+
+def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
+    """The single validation path for every input format: `rows` yields (row_number, dict-of-stripped-text) or
+    (row_number, None) for a structurally broken row. Any problem anywhere rejects the whole paper (see callers)."""
+    seen: dict[str, int] = {}
+    for idx, row in rows:
+        if idx - 1 > max_questions:
+            res.errors.append(_err(idx, None, f"Too many questions (limit {max_questions})."))
+            break
+        if row is None:
+            res.errors.append(_err(idx, None, "Row has the wrong number of columns."))
+            continue
+        if not any(row.values()):
+            continue  # blank line: ignorable, never a question
+        problems = []
+        if any(len(v) > MAX_CELL for v in row.values()):
+            problems.append(("question", f"A cell exceeds {MAX_CELL} characters."))
+        if not row["question"]:
+            problems.append(("question", "Question text is empty."))
+        opts = {k[-1].upper(): row[k] for k in ("option_a", "option_b", "option_c", "option_d")}
+        for key, text_ in opts.items():
+            if not text_:
+                problems.append((f"option_{key.lower()}", f"Option {key} is empty."))
+        if len(set(v.lower() for v in opts.values() if v)) < len([v for v in opts.values() if v]):
+            problems.append(("options", "Two options are identical."))
+        correct = row["correct"].upper()
+        if correct not in {"A", "B", "C", "D"}:
+            problems.append(("correct", "Correct answer must be A, B, C or D."))
+        marks, neg = _dec(row["marks"]), _dec(row["negative_marks"])
+        if marks is None or marks <= 0:
+            problems.append(("marks", "Marks must be a positive number."))
+        if neg is None or neg < 0:
+            problems.append(("negative_marks", "Negative marks must be zero or a positive number."))
+        norm = " ".join(row["question"].lower().split())
+        if row["question"] and norm in seen:
+            problems.append(("question", f"Duplicate of row {seen[norm]}."))
+        seen.setdefault(norm, idx)
+        if problems:
+            res.errors.extend(_err(idx, f, m) for f, m in problems)
+            continue
+        res.questions.append(ExtractedQuestion(idx, row["question"], opts, correct, marks, neg,
+                                               row.get("explanation") or None, row.get("topic") or None))
+
+
+def _finish(res: ExtractionResult) -> ExtractionResult:
+    if not res.questions and not res.errors:
+        res.errors.append(_err(None, None, "The file contains no questions."))
+    if res.errors:
+        res.questions = []  # reject the entire paper
+    return res
+
+
+def extract_csv(data: bytes, max_questions: int) -> ExtractionResult:
+    res = ExtractionResult()
+    if b"\x00" in data:
+        res.errors.append(_err(None, None, "File contains binary data; upload a CSV export."))
+        return res
+    try:
+        text = data.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError:
+        res.errors.append(_err(None, None, "File must be UTF-8 encoded text."))
+        return res
+    csv.field_size_limit(MAX_CELL * 2)
+    try:
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        header = [h.strip().lower() for h in (reader.fieldnames or [])]
+    except csv.Error as exc:
+        res.errors.append(_err(None, None, f"Unreadable CSV: {exc}"))
+        return res
+    missing = [c for c in REQUIRED if c not in header]
+    if missing:
+        res.errors.append(_err(1, None, f"Missing required column(s): {', '.join(missing)}"))
+        return res
+    reader.fieldnames = header
+
+    def rows():
+        for idx, raw in enumerate(reader, start=2):  # row 1 is the header
+            if None in raw or any(v is None for v in raw.values()):
+                yield idx, None
+            else:
+                yield idx, {k: (v or "").strip() for k, v in raw.items()}
+
+    try:
+        _validate_rows(res, rows(), max_questions)
+    except csv.Error as exc:
+        res.errors.append(_err(None, None, f"Unreadable CSV: {exc}"))
+    return _finish(res)
+
+
+# ------------------------------------------------------------------ .xlsx (stdlib only; no formula evaluation, no macros, no external data)
+
+NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+MAX_ZIP_MEMBERS = 100
+MAX_PART_BYTES = 8 * 1024 * 1024
+MAX_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_COLUMNS = 40
+_XML_DANGER = re.compile(rb"<!\s*(doctype|entity)", re.IGNORECASE)
+
+
+class _Reject(Exception):
+    pass
+
+
+def _part(zf: zipfile.ZipFile, name: str, budget: list[int]) -> bytes:
+    try:
+        info = zf.getinfo(name)
+    except KeyError:
+        raise _Reject(f"The workbook is missing {name}.")
+    if info.file_size > MAX_PART_BYTES:
+        raise _Reject("The workbook contains an oversized part.")
+    with zf.open(info) as fh:
+        data = fh.read(MAX_PART_BYTES + 1)           # bounded read: the declared size is not trusted
+    if len(data) > MAX_PART_BYTES:
+        raise _Reject("The workbook contains an oversized part.")
+    budget[0] += len(data)
+    if budget[0] > MAX_TOTAL_BYTES:
+        raise _Reject("The workbook expands to too much data.")
+    if b"\x00" in data or _XML_DANGER.search(data):
+        raise _Reject("The workbook contains a DOCTYPE or XML entity declaration, which is not allowed.")
+    return data
+
+
+def _xml(data: bytes) -> ET.Element:
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError:
+        raise _Reject("The workbook contains malformed XML.")
+
+
+def _col_index(ref: str) -> int:
+    letters = re.match(r"^([A-Z]{1,3})\d+$", ref or "")
+    if not letters:
+        raise _Reject("The sheet contains an invalid cell reference.")
+    n = 0
+    for ch in letters.group(1):
+        n = n * 26 + ord(ch) - 64
+    return n - 1
+
+
+def _text_of(el: ET.Element) -> str:
+    """Text of a shared/inline string item; phonetic runs (rPh) are not part of the value."""
+    parts = []
+    for child in el:
+        if child.tag == f"{NS}t":
+            parts.append(child.text or "")
+        elif child.tag == f"{NS}r":
+            parts.extend(t.text or "" for t in child if t.tag == f"{NS}t")
+    return "".join(parts)
+
+
+def _sheet_rows(zf: zipfile.ZipFile) -> tuple[list[str], list[tuple[int, dict[str, str] | None]]]:
+    names = zf.namelist()
+    if len(names) > MAX_ZIP_MEMBERS:
+        raise _Reject("The workbook has too many parts.")
+    for info in zf.infolist():
+        if info.flag_bits & 0x1:
+            raise _Reject("Encrypted workbooks are not supported.")
+        n = info.filename.lower()
+        if n.startswith(("xl/vbaproject", "xl/externallinks/", "xl/activex/", "xl/embeddings/")) or n.endswith(".bin") and "vba" in n:
+            raise _Reject("Workbooks with macros, external links or embedded objects are not accepted.")
+    budget = [0]
+    book = _xml(_part(zf, "xl/workbook.xml", budget))
+    sheets = book.findall(f"{NS}sheets/{NS}sheet")
+    if len(sheets) != 1:
+        raise _Reject("The workbook must contain exactly one sheet.")
+    if sheets[0].get("state", "visible") != "visible":
+        raise _Reject("The sheet must not be hidden.")
+    rid = sheets[0].get(f"{REL}id")
+    target = None
+    rels = _xml(_part(zf, "xl/_rels/workbook.xml.rels", budget))
+    for r in rels.findall(f"{PKG_REL}Relationship"):
+        if r.get("Id") == rid and r.get("TargetMode") != "External":
+            t = r.get("Target") or ""
+            target = posixpath.normpath(t[1:] if t.startswith("/") else posixpath.join("xl", t))
+    if not target or not target.startswith("xl/worksheets/") or target not in names:
+        raise _Reject("The sheet could not be located in the workbook.")
+
+    shared: list[str] = []
+    if "xl/sharedStrings.xml" in names:
+        for si in _xml(_part(zf, "xl/sharedStrings.xml", budget)).findall(f"{NS}si"):
+            shared.append(_text_of(si))
+
+    sheet = _xml(_part(zf, target, budget))
+    if sheet.find(f"{NS}mergeCells") is not None:
+        raise _Reject("Merged cells are not supported; every question needs its own row of plain cells.")
+    if any(c.get("hidden") in ("1", "true") for c in sheet.findall(f"{NS}cols/{NS}col")):
+        raise _Reject("Hidden columns are not supported.")
+    data = sheet.find(f"{NS}sheetData")
+    if data is None:
+        raise _Reject("The sheet has no data.")
+
+    grid: list[tuple[int, list[str]]] = []
+    for row in data.findall(f"{NS}row"):
+        try:
+            r = int(row.get("r") or 0)
+        except ValueError:
+            raise _Reject("The sheet contains an invalid row number.")
+        if row.get("hidden") in ("1", "true"):
+            raise _Reject(f"Row {r} is hidden; hidden rows are not supported.")
+        cells: dict[int, str] = {}
+        for c in row.findall(f"{NS}c"):
+            col = _col_index(c.get("r", ""))
+            if c.find(f"{NS}f") is not None:
+                raise _Reject(f"Row {r} contains a formula; formulas are not evaluated. Paste values instead.")
+            kind, v = c.get("t"), c.find(f"{NS}v")
+            if kind == "inlineStr":
+                is_ = c.find(f"{NS}is")
+                value = _text_of(is_) if is_ is not None else ""
+            elif kind == "s":
+                try:
+                    value = shared[int(v.text)] if v is not None and v.text is not None else ""
+                except (ValueError, IndexError):
+                    raise _Reject("The workbook has a broken shared-string reference.")
+            elif kind in ("b", "e", "d"):
+                raise _Reject(f"Row {r} contains a boolean, error or date cell; use plain text and numbers.")
+            else:                                     # numbers and cached "str" values without formulas
+                value = (v.text or "") if v is not None else ""
+            if value.strip():
+                cells[col] = value.strip()
+        if cells:
+            if max(cells) >= MAX_COLUMNS:
+                raise _Reject(f"Row {r} uses more than {MAX_COLUMNS} columns.")
+            grid.append((r, [cells.get(i, "") for i in range(max(cells) + 1)]))
+    if not grid:
+        return [], []
+    if grid[0][0] != 1:
+        raise _Reject("The header must be in row 1.")
+    header = [h.lower() for h in grid[0][1]]
+    named = [h for h in header if h]
+    if len(set(named)) != len(named):
+        raise _Reject("The header row has duplicate column names.")
+    out: list[tuple[int, dict[str, str] | None]] = []
+    for r, values in grid[1:]:
+        if len(values) > len(header) and any(values[len(header):]):
+            out.append((r, None))
+            continue
+        out.append((r, {h: (values[i] if i < len(values) else "") for i, h in enumerate(header) if h}))
+    return header, out
+
+
+def extract_xlsx(data: bytes, max_questions: int) -> ExtractionResult:
+    res = ExtractionResult()
+    if data[:4] != b"PK\x03\x04":
+        res.errors.append(_err(None, None, "This is not an .xlsx workbook."))
+        return res
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            header, rows = _sheet_rows(zf)
+    except zipfile.BadZipFile:
+        res.errors.append(_err(None, None, "This is not an .xlsx workbook."))
+        return res
+    except _Reject as exc:
+        res.errors.append(_err(None, None, str(exc)))
+        return res
+    except (RuntimeError, NotImplementedError, OSError, ValueError):
+        res.errors.append(_err(None, None, "The workbook could not be read safely."))
+        return res
+    if not header:
+        res.errors.append(_err(None, None, "The file contains no questions."))
+        return res
+    missing = [c for c in REQUIRED if c not in header]
+    if missing:
+        res.errors.append(_err(1, None, f"Missing required column(s): {', '.join(missing)}"))
+        return res
+
+    def counted() -> Iterable[tuple[int, dict | None]]:
+        for idx, row in rows:
+            if row is not None and not any(row.values()):
+                continue
+            yield idx, row
+
+    _validate_rows(res, counted(), max_questions)
+    return _finish(res)
+
+
+# ------------------------------------------------------------------ images (OCR only through an explicitly configured backend)
+
+MAX_IMAGE_PIXELS = 40_000_000
+
+
+@dataclass
+class OcrQuestion:
+    stem: str
+    options: dict[str, str]
+    correct: str
+    marks: str
+    negative: str
+    confidence: float          # 0..1, the engine's own confidence for this whole question including the marked answer
+
+
+class OcrBackend(Protocol):
+    def read_questions(self, image: bytes, mime: str) -> list[OcrQuestion]: ...
+
+
+_ocr: OcrBackend | None = None
+
+
+def get_ocr_backend() -> OcrBackend | None:
+    """None unless a backend was registered at start-up: no engine is bundled, so image papers are rejected by default."""
+    return _ocr
+
+
+def set_ocr_backend(b: OcrBackend | None) -> None:
+    global _ocr
+    _ocr = b
+
+
+def _image_size(data: bytes, mime: str) -> tuple[int, int] | None:
+    if mime == "image/png":
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+            return None
+        return struct.unpack(">II", data[16:24])
+    if mime == "image/jpeg":
+        if data[:3] != b"\xff\xd8\xff":
+            return None
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            length = struct.unpack(">H", data[i + 2:i + 4])[0]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return w, h
+            i += 2 + length
+    return None
+
+
+def extract_image(data: bytes, mime: str, backend: OcrBackend | None, max_questions: int, min_confidence: float = 0.98) -> ExtractionResult:
+    res = ExtractionResult()
+    if backend is None:
+        res.errors.append(_err(None, None, "Image extraction is not enabled on this server. Upload a CSV or .xlsx file instead."))
+        return res
+    size = _image_size(data, mime)
+    if size is None or size[0] <= 0 or size[1] <= 0 or size[0] * size[1] > MAX_IMAGE_PIXELS:
+        res.errors.append(_err(None, None, "The image is not a valid PNG/JPEG of a supported size."))
+        return res
+    try:
+        items = backend.read_questions(data, mime)
+    except Exception:  # noqa: BLE001 - an engine failure must reject the paper, never import a partial one
+        res.errors.append(_err(None, None, "The image could not be read reliably."))
+        return res
+    if not items:
+        res.errors.append(_err(None, None, "No questions could be read from the image."))
+        return res
+    rows = []
+    for n, q in enumerate(items, start=1):
+        if not (q.confidence >= min_confidence):
+            res.errors.append(_err(n, None, f"Question {n} was read with too little confidence ({q.confidence:.2f} < {min_confidence:.2f})."))
+        opts = q.options or {}
+        rows.append((n + 1, {"question": (q.stem or "").strip(), **{f"option_{k.lower()}": (opts.get(k) or "").strip() for k in "ABCD"},
+                             "correct": (q.correct or "").strip(), "marks": str(q.marks or "").strip(), "negative_marks": str(q.negative or "").strip()}))
+    _validate_rows(res, rows, max_questions)
+    return _finish(res)

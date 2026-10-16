@@ -20,7 +20,7 @@ from app.schemas.auth import (
     LoginResponse,
     ResetPasswordRequest,
 )
-from app.services.email import send_password_reset_email
+from app.services.email import email_enabled, send_password_reset_email
 from app.services.password import hash_password, verify_password
 from app.services.password_reset import generate_reset_token
 
@@ -251,7 +251,7 @@ def forgot_password(
 
     reset_url = f"{settings.frontend_reset_url}?token={raw_token}"
 
-    if settings.resend_api_key and settings.email_from:
+    if email_enabled():
         send_password_reset_email(
             recipient_email=student.email,
             reset_url=reset_url,

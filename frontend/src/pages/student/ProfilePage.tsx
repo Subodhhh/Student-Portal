@@ -17,6 +17,7 @@ function ProfilePage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
 
   const [formData, setFormData] = useState({
     first_name: "",
@@ -27,41 +28,41 @@ function ProfilePage() {
   });
 
   useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const response = await fetch(`${PROFILE_API_URL}/profile`, {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || "Failed to load profile");
+        }
+
+        const data: StudentProfile = await response.json();
+
+        setProfile(data);
+
+        setFormData({
+          first_name: data.first_name,
+          last_name: data.last_name,
+          date_of_birth: data.date_of_birth || "",
+          phone: data.phone || "",
+          email: data.email,
+        });
+      } catch (error) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load profile"
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
     loadProfile();
   }, []);
-
-  const loadProfile = async () => {
-    try {
-      const response = await fetch(`${PROFILE_API_URL}/profile`, {
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || "Failed to load profile");
-      }
-
-      const data: StudentProfile = await response.json();
-
-      setProfile(data);
-
-      setFormData({
-        first_name: data.first_name,
-        last_name: data.last_name,
-        date_of_birth: data.date_of_birth || "",
-        phone: data.phone || "",
-        email: data.email,
-      });
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Failed to load profile"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleChange = (
     event: React.ChangeEvent<HTMLInputElement>
@@ -108,6 +109,10 @@ function ProfilePage() {
     setError("");
   };
 
+  const emailChanged =
+    profile !== null &&
+    formData.email.trim().toLowerCase() !== profile.email.toLowerCase();
+
   const handleSave = async () => {
     setSaving(true);
     setError("");
@@ -125,16 +130,25 @@ function ProfilePage() {
           date_of_birth: formData.date_of_birth || null,
           phone: formData.phone || null,
           email: formData.email,
+          current_password: emailChanged ? currentPassword : null,
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to update profile");
+        const detail = data?.detail;
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : Array.isArray(detail) && detail[0]?.msg
+              ? `${detail[0].loc?.[detail[0].loc.length - 1] ?? "Field"}: ${detail[0].msg}`
+              : "Failed to update profile"
+        );
       }
 
       setProfile(data);
+      setCurrentPassword("");
       setEditing(false);
     } catch (error) {
       setError(
@@ -241,6 +255,19 @@ function ProfilePage() {
                 onChange={handleChange}
               />
             </div>
+
+            {emailChanged && (
+              <div className="profile-field">
+                <span>Current Password (required to change email)</span>
+                <input
+                  type="password"
+                  name="current_password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                />
+              </div>
+            )}
 
             <div className="profile-field">
               <span>Mobile Number</span>

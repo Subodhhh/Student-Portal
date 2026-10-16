@@ -158,193 +158,190 @@ function ScheduledTestsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadTests();
-  }, []);
+    async function loadTests() {
+      try {
+        const [
+          activeResponse,
+          upcomingResponse,
+          missedResponse,
+          completedResponse,
+        ] = await Promise.all([
+          fetch(`${TEST_API_URL}/tests`, {
+            credentials: "include",
+          }),
 
-  async function loadTests() {
-    try {
-      setLoading(true);
-      setError("");
+          fetch(`${TEST_API_URL}/tests/scheduled`, {
+            credentials: "include",
+          }),
 
-      const [
-        activeResponse,
-        upcomingResponse,
-        missedResponse,
-        completedResponse,
-      ] = await Promise.all([
-        fetch(`${TEST_API_URL}/tests`, {
-          credentials: "include",
-        }),
+          fetch(`${TEST_API_URL}/tests/missed`, {
+            credentials: "include",
+          }),
 
-        fetch(`${TEST_API_URL}/tests/scheduled`, {
-          credentials: "include",
-        }),
+          fetch(`${ATTEMPT_API_URL}/attempts/completed`, {
+            credentials: "include",
+          }),
+        ]);
 
-        fetch(`${TEST_API_URL}/tests/missed`, {
-          credentials: "include",
-        }),
-
-        fetch(`${ATTEMPT_API_URL}/attempts/completed`, {
-          credentials: "include",
-        }),
-      ]);
-
-      if (
-        !activeResponse.ok ||
-        !upcomingResponse.ok ||
-        !missedResponse.ok ||
-        !completedResponse.ok
-      ) {
-        throw new Error(
-          "Failed to load scheduled tests."
-        );
-      }
-
-      const activeData: Test[] =
-        await activeResponse.json();
-
-      const upcomingData: Test[] =
-        await upcomingResponse.json();
-
-      const missedData: Test[] =
-        await missedResponse.json();
-
-      const completedAttempts: Attempt[] =
-        await completedResponse.json();
-
-      /*
-       * Get attempt status for every active test.
-       */
-      const attemptResults = await Promise.all(
-        activeData.map(async (test) => {
-          const response = await fetch(
-            `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
-            {
-              credentials: "include",
-            }
-          );
-
-          if (response.status === 404) {
-            return {
-              testId: test.test_id,
-              attempt: null,
-            };
-          }
-
-          if (!response.ok) {
-            throw new Error(
-              "Failed to load attempt."
-            );
-          }
-
-          const attempt: Attempt =
-            await response.json();
-
-          return {
-            testId: test.test_id,
-            attempt,
-          };
-        })
-      );
-
-      const attemptMap: Record<
-        string,
-        Attempt | null
-      > = {};
-
-      attemptResults.forEach(
-        ({ testId, attempt }) => {
-          attemptMap[testId] = attempt;
-        }
-      );
-
-      setAttempts(attemptMap);
-
-      /*
-       * Submitted tests should not appear
-       * under Active.
-       */
-      const availableActiveTests =
-        activeData.filter((test) => {
-          const attempt = attemptMap[test.test_id];
-
-          return (
-            !attempt ||
-            attempt.status === "IN_PROGRESS"
-          );
-        });
-
-      setActiveTests(availableActiveTests);
-
-      setUpcomingTests(upcomingData);
-
-      setMissedTests(missedData);
-
-      /*
-       * Keep only the latest completed attempt
-       * for each test.
-       */
-      const latestAttempts = new Map<
-        string,
-        Attempt
-      >();
-
-      completedAttempts.forEach((attempt) => {
-        if (!latestAttempts.has(attempt.test_id)) {
-          latestAttempts.set(
-            attempt.test_id,
-            attempt
+        if (
+          !activeResponse.ok ||
+          !upcomingResponse.ok ||
+          !missedResponse.ok ||
+          !completedResponse.ok
+        ) {
+          throw new Error(
+            "Failed to load scheduled tests."
           );
         }
-      });
 
-      /*
-       * Load test details for completed tests.
-       */
-      const completedResults = await Promise.all(
-        Array.from(latestAttempts.values()).map(
-          async (attempt) => {
+        const activeData: Test[] =
+          await activeResponse.json();
+
+        const upcomingData: Test[] =
+          await upcomingResponse.json();
+
+        const missedData: Test[] =
+          await missedResponse.json();
+
+        const completedAttempts: Attempt[] =
+          await completedResponse.json();
+
+        /*
+         * Get attempt status for every active test.
+         */
+        const attemptResults = await Promise.all(
+          activeData.map(async (test) => {
             const response = await fetch(
-              `${TEST_API_URL}/tests/${attempt.test_id}/details`,
+              `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
               {
                 credentials: "include",
               }
             );
 
-            if (!response.ok) {
-              return null;
+            if (response.status === 404) {
+              return {
+                testId: test.test_id,
+                attempt: null,
+              };
             }
 
-            const test: Test =
+            if (!response.ok) {
+              throw new Error(
+                "Failed to load attempt."
+              );
+            }
+
+            const attempt: Attempt =
               await response.json();
 
             return {
-              test,
+              testId: test.test_id,
               attempt,
             };
+          })
+        );
+
+        const attemptMap: Record<
+          string,
+          Attempt | null
+        > = {};
+
+        attemptResults.forEach(
+          ({ testId, attempt }) => {
+            attemptMap[testId] = attempt;
           }
-        )
-      );
+        );
 
-      setCompletedTests(
-        completedResults.filter(
-          (item): item is CompletedTest =>
-            item !== null
-        )
-      );
-    } catch (loadError) {
-      console.error(
-        "Failed to load scheduled tests:",
-        loadError
-      );
+        setAttempts(attemptMap);
 
-      setError(
-        "Unable to load scheduled tests."
-      );
-    } finally {
-      setLoading(false);
+        /*
+         * Submitted tests should not appear
+         * under Active.
+         */
+        const availableActiveTests =
+          activeData.filter((test) => {
+            const attempt = attemptMap[test.test_id];
+
+            return (
+              !attempt ||
+              attempt.status === "IN_PROGRESS"
+            );
+          });
+
+        setActiveTests(availableActiveTests);
+
+        setUpcomingTests(upcomingData);
+
+        setMissedTests(missedData);
+
+        /*
+         * Keep only the latest completed attempt
+         * for each test.
+         */
+        const latestAttempts = new Map<
+          string,
+          Attempt
+        >();
+
+        completedAttempts.forEach((attempt) => {
+          if (!latestAttempts.has(attempt.test_id)) {
+            latestAttempts.set(
+              attempt.test_id,
+              attempt
+            );
+          }
+        });
+
+        /*
+         * Load test details for completed tests.
+         */
+        const completedResults = await Promise.all(
+          Array.from(latestAttempts.values()).map(
+            async (attempt) => {
+              const response = await fetch(
+                `${TEST_API_URL}/tests/${attempt.test_id}/details`,
+                {
+                  credentials: "include",
+                }
+              );
+
+              if (!response.ok) {
+                return null;
+              }
+
+              const test: Test =
+                await response.json();
+
+              return {
+                test,
+                attempt,
+              };
+            }
+          )
+        );
+
+        setCompletedTests(
+          completedResults.filter(
+            (item): item is CompletedTest =>
+              item !== null
+          )
+        );
+      } catch (loadError) {
+        console.error(
+          "Failed to load scheduled tests:",
+          loadError
+        );
+
+        setError(
+          "Unable to load scheduled tests."
+        );
+      } finally {
+        setLoading(false);
+      }
     }
-  }
+
+    loadTests();
+  }, []);
 
   function getCurrentTests() {
     switch (activeFilter) {

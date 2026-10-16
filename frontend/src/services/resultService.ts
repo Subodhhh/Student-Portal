@@ -1,4 +1,4 @@
-const RESULT_SERVICE_URL = "http://localhost:8007";
+import { RESULT_API_URL as RESULT_SERVICE_URL } from "./api";
 
 export async function getResultDetails(attemptId: string) {
   const response = await fetch(

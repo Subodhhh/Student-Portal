@@ -10,6 +10,7 @@ from app.repositories.test_repository import (
     get_missed_tests,
     get_test_by_id,
     get_test_for_student,
+    has_running_attempt,
 )
 
 
@@ -123,6 +124,15 @@ def get_test_for_start(
         test_id=test_id,
         student_id=student_id,
     )
+
+    if not row and has_running_attempt(db=db, test_id=test_id, student_id=student_id):
+        # An attempt started inside the window keeps its full duration even after the window closes, so the student must
+        # still be able to load the paper to resume it (eligibility is still checked by get_test_for_student).
+        row = get_test_for_student(
+            db=db,
+            test_id=test_id,
+            student_id=student_id,
+        )
 
     if not row:
         return None

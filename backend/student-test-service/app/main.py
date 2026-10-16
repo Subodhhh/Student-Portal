@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.routes.internal import router as internal_router
 from app.routes.test import router as test_router
 from app.routes.test_audience import router as test_audience_router
 
@@ -34,3 +35,4 @@ def health_check():
 
 app.include_router(test_router)
 app.include_router(test_audience_router)
+app.include_router(internal_router)

@@ -1,0 +1,35 @@
+name: Institute frontend CI
+
+on:
+  pull_request:
+    paths: ["institute-frontend/**", ".github/workflows/institute-frontend-ci.yml"]
+  push:
+    branches: [dev, QA, main, "feature/institute-portal"]
+    paths: ["institute-frontend/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: institute-frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: institute-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_INSTITUTE_API_URL: https://api.invalid.example
+      - name: Dependency audit (high and above)
+        run: npm audit --audit-level=high
+      - name: Bundle must not embed secrets
+        run: "! grep -rEi '(api[_-]?key|secret|password)\\s*[:=]\\s*[\"'\\''][A-Za-z0-9]{12,}' dist"

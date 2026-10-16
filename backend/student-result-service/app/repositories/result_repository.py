@@ -154,3 +154,32 @@ def get_student_results(db: Session, student_id: str):
         query,
         {"student_id": student_id},
     ).mappings().all()
+
+def get_review_window(db: Session, test_id):
+    """Whether question-level answer review may be shown for a test: after its availability window (end_at, compared with
+    NOW() in the session time zone like every other test query). end_at is returned as an aware UTC instant."""
+    return db.execute(
+        text("""
+            SELECT (end_at IS NULL OR NOW() > end_at) AS open,
+                   CASE WHEN end_at IS NULL THEN NULL
+                        ELSE (end_at AT TIME ZONE current_setting('TimeZone')) END AS end_at
+            FROM tests
+            WHERE test_id = :test_id
+        """),
+        {"test_id": test_id},
+    ).mappings().first()
+
+
+def get_unevaluated_attempts(db: Session, limit: int = 100):
+    return db.execute(
+        text("""
+            SELECT a.attempt_id, a.student_id
+            FROM test_attempts a
+            LEFT JOIN test_results r ON r.attempt_id = a.attempt_id
+            WHERE a.status IN ('SUBMITTED', 'AUTO_SUBMITTED')
+              AND r.result_id IS NULL
+            ORDER BY a.submitted_at NULLS FIRST
+            LIMIT :limit
+        """),
+        {"limit": limit},
+    ).mappings().all()

@@ -1,7 +1,8 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg[binary]
-pydantic-settings
-redis
-alembic
+# Pinned to the versions verified in the running stack (reproducible builds).
+fastapi==0.143.2
+uvicorn==0.54.0
+sqlalchemy==2.1.4
+psycopg[binary]==3.3.6
+pydantic-settings==2.16.0
+redis==8.1.0
+alembic==1.20.0

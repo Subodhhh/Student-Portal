@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - dev
+    # Deploy only when something this workflow actually builds changed (the Student frontend), so Institute-only
+    # or backend-only pushes to dev do not redeploy the Student Portal. Manual runs stay available.
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-pages.yml"
 
   workflow_dispatch:
 

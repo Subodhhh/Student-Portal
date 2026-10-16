@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routes.enrollment import router as enrollment_router
+from app.routes.internal import router as internal_router
 
 app = FastAPI(
     title="Student Enrollment Service",
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(enrollment_router)
+app.include_router(internal_router)
 
 
 @app.get("/health")

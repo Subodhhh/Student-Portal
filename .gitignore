@@ -30,7 +30,9 @@ ENV/
 # Environment files
 .env
 .env.*
+*.env
 !.env.example
+!*.env.example
 
 # Editor directories and files
 .vscode/*
@@ -52,3 +54,9 @@ cookies.txt
 
 # All cookie/session files
 *cookie*.txt
+
+# Institute backend local uploads
+var/
+
+# Python packaging build artefacts
+*.egg-info/

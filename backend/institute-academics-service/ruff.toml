@@ -1,0 +1,7 @@
+line-length = 140
+[lint]
+select = ["F", "E9", "B"]
+ignore = ["B008", "B904"]   # B008: FastAPI Depends() defaults; B904: HTTPException chaining is intentionally hidden from clients
+
+[lint.per-file-ignores]
+"tests/*" = ["F811"]   # pytest fixtures are imported from sibling test modules and re-used as arguments

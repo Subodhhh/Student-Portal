@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,20 +12,14 @@ class PasswordSetupResetToken(Base):
     __tablename__ = "password_setup_reset_tokens"
 
     token_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    student_id: Mapped[UUID] = mapped_column(
+    student_id: Mapped[str] = mapped_column(
+        String(20),
         ForeignKey("students.student_id"),
         nullable=False,
     )
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    token_type: Mapped[str] = mapped_column(
-        Enum(
-            "PASSWORD_SETUP",
-            "PASSWORD_RESET",
-            name="password_setup_reset_token_type",
-            create_type=False,
-        ),
-        nullable=False,
-    )
+    # VARCHAR + CHECK constraint in the database (migration 562cc1f6c4b7), not a PostgreSQL enum type.
+    token_type: Mapped[str] = mapped_column(String(30), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

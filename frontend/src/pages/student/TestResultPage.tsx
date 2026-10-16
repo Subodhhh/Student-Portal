@@ -59,6 +59,8 @@ interface ResultDetails {
   result: Result;
   subjects: SubjectPerformance[];
   questions: QuestionReview[];
+  review_available?: boolean;
+  review_available_at?: string | null;
 }
 
 interface Test {
@@ -85,7 +87,9 @@ export default function TestResultPage() {
   const [selectedSubject, setSelectedSubject] = useState<string | null>(
     null
   );
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(attemptId));
+  const [reviewAvailable, setReviewAvailable] = useState(true);
+  const [reviewAvailableAt, setReviewAvailableAt] = useState<string | null>(null);
 
   const questionReviewRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,9 +106,12 @@ export default function TestResultPage() {
         setResult(resultDetails.result);
         setSubjects(resultDetails.subjects);
         setQuestions(resultDetails.questions);
+        setReviewAvailable(resultDetails.review_available !== false);
+        setReviewAvailableAt(resultDetails.review_available_at ?? null);
 
+        // /details resolves for any test the student is assigned to, also after its window closed.
         const testResponse = await fetch(
-          `${TEST_API_URL}/tests/${resultDetails.result.test_id}`,
+          `${TEST_API_URL}/tests/${resultDetails.result.test_id}/details`,
           {
             credentials: "include",
           }
@@ -123,8 +130,6 @@ export default function TestResultPage() {
 
     if (attemptId) {
       loadResult();
-    } else {
-      setLoading(false);
     }
   }, [attemptId]);
 
@@ -436,17 +441,19 @@ export default function TestResultPage() {
                         />
                       </div>
 
-                      <button
-                        type="button"
-                        className="review-subject-button"
-                        onClick={() =>
-                          handleSubjectReview(subject.subject)
-                        }
-                      >
-                        {isSelected
-                          ? "Hide Questions"
-                          : "Review Questions"}
-                      </button>
+                      {reviewAvailable && (
+                        <button
+                          type="button"
+                          className="review-subject-button"
+                          onClick={() =>
+                            handleSubjectReview(subject.subject)
+                          }
+                        >
+                          {isSelected
+                            ? "Hide Questions"
+                            : "Review Questions"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -455,8 +462,25 @@ export default function TestResultPage() {
           </div>
         )}
 
+        {!reviewAvailable && (
+          <div className="performance-card">
+            <div className="performance-card-header">
+              <div>
+                <span className="card-eyebrow">ANSWER REVIEW</span>
+                <h2>Opens after the test window closes</h2>
+                <p>
+                  Correct answers are shown once no other student can start this test
+                  {reviewAvailableAt
+                    ? ` (${new Date(reviewAvailableAt).toLocaleString("en-IN")}).`
+                    : "."}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Question Review */}
-        {selectedSubject && (
+        {reviewAvailable && selectedSubject && (
           <div
             className="performance-card question-review-card"
             ref={questionReviewRef}

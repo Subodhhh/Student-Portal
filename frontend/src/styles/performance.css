@@ -75,7 +75,8 @@
 .performance-summary-card {
   position: relative;
   display: grid;
-  grid-template-columns: 1.4fr repeat(4, 1fr);
+  /* score | divider | correct | wrong | unanswered | accuracy */
+  grid-template-columns: 1.4fr 24px repeat(4, 1fr);
   align-items: center;
   gap: 0;
   padding: 24px;

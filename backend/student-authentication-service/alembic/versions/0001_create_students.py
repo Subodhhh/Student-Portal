@@ -10,6 +10,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # The live databases were created by the other root (b9149bb383de) and already hold `students` with
+    # VARCHAR(20) ids (STU000001...). This root only bootstraps an empty database; on an existing one it is a no-op,
+    # so the merge revision can be reached without re-creating (or retyping) the table.
+    if sa.inspect(op.get_bind()).has_table("students"):
+        return
     # PostgreSQL generates UUIDs for new students.
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
 

@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     database_url: str
     cors_origins: str
     redis_url: str
+    # Comma-separated service keys the Institute may present on /internal/v1 (empty = internal API disabled; two during rotation).
+    institute_service_api_keys: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

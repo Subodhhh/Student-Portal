@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.ranking_repository import (
@@ -16,6 +17,14 @@ def get_ranking(
         db=db,
         test_id=test_id,
     )
+
+    # A leaderboard exposes other students' names and marks: only students who have their own result in this test may see it
+    # (a test id alone must not reveal another provider's or branch's results).
+    if not any(row["student_id"] == student_id for row in rows):
+        raise HTTPException(
+            status_code=404,
+            detail="Ranking not available",
+        )
 
     leaderboard = []
 

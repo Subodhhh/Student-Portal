@@ -1,0 +1,35 @@
+/* Central design tokens: slate / charcoal / muted blue on an off-white canvas. */
+:root {
+  --c-bg: #eef1f5;
+  --c-surface: #f9fafb;
+  --c-surface-2: #ffffff;
+  --c-border: #d5dbe3;
+  --c-border-strong: #b7c0cc;
+  --c-text: #1f2933;
+  --c-text-muted: #5b6776;
+  --c-sidebar: #26303d;
+  --c-sidebar-text: #cfd7e2;
+  --c-sidebar-active: #3a4a5f;
+  --c-primary: #3f6a9b;
+  --c-primary-hover: #345a85;
+  --c-primary-soft: #e3ecf6;
+  --c-danger: #b3413a;
+  --c-danger-soft: #f8e6e4;
+  --c-warn: #a86a12;
+  --c-warn-soft: #f8eed9;
+  --c-ok: #2f7a55;
+  --c-ok-soft: #e0f0e8;
+  --c-focus: #1d4f91;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(31, 41, 51, .06);
+  --shadow-md: 0 4px 14px rgba(31, 41, 51, .10);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --fs-sm: .875rem; --fs-md: 1rem; --fs-lg: 1.25rem; --fs-xl: 1.6rem;
+  --transition: 140ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --transition: 0ms; }
+  * { animation-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}

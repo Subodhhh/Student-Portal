@@ -4,6 +4,7 @@ const ENROLLMENT_API_URL = import.meta.env.VITE_ENROLLMENT_API_URL;
 const TEST_API_URL = import.meta.env.VITE_TEST_API_URL;
 const ATTEMPT_API_URL = import.meta.env.VITE_ATTEMPT_API_URL;
 const RESULT_API_URL = import.meta.env.VITE_RESULT_API_URL;
+const RANKING_API_URL = import.meta.env.VITE_RANKING_API_URL;
 const NOTIFICATION_API_URL = import.meta.env.VITE_NOTIFICATION_API_URL;
 
 export {
@@ -13,5 +14,6 @@ export {
   TEST_API_URL,
   ATTEMPT_API_URL,
   RESULT_API_URL,
+  RANKING_API_URL,
   NOTIFICATION_API_URL,
 };

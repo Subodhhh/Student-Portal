@@ -82,7 +82,6 @@ function RankingPage() {
 
   useEffect(() => {
     if (!selectedTestId) {
-      setRanking(null);
       return;
     }
 
@@ -176,9 +175,10 @@ function RankingPage() {
         <select
           id="ranking-test"
           value={selectedTestId}
-          onChange={(event) =>
-            setSelectedTestId(event.target.value)
-          }
+          onChange={(event) => {
+            setRanking(null);
+            setSelectedTestId(event.target.value);
+          }}
         >
           {tests.map((test) => (
             <option

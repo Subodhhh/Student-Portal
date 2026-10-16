@@ -5,7 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.test_result import TestResult
+from app.services.reevaluation import score
 from app.repositories.result_repository import (
+    get_review_window,
     create_result,
     get_attempt,
     get_existing_result,
@@ -57,53 +59,13 @@ def evaluate_attempt(
             detail="No questions found for this test",
         )
 
-    total_questions = len(questions)
-    attempted_questions = 0
-    correct_answers = 0
-    incorrect_answers = 0
-    total_marks = 0
-    obtained_marks = 0
-
-    for question in questions:
-        marks = question["marks"] or 0
-        negative_marks = question["negative_marks"] or 0
-        selected_answer = question["selected_answer"]
-        correct_answer = question["correct_answer"]
-
-        total_marks += marks
-
-        if not selected_answer:
-            continue
-
-        attempted_questions += 1
-
-        if selected_answer.strip().upper() == correct_answer.strip().upper():
-            correct_answers += 1
-            obtained_marks += marks
-        else:
-            incorrect_answers += 1
-            obtained_marks -= negative_marks
-
-    unanswered_questions = total_questions - attempted_questions
-
-    accuracy = (
-        (correct_answers / attempted_questions) * 100
-        if attempted_questions
-        else 0.0
-    )
-
+    # One scoring implementation for first evaluation and authorized re-evaluation (app/services/reevaluation.score):
+    # +marks for a correct answer, -negative marks for a wrong one, 0 for unanswered.
     result = TestResult(
         attempt_id=attempt_id,
         test_id=attempt["test_id"],
         student_id=student_id,
-        total_questions=total_questions,
-        attempted_questions=attempted_questions,
-        correct_answers=correct_answers,
-        incorrect_answers=incorrect_answers,
-        unanswered_questions=unanswered_questions,
-        total_marks=total_marks,
-        obtained_marks=obtained_marks,
-        accuracy=round(accuracy, 2),
+        **score(questions),
     )
 
     try:
@@ -168,6 +130,11 @@ def get_result_details(
         attempt_id=attempt_id,
         student_id=student_id,
     )
+
+    # The correct answers of a test must not leak while other students can still start it: question-level review
+    # opens when the availability window has closed. Score and per-subject totals are shown right after evaluation.
+    review = get_review_window(db=db, test_id=result["test_id"])
+    review_available = bool(review is None or review["open"])
 
     questions = get_questions_with_answers(
         db=db,
@@ -272,5 +239,7 @@ def get_result_details(
     return {
         "result": result,
         "subjects": subject_performance,
-        "questions": question_reviews,
+        "questions": question_reviews if review_available else [],
+        "review_available": review_available,
+        "review_available_at": None if review_available or review is None else review["end_at"],
     }

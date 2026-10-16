@@ -409,6 +409,8 @@ function TestAttemptPage() {
       return;
     }
 
+    // Deliberate: opening a question marks it visited locally, mirroring the visit recorded on the server for the same event.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
         question.id === currentQuestionId &&

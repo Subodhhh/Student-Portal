@@ -20,3 +20,5 @@ class ProfileUpdateRequest(BaseModel):
     date_of_birth: date | None = None
     phone: str | None = Field(default=None, max_length=20)
     email: EmailStr
+    # Required only when the email changes: the email is where password-reset links go, so a session alone must not move it.
+    current_password: str | None = Field(default=None, max_length=256)

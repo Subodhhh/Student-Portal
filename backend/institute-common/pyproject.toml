@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "institute-common"
+version = "0.1.0"
+description = "Shared library for the Institute Portal microservices (models, security, ownership guard, internal service plumbing)"
+requires-python = ">=3.12"
+dependencies = [
+  "SQLAlchemy>=2.0", "alembic", "argon2-cffi", "email-validator", "fastapi", "httpx", "psycopg[binary]",
+  "pydantic>=2", "pydantic-settings", "python-multipart", "redis", "tzdata", "uvicorn",
+]
+
+[tool.setuptools.packages.find]
+include = ["institute_common*"]
