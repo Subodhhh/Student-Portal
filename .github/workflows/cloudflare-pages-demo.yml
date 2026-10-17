@@ -79,8 +79,8 @@ jobs:
       - run: npm run lint
       - name: Proxy and edge route tests (offline)
         run: node --test ../deploy/tunnel/test_pages_functions.mjs
-      - if: matrix.portal == 'institute'
-        run: npm test
+      # Both frontends' unit tests. A failure fails this build leg, and `deploy` (needs: build) then never starts.
+      - run: npm test
       - run: npm run build
 
       - name: Bundle uses the same-origin API and embeds no secrets
