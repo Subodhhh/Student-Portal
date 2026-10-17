@@ -22,7 +22,7 @@ export default function SystemHealthPage() {
   const rows = Object.entries(h.data.services).map(([name, s]) => ({ name, ...s }));
   return (
     <>
-      <PageHeader title="Service health" subtitle={`Checked ${new Date(h.data.checked_at).toLocaleTimeString()} · refresh the page to check again`} />
+      <PageHeader subtitle={`Checked ${new Date(h.data.checked_at).toLocaleTimeString()} · refresh the page to check again`} />
       <div className="stack">
         <Alert kind={h.data.healthy ? "success" : "warn"}>{h.data.healthy ? "Every service answers and no work is waiting on an operator." : "Something needs attention: see the services and queues below."}</Alert>
         <Card>

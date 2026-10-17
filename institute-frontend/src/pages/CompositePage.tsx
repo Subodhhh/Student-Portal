@@ -25,7 +25,7 @@ export default function CompositePage() {
   const subjectName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
   return (
     <>
-      <PageHeader title="Composite tests" subtitle="Combine approved papers from several providers into one exam. Papers are shared for use only: nobody sees another provider's questions." />
+      <PageHeader subtitle="Combine approved papers from several providers into one exam. Papers are shared for use only: nobody sees another provider's questions." />
       <Tabs active={tab} onChange={setChosen} tabs={[...(canRequest ? [{ id: "requests", label: "My requests" }] : []), { id: "invitations", label: "Invitations to contribute" }]} />
       {tab === "requests" && canRequest && <NeedBranch>{({ providerId, branchId }) => <Requests providerId={providerId} branchId={branchId} subjectName={subjectName} subjects={subjects.data?.items ?? []} />}</NeedBranch>}
       {tab === "invitations" && <Invitations subjectName={subjectName} />}
