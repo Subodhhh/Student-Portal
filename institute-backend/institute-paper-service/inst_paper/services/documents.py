@@ -32,7 +32,7 @@ import re
 import zipfile
 
 from inst_paper.services.extraction import (
-    MAX_ZIP_MEMBERS, OPTIONAL, PKG_REL, REQUIRED, ExtractionResult, _err, _finish, _part, _Reject, _validate_rows, _xml,
+    MAX_ZIP_MEMBERS, OPTIONAL, PKG_REL, REQUIRED, ExtractionResult, _err, _finish, _part, _Reject, _validate_rows, _xml, required_columns,
 )
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -195,7 +195,7 @@ def extract_docx(data: bytes, max_questions: int) -> ExtractionResult:
         if not grid:
             continue
         header = [h.strip().lower() for h in grid[0]]
-        if all(c in header for c in REQUIRED):
+        if all(c in header for c in required_columns()):
             if len(set(h for h in header if h)) != len([h for h in header if h]):
                 res.errors.append(_err(1, None, "The table header has duplicate column names."))
                 return res

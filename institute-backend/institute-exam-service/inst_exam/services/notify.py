@@ -69,8 +69,10 @@ def deliver_pending(db: Session, now=None, client=None) -> dict:
     return stats
 
 
-def responsible_staff(db: Session, provider_id: UUID, branch_id: UUID, subject_id: UUID | None = None) -> list[UUID]:
-    """Teachers of the subject in that branch + the branch's and provider's admins (read-only lookup)."""
+def responsible_staff(db: Session, provider_id: UUID, branch_id: UUID, subject_id: UUID | None = None,
+                      institute: bool = False) -> list[UUID]:
+    """Teachers of the subject in that branch + the branch's and provider's admins (read-only lookup). For a whole-institute exam
+    (`institute`) every branch admin of the provider is responsible too - the same people who can see that exam."""
     ids: list[UUID] = []
     if subject_id:
         ids += list(db.scalars(select(TeacherSubjectAssignment.staff_id).where(
@@ -79,6 +81,6 @@ def responsible_staff(db: Session, provider_id: UUID, branch_id: UUID, subject_i
     rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.status == "ACTIVE"))
     for a in rows:
         if (a.role == Role.PROVIDER_ADMIN.value and a.provider_id == provider_id) or (
-                a.role == Role.BRANCH_ADMIN.value and a.branch_id == branch_id):
+                a.role == Role.BRANCH_ADMIN.value and (a.branch_id == branch_id or (institute and a.provider_id == provider_id))):
             ids.append(a.staff_id)
     return list(dict.fromkeys(ids))

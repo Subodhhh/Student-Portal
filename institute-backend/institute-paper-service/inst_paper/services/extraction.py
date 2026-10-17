@@ -14,7 +14,9 @@ import posixpath
 import re
 import struct
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Protocol
 from xml.etree import ElementTree as ET
 from dataclasses import dataclass, field
@@ -59,20 +61,90 @@ def _dec(value: str) -> Decimal | None:
     return d if d.is_finite() and abs(d) < Decimal("10000") else None
 
 
+# ------------------------------------------------------------------ separate answer key
+# When the uploader supplies a separate answer-key file, every format's extractor runs inside `answer_key(mapping)`: the paper may then
+# omit the `correct` column/line, and the validator takes question N's answer from the key. A key answer that disagrees with an answer
+# printed in the paper, a question without a key answer, or a key answer for a question that is not in the paper all reject the WHOLE
+# paper, like every other validation problem. Questions are matched by their number in the paper (1, 2, 3, ... in document order).
+
+_ANSWER_KEY: ContextVar[dict[int, str] | None] = ContextVar("answer_key", default=None)
+_KEY_LINE = re.compile(r"^\s*(?:q(?:uestion)?\s*\.?\s*)?(\d{1,4})\s*(?:[.):,;\-\t]|\s)\s*\(?([A-Za-z])\)?\s*[.,;]?\s*$")
+_KEY_HEADER = re.compile(r"^\s*(q(uestion)?|no\.?|number|#|sr)\b.*(answer|ans|key|correct)", re.IGNORECASE)
+
+
+@contextmanager
+def answer_key(mapping: dict[int, str] | None) -> Iterator[None]:
+    token = _ANSWER_KEY.set(mapping)
+    try:
+        yield
+    finally:
+        _ANSWER_KEY.reset(token)
+
+
+def required_columns() -> list[str]:
+    """Columns a CSV/XLSX/DOCX table must have; `correct` may be left out when a separate answer key supplies it."""
+    return [c for c in REQUIRED if c != "correct"] if _ANSWER_KEY.get() is not None else REQUIRED
+
+
+def parse_answer_key(data: bytes, max_questions: int) -> tuple[dict[int, str], list[dict]]:
+    """Answer key as UTF-8 text/CSV, one question per line: `1,B`, `1. B`, `1 - (b)`, `Q1 B`. An optional header line is skipped.
+    Returns (question number -> answer, errors); any error rejects the paper it belongs to."""
+    errors: list[dict] = []
+    if b"\x00" in data:
+        return {}, [_err(None, "answer_key", "The answer key must be a text or CSV file.")]
+    try:
+        text = data.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError:
+        return {}, [_err(None, "answer_key", "The answer key must be UTF-8 encoded text.")]
+    out: dict[int, str] = {}
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        if line_no == 1 and _KEY_HEADER.match(line):
+            continue
+        m = _KEY_LINE.match(line.replace('"', ""))
+        if not m:
+            errors.append(_err(line_no, "answer_key", f"Unreadable answer-key line: {line.strip()[:60]!r}. Use 'number,answer', e.g. 1,B."))
+            continue
+        number, answer = int(m.group(1)), m.group(2).upper()
+        if number < 1 or number > max_questions:
+            errors.append(_err(line_no, "answer_key", f"Question number {number} is out of range."))
+        elif answer not in {"A", "B", "C", "D"}:
+            errors.append(_err(line_no, "answer_key", f"Answer for question {number} must be A, B, C or D."))
+        elif number in out:
+            errors.append(_err(line_no, "answer_key", f"Question {number} appears twice in the answer key."))
+        else:
+            out[number] = answer
+    if not out and not errors:
+        errors.append(_err(None, "answer_key", "The answer key is empty."))
+    return out, errors
+
+
 def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
     """The single validation path for every input format: `rows` yields (row_number, dict-of-stripped-text) or
     (row_number, None) for a structurally broken row. Any problem anywhere rejects the whole paper (see callers)."""
     seen: dict[str, int] = {}
+    answers = _ANSWER_KEY.get()
+    qno = 0   # question number in document order (matches the answer key)
     for idx, row in rows:
         if idx - 1 > max_questions:
             res.errors.append(_err(idx, None, f"Too many questions (limit {max_questions})."))
             break
         if row is None:
+            qno += 1
             res.errors.append(_err(idx, None, "Row has the wrong number of columns."))
             continue
         if not any(row.values()):
             continue  # blank line: ignorable, never a question
+        qno += 1
         problems = []
+        if answers is not None:
+            given, keyed = (row.get("correct") or "").strip().upper(), answers.get(qno)
+            if keyed is None:
+                problems.append(("correct", f"The answer key has no answer for question {qno}."))
+            elif given and given != keyed:
+                problems.append(("correct", f"Answer mismatch for question {qno}: the paper says {given}, the answer key says {keyed}."))
+            row = {**row, "correct": keyed or given}
         if any(len(v) > MAX_CELL for v in row.values()):
             problems.append(("question", f"A cell exceeds {MAX_CELL} characters."))
         if not row["question"]:
@@ -83,7 +155,7 @@ def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
                 problems.append((f"option_{key.lower()}", f"Option {key} is empty."))
         if len(set(v.lower() for v in opts.values() if v)) < len([v for v in opts.values() if v]):
             problems.append(("options", "Two options are identical."))
-        correct = row["correct"].upper()
+        correct = (row.get("correct") or "").upper()
         if correct not in {"A", "B", "C", "D"}:
             problems.append(("correct", "Correct answer must be A, B, C or D."))
         marks, neg = _dec(row["marks"]), _dec(row["negative_marks"])
@@ -100,6 +172,11 @@ def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
             continue
         res.questions.append(ExtractedQuestion(idx, row["question"], opts, correct, marks, neg,
                                                row.get("explanation") or None, row.get("topic") or None))
+    if answers is not None:
+        extra = sorted(n for n in answers if n > qno)
+        if extra:
+            shown = ", ".join(map(str, extra[:10])) + (" ..." if len(extra) > 10 else "")
+            res.errors.append(_err(None, "answer_key", f"The answer key has answers for questions that are not in the paper: {shown}."))
 
 
 def _finish(res: ExtractionResult) -> ExtractionResult:
@@ -134,7 +211,7 @@ def extract_csv(data: bytes, max_questions: int) -> ExtractionResult:
     except csv.Error as exc:
         res.errors.append(_err(None, None, f"Unreadable CSV: {exc}"))
         return res
-    missing = [c for c in REQUIRED if c not in header]
+    missing = [c for c in required_columns() if c not in header]
     if missing:
         res.errors.append(_err(1, None, f"Missing required column(s): {', '.join(missing)}"))
         return res
@@ -327,7 +404,7 @@ def extract_xlsx(data: bytes, max_questions: int) -> ExtractionResult:
     if not header:
         res.errors.append(_err(None, None, "The file contains no questions."))
         return res
-    missing = [c for c in REQUIRED if c not in header]
+    missing = [c for c in required_columns() if c not in header]
     if missing:
         res.errors.append(_err(1, None, f"Missing required column(s): {', '.join(missing)}"))
         return res

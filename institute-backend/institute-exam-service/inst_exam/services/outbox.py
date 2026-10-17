@@ -90,6 +90,11 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
     }
     if operation == "CANCEL":
         return payload
+    # Exam-level marking frozen at generation (exam_versions.settings). PER_QUESTION (the default, and every exam generated before
+    # settings existed) keeps each question's own marks; UNIFORM gives every question +correct / -wrong. The Student result service
+    # evaluates exactly the marks delivered here, so evaluation always matches the configured scheme.
+    marking = (ev.settings or {}).get("marking") or {"mode": "PER_QUESTION"}
+    uniform = marking.get("mode") == "UNIFORM"
     order = 0
     for p in papers:
         subject = db.get(Subject, p.subject_id)
@@ -99,13 +104,17 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
         ).scalars().all()
         for q in rows:
             order += 1
-            for label, val in (("marks", q.marks_positive), ("negative_marks", q.marks_negative)):
-                if Decimal(val) != Decimal(val).to_integral_value():
-                    raise PermanentPublishError(f"Question marks must be whole numbers for student delivery ({label}={val}).")
+            if uniform:
+                marks, negative = int(marking["correct"]), int(marking["wrong"])
+            else:
+                for label, val in (("marks", q.marks_positive), ("negative_marks", q.marks_negative)):
+                    if Decimal(val) != Decimal(val).to_integral_value():
+                        raise PermanentPublishError(f"Question marks must be whole numbers for student delivery ({label}={val}).")
+                marks, negative = int(q.marks_positive), int(q.marks_negative)
             payload["questions"].append({
                 "order": order, "subject": subject.name if subject else None, "text": q.stem,
                 "options": {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d},
-                "correct": q.correct_option, "marks": int(q.marks_positive), "negative_marks": int(q.marks_negative),
+                "correct": q.correct_option, "marks": marks, "negative_marks": negative,
             })
     payload["total_questions"] = len(payload["questions"])
     payload["total_marks"] = sum(q["marks"] for q in payload["questions"])

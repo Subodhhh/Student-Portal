@@ -5,17 +5,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit, sessions
 from institute_common.core.roles import Role
-from institute_common.core.security import Principal, api_error, can_grant, get_principal
+from institute_common.core.security import Principal, api_error, can_grant, can_see_provider, get_principal
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import TeacherSubjectAssignment
 from institute_common.models.org import Branch, Provider
-from institute_common.models.staff import Staff, StaffRoleAssignment
+from institute_common.models.staff import AuditLog, Staff, StaffRoleAssignment
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
@@ -53,6 +53,8 @@ class AssignmentOut(BaseModel):
     provider_id: UUID | None
     branch_id: UUID | None
     status: str
+    provider_name: str | None = None
+    branch_name: str | None = None
 
 
 class StaffOut(BaseModel):
@@ -65,18 +67,29 @@ class StaffOut(BaseModel):
     email_verified: bool
     assignments: list[AssignmentOut]
     created_at: datetime
+    last_login_at: datetime | None = None    # latest successful sign-in recorded in the audit log
 
 
 class Reason(Strict):
     reason: str
 
 
-def _out(db: Session, s: Staff) -> StaffOut:
+def _out(db: Session, s: Staff, viewer: Principal) -> StaffOut:
     rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == s.staff_id)).all()
+    # Names of the provider/branch an assignment is scoped to, only for providers the viewer may see: a teacher who also
+    # works for another provider must not reveal that provider's name to a scoped admin.
+    provider_ids = {r.provider_id for r in rows if r.provider_id and can_see_provider(viewer, r.provider_id)}
+    branch_ids = {r.branch_id for r in rows if r.branch_id and r.provider_id in provider_ids}
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_(provider_ids))).all()) if provider_ids else {}
+    branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids))).all()) if branch_ids else {}
     return StaffOut(
         staff_id=s.staff_id, staff_code=s.staff_code, full_name=s.full_name, email=s.email, phone=s.phone,
         status=s.status, email_verified=s.email_verified_at is not None,
-        assignments=[AssignmentOut.model_validate(r) for r in rows], created_at=s.created_at,
+        assignments=[AssignmentOut.model_validate(r).model_copy(update={
+            "provider_name": providers.get(r.provider_id), "branch_name": branches.get(r.branch_id)}) for r in rows],
+        created_at=s.created_at,
+        last_login_at=db.scalar(select(func.max(AuditLog.occurred_at)).where(
+            AuditLog.actor_staff_id == s.staff_id, AuditLog.action == "auth.login", AuditLog.outcome == "SUCCESS")),
     )
 
 
@@ -190,11 +203,12 @@ def create_staff(body: StaffIn, p: Principal = Depends(get_principal), db: Sessi
     tokens.issue_token(db, staff, "EMAIL_VERIFY")  # also lets the person set their first password
     audit.record(db, "staff.create", "SUCCESS", actor=p.staff_id, target_type="staff", target_id=staff.staff_id,
                  provider_id=a.provider_id, branch_id=a.branch_id, ip=p.ip, details={"role": a.role.value})
-    return _out(db, staff)
+    return _out(db, staff, p)
 
 
 @router.get("/staff", response_model=Page[StaffOut])
 def list_staff(q: str | None = Query(default=None, max_length=100), role: Role | None = None, status: str | None = Query(default=None, pattern="^(ACTIVE|INACTIVE)$"),
+               provider_id: UUID | None = None, branch_id: UUID | None = None,
                page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     if not p.has_perm("staff.read"):
         p.require(db, "staff.read")
@@ -217,8 +231,19 @@ def list_staff(q: str | None = Query(default=None, max_length=100), role: Role |
     if role:
         stmt = stmt.where(Staff.staff_id.in_(select(StaffRoleAssignment.staff_id).where(
             StaffRoleAssignment.role == role.value, StaffRoleAssignment.status == "ACTIVE")))
+    # provider_id / branch_id only NARROW the result above (the scope filter for non-global callers still applies):
+    # staff holding an active assignment there, plus teachers actively teaching in that branch.
+    if provider_id:
+        stmt = stmt.where(Staff.staff_id.in_(select(StaffRoleAssignment.staff_id).where(
+            StaffRoleAssignment.provider_id == provider_id, StaffRoleAssignment.status == "ACTIVE")))
+    if branch_id:
+        stmt = stmt.where(or_(
+            Staff.staff_id.in_(select(StaffRoleAssignment.staff_id).where(
+                StaffRoleAssignment.branch_id == branch_id, StaffRoleAssignment.status == "ACTIVE")),
+            Staff.staff_id.in_(select(TeacherSubjectAssignment.staff_id).where(
+                TeacherSubjectAssignment.branch_id == branch_id, TeacherSubjectAssignment.status == "ACTIVE"))))
     res = paginate(db, stmt.order_by(Staff.staff_code), page, page_size)
-    res["items"] = [_out(db, s) for s in res["items"]]
+    res["items"] = [_out(db, s, p) for s in res["items"]]
     return res
 
 
@@ -238,7 +263,7 @@ def get_staff(staff_id: UUID, p: Principal = Depends(get_principal), db: Session
     if not _visible(db, p, s) or not (p.is_global or s.staff_id == p.staff_id or p.has_role(Role.PROVIDER_ADMIN, Role.BRANCH_ADMIN)):
         audit.record(db, "authz.out_of_scope", "DENIED", actor=p.staff_id, target_type="staff", target_id=staff_id, ip=p.ip)
         raise api_error(404, "NOT_FOUND", "Staff member not found.")
-    return _out(db, s)
+    return _out(db, s, p)
 
 
 @router.patch("/staff/{staff_id}", response_model=StaffOut)
@@ -253,7 +278,7 @@ def update_staff(staff_id: UUID, body: StaffPatch, p: Principal = Depends(get_pr
     s.updated_by = p.staff_id
     db.commit()
     audit.record(db, "staff.update", "SUCCESS", actor=p.staff_id, target_type="staff", target_id=staff_id, ip=p.ip)
-    return _out(db, s)
+    return _out(db, s, p)
 
 
 @router.post("/staff/{staff_id}/assignments", response_model=AssignmentOut, status_code=201)
@@ -280,6 +305,8 @@ def end_assignment(staff_id: UUID, assignment_id: UUID, body: Reason, p: Princip
     reason = need_reason(body.reason)
     if Role(a.role) == Role.SUPER_ADMIN and not p.has_role(Role.SUPER_ADMIN):
         raise api_error(403, "FORBIDDEN", "Only a Super Admin may modify a Super Admin.")
+    if Role(a.role) == Role.SUPER_ADMIN and a.status == "ACTIVE":
+        ensure_not_last_super_admin(db, s.staff_id)
     if not can_grant(p, Role(a.role), a.provider_id, a.branch_id):
         audit.record(db, "staff.end_assignment", "DENIED", actor=p.staff_id, target_type="staff", target_id=staff_id, ip=p.ip)
         raise api_error(403, "FORBIDDEN", "You may not modify this assignment.")
@@ -300,6 +327,18 @@ def end_assignment(staff_id: UUID, assignment_id: UUID, body: Reason, p: Princip
     return a
 
 
+def ensure_not_last_super_admin(db: Session, target_id: UUID) -> None:
+    """Refuse a change that would leave no ACTIVE Super Admin (an ACTIVE account holding an ACTIVE SUPER_ADMIN assignment). The other
+    hierarchy rules (nobody acts on themselves; only a Super Admin acts on a Super Admin) already make this unreachable through the
+    API today; this guard keeps it true regardless of how the rules evolve."""
+    remaining = db.scalar(select(func.count(func.distinct(Staff.staff_id))).join(
+        StaffRoleAssignment, StaffRoleAssignment.staff_id == Staff.staff_id).where(
+        Staff.status == "ACTIVE", StaffRoleAssignment.role == Role.SUPER_ADMIN.value, StaffRoleAssignment.status == "ACTIVE",
+        Staff.staff_id != target_id)) or 0
+    if remaining == 0:
+        raise api_error(409, "LAST_SUPER_ADMIN", "The platform must keep at least one active Super Admin.")
+
+
 def _identity_status(db: Session, p: Principal, staff_id: UUID, status: str, reason: str, action: str) -> StaffOut:
     # Identity-wide changes affect every provider the person works for => global roles only.
     if not p.is_global:
@@ -309,13 +348,15 @@ def _identity_status(db: Session, p: Principal, staff_id: UUID, status: str, rea
     if s.staff_id == p.staff_id:
         raise api_error(403, "FORBIDDEN", "You cannot change your own status.")
     _guard_target(db, p, s)
+    if status == "INACTIVE" and Role.SUPER_ADMIN in _target_roles(db, s.staff_id):
+        ensure_not_last_super_admin(db, s.staff_id)
     s.status = status
     s.deactivated_at = utcnow() if status == "INACTIVE" else None
     s.updated_by = p.staff_id
     db.commit()
     sessions.invalidate_staff_sessions(str(s.staff_id))
     audit.record(db, action, "SUCCESS", actor=p.staff_id, target_type="staff", target_id=staff_id, reason=reason, ip=p.ip)
-    return _out(db, s)
+    return _out(db, s, p)
 
 
 @router.post("/staff/{staff_id}/deactivate", response_model=StaffOut)

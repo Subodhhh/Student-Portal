@@ -178,3 +178,43 @@ def test_pagination_bounds(client, world, make_staff, login):
     r = client.get(f"{API}/providers", params={"page_size": 1000}, headers=h).json()
     assert r["page_size"] == 100
     assert client.get(f"{API}/providers", params={"q": "%"}, headers=h).json()["total"] == 0   # LIKE wildcards escaped
+
+
+def test_staff_list_filters_by_provider_and_branch_without_widening_scope(client, world, make_staff, login, db_factory):
+    from institute_common.models.academics import Subject, TeacherSubjectAssignment
+    pa1, _ = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    ba11, _ = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
+    ba12, _ = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b2"])])
+    t1, _ = make_staff([(Role.TEACHER, world["p1"], None)])
+    t2, _ = make_staff([(Role.TEACHER, world["p2"], None)])
+    with db_factory() as db:
+        subj = Subject(code="PHY", name="Physics")
+        db.add(subj)
+        db.flush()
+        db.add(TeacherSubjectAssignment(staff_id=t1, provider_id=world["p1"], branch_id=world["p1b1"], subject_id=subj.subject_id))
+        db.commit()
+    _, sa = make_staff([(Role.SUPER_ADMIN, None, None)])
+    ids = lambda h, q: {s["staff_id"] for s in client.get(f"{API}/staff?{q}", headers=h).json()["items"]}  # noqa: E731
+    h = login(sa)
+    assert ids(h, f"provider_id={world['p1']}") == {str(pa1), str(ba11), str(ba12), str(t1)}
+    assert ids(h, f"provider_id={world['p2']}") == {str(t2)}
+    # branch: its branch admin plus teachers actively teaching there
+    assert ids(h, f"branch_id={world['p1b1']}") == {str(ba11), str(t1)}
+    assert ids(h, f"provider_id={world['p1']}&role=BRANCH_ADMIN") == {str(ba11), str(ba12)}
+    # a scoped admin asking for another provider gets nothing: the filter only narrows their own scope
+    _, pa1_code = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    assert ids(login(pa1_code), f"provider_id={world['p2']}") == set()
+    _, ba_code = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
+    assert str(ba12) not in ids(login(ba_code), f"provider_id={world['p1']}")
+
+
+def test_assignments_carry_names_only_for_providers_the_viewer_can_see(client, world, make_staff, login):
+    both, _ = make_staff([(Role.TEACHER, world["p1"], None), (Role.TEACHER, world["p2"], None)])
+    ba, _ = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b2"])])
+    _, sa = make_staff([(Role.SUPER_ADMIN, None, None)])
+    _, pa = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    names = lambda h, sid: {(a["provider_name"], a["branch_name"]) for a in client.get(f"{API}/staff/{sid}", headers=h).json()["assignments"]}  # noqa: E731
+    assert names(login(sa), both) == {("Provider p1", None), ("Provider p2", None)}
+    assert names(login(sa), ba) == {("Provider p1", "p1-b2")}
+    # the Provider Admin of p1 sees this teacher, but not the name of the other provider they also work for
+    assert names(login(pa), both) == {("Provider p1", None), (None, None)}

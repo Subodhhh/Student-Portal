@@ -14,16 +14,17 @@ from institute_common.core import audit
 from institute_common.core.roles import GLOBAL_ROLES, Role
 from institute_common.core.security import Principal, api_error, can_see_provider, get_principal
 from institute_common.database import get_db, utcnow
-from institute_common.models.academics import EnrollmentTransfer, Subject, TeacherSubjectAssignment
+from institute_common.models.academics import EnrollmentTransfer, ProviderSubject, Subject, TeacherSubjectAssignment
 from institute_common.models.exams import (
-    Exam, ExamGenerationJob, ExamNotificationOutbox, ExamOutbox, ExamVersion, Notification, ResultCorrection, StudentNotificationOutbox,
+    CompositeRequest, Exam, ExamGenerationJob, GlobalTest, ExamNotificationOutbox, ExamOutbox, ExamVersion, Notification, ResultCorrection,
+    StudentNotificationOutbox,
 )
 from institute_common.models.ops import (
     BillingAdjustment, InstituteSetting, Invoice, PaymentRecord, ProviderSubscription, SubscriptionPlan,
     SupportTicket, SupportTicketMessage,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, Provider
-from institute_common.models.papers import Paper, PaperVersion
+from institute_common.models.papers import Paper, PaperUpload, PaperVersion, Question
 from institute_common.models.staff import AuditLog, Staff, StaffRoleAssignment
 from institute_common.util import need_reason, paginate
 from institute_common.util import Strict
@@ -573,6 +574,43 @@ def false_():
     return ~true()
 
 
+def _platform_overview(db: Session, now: datetime) -> dict[str, Any]:
+    """Platform-wide counts for the global (Super Admin / Admin) dashboard. Read-only; every number comes from a table."""
+    by_status = lambda col, stmt: {k: v for k, v in db.execute(stmt.group_by(col)).all()}  # noqa: E731
+    latest = (select(ExamVersion.exam_id, func.max(ExamVersion.version_no).label("v")).group_by(ExamVersion.exam_id).subquery())
+    current = (select(Exam, ExamVersion).join(latest, latest.c.exam_id == Exam.exam_id)
+               .join(ExamVersion, (ExamVersion.exam_id == Exam.exam_id) & (ExamVersion.version_no == latest.c.v))
+               .where(Exam.status != "CANCELLED"))
+    upcoming = db.execute(current.where(ExamVersion.start_at >= now).order_by(ExamVersion.start_at).limit(5)).all()
+    providers = {pid: name for pid, name in db.execute(select(Provider.provider_id, Provider.name).where(
+        Provider.provider_id.in_({e.provider_id for e, _ in upcoming}))).all()} if upcoming else {}
+    branches = {bid: name for bid, name in db.execute(select(Branch.branch_id, Branch.name).where(
+        Branch.branch_id.in_({e.branch_id for e, _ in upcoming}))).all()} if upcoming else {}
+    return {
+        "providers_by_status": by_status(Provider.status, select(Provider.status, func.count()).where(Provider.deleted_at.is_(None))),
+        "branches_by_status": by_status(Branch.status, select(Branch.status, func.count()).where(Branch.deleted_at.is_(None))),
+        "students": _count(db, select(Enrollment.student_id).where(Enrollment.status == "ACTIVE").distinct()),
+        "active_enrollments": _count(db, select(Enrollment).where(Enrollment.status == "ACTIVE")),
+        # people (not assignments) per role: one person can hold several roles
+        "staff_by_role": by_status(StaffRoleAssignment.role, select(StaffRoleAssignment.role, func.count(func.distinct(StaffRoleAssignment.staff_id)))
+                                   .join(Staff, Staff.staff_id == StaffRoleAssignment.staff_id)
+                                   .where(StaffRoleAssignment.status == "ACTIVE", Staff.status == "ACTIVE")),
+        "subjects": _count(db, select(Subject).where(Subject.status == "ACTIVE")),
+        "subjects_offered": _count(db, select(ProviderSubject.subject_id).join(Subject, Subject.subject_id == ProviderSubject.subject_id)
+                                   .where(Subject.status == "ACTIVE").distinct()),
+        "questions": _count(db, select(Question)),
+        "composite_by_status": by_status(CompositeRequest.status, select(CompositeRequest.status, func.count())),
+        "recent_exams_30d": _count(db, current.where(ExamVersion.end_at < now, ExamVersion.end_at >= now - timedelta(days=30))),
+        "papers_awaiting_approval": _count(db, select(PaperVersion).where(PaperVersion.status == "VALIDATED")),
+        "rejected_uploads_7d": _count(db, select(PaperUpload).where(PaperUpload.status == "REJECTED", PaperUpload.created_at >= now - timedelta(days=7))),
+        "global_tests_published": _count(db, select(GlobalTest).where(GlobalTest.status == "PUBLISHED")),
+        "upcoming_exam_list": [
+            {"exam_id": str(e.exam_id), "name": e.name, "status": e.status, "start_at": v.start_at.isoformat(),
+             "provider_name": providers.get(e.provider_id), "branch_name": branches.get(e.branch_id)}
+            for e, v in upcoming],
+    }
+
+
 @router.get("/dashboard")
 def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     role = p.highest_role()
@@ -605,6 +643,7 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
             "unfinished_corrections": _count(db, select(ResultCorrection).where(ResultCorrection.status != "APPLIED")),
         }
         out["unpaid_invoices"] = _count(db, select(Invoice).where(Invoice.status.in_(("ISSUED", "PARTIALLY_PAID"))))
+        out.update(_platform_overview(db, now))
     elif role == Role.PROVIDER_ADMIN:
         provs = {a.provider_id for a in p.assignments if Role(a.role) == Role.PROVIDER_ADMIN}
         out["branches"] = _count(db, select(Branch).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
