@@ -1,0 +1,126 @@
+# Demo backend edge (portal-edge). Rendered by the nginx image's template step: only ${EDGE_KEY} is substituted
+# (NGINX_ENVSUBST_FILTER=^EDGE_KEY$). See deploy/tunnel/README.md.
+#
+# Request path: Pages Function -> Quick Tunnel (cloudflared) -> this edge -> existing services. The edge
+#   * answers only requests that carry the shared X-Edge-Key (everything else gets the same 404 as an unknown path);
+#   * forwards only the explicit public routes below: Student routes and methods are listed one by one (from
+#     student-backend/*/app/routes), Institute requests go to the Institute gateway, which has its own generated
+#     allowlist (institute-backend/institute-gateway/nginx.conf);
+#   * never forwards /internal/*, /docs, /openapi.json, /health or /ready, and never passes the edge key on;
+#   * sets X-Forwarded-For itself from the Function's X-Client-IP (Cloudflare's CF-Connecting-IP), so a client-supplied
+#     X-Forwarded-For can never reach a backend. Backends trust that header only from this container's fixed address
+#     (10.231.47.2 on the student-portal-edge network; see docker-compose.yml).
+
+# The edge key is matched exactly in the map below. A hash bucket must hold the key plus nginx's per-entry overhead,
+# so keys of up to 128 characters (the limit enforced by demo-up.sh) need 256; the default (64) fails for any real key.
+map_hash_bucket_size 256;
+
+map $http_x_edge_key $edge_authorized {
+    default 0;
+    "${EDGE_KEY}" 1;
+}
+
+# Accept only a syntactically plain IPv4/IPv6 address from the Function; otherwise fall back to the tunnel's address.
+map $http_x_client_ip $edge_client_ip {
+    default $remote_addr;
+    "~^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$" $http_x_client_ip;
+    "~^[0-9A-Fa-f:]{2,39}$" $http_x_client_ip;
+}
+
+map "$request_method $uri" $edge_upstream {
+    default "";
+    # Student: authentication
+    "~^POST /student/auth/(login|logout|forgot-password|reset-password)$"          "student-authentication-service:8000";
+    "~^GET /student/auth/me$"                                                      "student-authentication-service:8000";
+    # Student: profile, enrollments
+    "~^(GET|PUT) /student/profile$"                                                "student-profile-service:8001";
+    "~^GET /student/enrollments$"                                                  "student-enrollment-service:8001";
+    # Student: tests (POST /tests/{id}/audiences is a service-key route and stays private)
+    "~^GET /student/tests(/(missed|scheduled))?$"                                  "student-test-service:8001";
+    "~^GET /student/tests/[^/]+(/(details|start))?$"                               "student-test-service:8001";
+    # Student: attempts
+    "~^GET /student/attempts/(completed|test/[^/]+)$"                              "student-attempt-service:8001";
+    "~^GET /student/attempts/[^/]+(/(answers|summary|workspace))?$"                "student-attempt-service:8001";
+    "~^POST /student/attempts/start$"                                              "student-attempt-service:8001";
+    "~^POST /student/attempts/[^/]+/(answers|submit)$"                             "student-attempt-service:8001";
+    "~^POST /student/attempts/[^/]+/questions/[^/]+/(clear|mark-review|visit)$"    "student-attempt-service:8001";
+    # Student: results, ranking
+    "~^GET /student/results(/attempts/[^/]+(/details)?)?$"                         "student-result-service:8001";
+    "~^POST /student/results/attempts/[^/]+/evaluate$"                             "student-result-service:8001";
+    "~^GET /student/ranking/[^/]+$"                                                "student-ranking-service:8001";
+    # Student: notifications (POST /notifications creates notifications with a service key and stays private)
+    "~^GET /student/notifications(/unread-count)?$"                                "student-notification-service:8001";
+    "~^PATCH /student/notifications/(read-all|[^/]+/read)$"                        "student-notification-service:8001";
+    # Institute: the gateway decides which /api/v1 routes exist (and answers 404 for everything else)
+    "~^(GET|POST|PUT|PATCH|DELETE) /institute/api/v1/[^?]+$"                       "institute-gateway:80";
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    server_tokens off;
+    default_type application/json;
+
+    # Upstreams are resolved through Docker's embedded DNS at request time, so recreated services are found again.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 3s;
+
+    proxy_http_version 1.1;
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    proxy_redirect off;
+
+    proxy_set_header Host $proxy_host;
+    proxy_set_header X-Forwarded-For $edge_client_ip;
+    proxy_set_header X-Real-IP $edge_client_ip;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Edge-Key "";
+    proxy_set_header X-Client-IP "";
+    proxy_set_header CF-Connecting-IP "";
+    proxy_hide_header X-Powered-By;
+
+    add_header X-Content-Type-Options nosniff always;
+
+    # Errors generated here (oversized body, unreachable service) never name a service or an internal address.
+    error_page 413 = @too_large;
+    error_page 502 503 504 = @unavailable;
+
+    if ($edge_authorized = 0) {
+        return 404 '{"detail":"Not found."}';
+    }
+
+    # Student requests are small JSON documents.
+    location ^~ /student/ {
+        client_max_body_size 1m;
+        if ($edge_upstream = "") {
+            return 404 '{"detail":"Not found."}';
+        }
+        rewrite ^/student(/.*)$ $1 break;
+        proxy_pass http://$edge_upstream;
+    }
+
+    # Institute requests include paper uploads (2 MB file limit in the paper service; the gateway also allows 3m).
+    location ^~ /institute/api/v1/ {
+        client_max_body_size 3m;
+        if ($edge_upstream = "") {
+            return 404 '{"detail":"Not found."}';
+        }
+        rewrite ^/institute(/.*)$ $1 break;
+        proxy_pass http://$edge_upstream;
+    }
+
+    location / {
+        return 404 '{"detail":"Not found."}';
+    }
+
+    location @too_large {
+        return 413 '{"detail":"Request body is too large."}';
+    }
+
+    location @unavailable {
+        return 503 '{"detail":"The demo backend is not available right now."}';
+    }
+}

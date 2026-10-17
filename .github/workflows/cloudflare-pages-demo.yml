@@ -1,0 +1,153 @@
+name: Cloudflare Pages demo
+
+# Development demo of both portals on Cloudflare Pages (docs/demo/CLOUDFLARE_DEMO.md).
+#   * build: runs on changes to either frontend; lint, test, build, validate the Pages Functions bundle. Never deploys and
+#     never sees a secret.
+#   * deploy: ONLY when started by hand (Actions -> "Cloudflare Pages demo" -> Run workflow, deploy = true). Runs in the
+#     protected "cloudflare-demo" environment, which holds the Cloudflare secrets and its own reviewer/branch rules.
+# Ordinary pushes and pull requests can never deploy.
+
+on:
+  push:
+    paths: ["student-frontend/**", "institute-frontend/**", "deploy/tunnel/**", ".github/workflows/cloudflare-pages-demo.yml"]
+  pull_request:
+    paths: ["student-frontend/**", "institute-frontend/**", "deploy/tunnel/**", ".github/workflows/cloudflare-pages-demo.yml"]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy both frontends to their Cloudflare Pages production branch"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pages-demo-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WRANGLER_VERSION: "4.145.0"
+
+jobs:
+  build:
+    name: Build ${{ matrix.portal }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - portal: student
+            dir: student-frontend
+          - portal: institute
+            dir: institute-frontend
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+      - run: npm ci
+
+      - name: Same-origin API base URLs
+        env:
+          PORTAL: ${{ matrix.portal }}
+          DEPLOYING: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true }}
+          STUDENT_PAGES_URL: ${{ vars.STUDENT_PAGES_URL }}
+          INSTITUTE_PAGES_URL: ${{ vars.INSTITUTE_PAGES_URL }}
+        run: |
+          # The apps build absolute URLs by concatenation (`${VITE_AUTH_API_URL}/auth/login`, `${API_URL}/api/v1/...`),
+          # so the base is the Pages origin itself: never an empty or relative value.
+          if [ "$PORTAL" = student ]; then url="$STUDENT_PAGES_URL"; else url="$INSTITUTE_PAGES_URL"; fi
+          url="${url%/}"
+          if [ -z "$url" ]; then
+            if [ "$DEPLOYING" = true ]; then echo "::error::repository variable ${PORTAL^^}_PAGES_URL is not set"; exit 1; fi
+            url="https://${PORTAL}-portal.invalid"   # validation build only
+          elif ! printf '%s' "$url" | grep -Eq '^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?\.pages\.dev$'; then
+            echo "::error::${PORTAL^^}_PAGES_URL must be the production https://<project>.pages.dev origin"; exit 1
+          fi
+          if [ "$PORTAL" = student ]; then
+            for v in AUTH PROFILE ENROLLMENT TEST ATTEMPT RESULT RANKING NOTIFICATION; do echo "VITE_${v}_API_URL=${url}/api" >> "$GITHUB_ENV"; done
+          else
+            echo "VITE_INSTITUTE_API_URL=${url}" >> "$GITHUB_ENV"
+          fi
+          echo "EXPECTED_API_BASE=$([ "$PORTAL" = student ] && echo "${url}/api" || echo "${url}")" >> "$GITHUB_ENV"
+
+      - run: npm run lint
+      - name: Proxy and edge route tests (offline)
+        run: node --test ../deploy/tunnel/test_pages_functions.mjs
+      - if: matrix.portal == 'institute'
+        run: npm test
+      - run: npm run build
+
+      - name: Bundle uses the same-origin API and embeds no secrets
+        run: |
+          grep -rqF "$EXPECTED_API_BASE" dist/assets || { echo "::error::API base missing from the bundle"; exit 1; }
+          if grep -rEiq '(api[_-]?key|secret|password)\s*[:=]\s*["'"'"'][A-Za-z0-9]{12,}' dist; then
+            echo "::error::the bundle appears to embed a credential"; exit 1
+          fi
+          # Cloudflare Pages serves index.html for unknown paths (SPA deep links) only when there is no 404.html.
+          if [ -e dist/404.html ]; then echo "::error::dist/404.html would disable the SPA fallback"; exit 1; fi
+
+      - name: Pages Functions compile (no credentials needed)
+        run: npx --yes "wrangler@${WRANGLER_VERSION}" pages functions build --outdir "$RUNNER_TEMP/functions-${{ matrix.portal }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pages-${{ matrix.portal }}
+          path: ${{ matrix.dir }}/dist
+          retention-days: 3
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy ${{ matrix.portal }}
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true
+    runs-on: ubuntu-latest
+    environment: cloudflare-demo
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - portal: student
+            dir: student-frontend
+          - portal: institute
+            dir: institute-frontend
+    concurrency:
+      group: cloudflare-pages-deploy-${{ matrix.portal }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v6   # provides functions/ next to the built dist/
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pages-${{ matrix.portal }}
+          path: ${{ matrix.dir }}/dist
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Direct Upload to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PORTAL: ${{ matrix.portal }}
+          STUDENT_PAGES_PROJECT: ${{ vars.STUDENT_PAGES_PROJECT }}
+          INSTITUTE_PAGES_PROJECT: ${{ vars.INSTITUTE_PAGES_PROJECT }}
+          PRODUCTION_BRANCH: ${{ vars.PAGES_PRODUCTION_BRANCH || 'main' }}
+        run: |
+          if [ "$PORTAL" = student ]; then project="$STUDENT_PAGES_PROJECT"; else project="$INSTITUTE_PAGES_PROJECT"; fi
+          if [ -z "$project" ] || [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Pages project variable or Cloudflare secrets are not configured"; exit 1
+          fi
+          npx --yes "wrangler@${WRANGLER_VERSION}" pages deploy dist --project-name "$project" --branch "$PRODUCTION_BRANCH" \
+            --commit-hash "$GITHUB_SHA" --commit-dirty=true

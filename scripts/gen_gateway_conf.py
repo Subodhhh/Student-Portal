@@ -28,6 +28,9 @@ from inst_paper.main import app as paper  # noqa: E402
 SERVICES = {"identity": identity, "organization": organization, "academics": academics, "enrollment": enrollment,
             "paper": paper, "exam": exam, "operations": operations}
 OUT = f"{ROOT}/institute-backend/institute-gateway/nginx.conf"
+# The demo edge (deploy/tunnel) runs with this reserved address on the student-portal-edge network (docker-compose.yml).
+# It is the only peer whose X-Forwarded-For the gateway believes; --check fails if the compose file disagrees.
+EDGE_PROXY_IP = "10.231.47.2"
 
 
 def render() -> str:
@@ -45,6 +48,11 @@ def render() -> str:
             "    resolver_timeout 3s;"]
     out += [f"    set $institute_{svc} institute-{svc}-service:8000;" for svc in SERVICES]
     out += ["",
+            "    # Real client address: believed only from the demo edge, which sets X-Forwarded-For itself (deploy/tunnel).",
+            "    # Every other peer (the published port, other containers) keeps its own address, so nobody can spoof it.",
+            f"    set_real_ip_from {EDGE_PROXY_IP};",
+            "    real_ip_header X-Forwarded-For;",
+            "",
             "    proxy_set_header Host $host;", "    proxy_set_header X-Real-IP $remote_addr;", "    proxy_set_header X-Forwarded-For $remote_addr;",
             "    proxy_set_header X-Forwarded-Proto $scheme;", "    proxy_connect_timeout 3s;", "    proxy_read_timeout 30s;", "",
             "    add_header X-Content-Type-Options nosniff always;", "    add_header X-Frame-Options DENY always;", "",
@@ -60,6 +68,9 @@ def render() -> str:
 
 if __name__ == "__main__":
     text = render()
+    compose = open(f"{ROOT}/docker-compose.yml").read()
+    if f'FORWARDED_ALLOW_IPS: "{EDGE_PROXY_IP}"' not in compose or "ip_range: 10.231.47.16/28" not in compose:
+        sys.exit(f"docker-compose.yml does not trust the demo edge at {EDGE_PROXY_IP}: keep EDGE_PROXY_IP and the compose file in sync")
     if "--check" in sys.argv:
         current = open(OUT).read() if os.path.exists(OUT) else ""
         if current != text:

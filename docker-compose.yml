@@ -42,6 +42,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_AUTH_SERVICE_KEY:-}
     ports:
@@ -53,6 +54,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-profile-service:
     build: ./student-backend/student-profile-service
@@ -61,6 +63,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
     ports:
       - "8003:8001"
@@ -69,6 +72,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-enrollment-service:
     build: ./student-backend/student-enrollment-service
@@ -77,6 +81,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       # Institute -> Student read-projection sync (providers, branches, batches, enrollments).
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_ENROLLMENT_SERVICE_KEY:-}
@@ -87,6 +92,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-test-service:
     build: ./student-backend/student-test-service
@@ -95,6 +101,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_TEST_SERVICE_KEY:-}
     ports:
@@ -104,6 +111,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-attempt-service:
     build: ./student-backend/student-attempt-service
@@ -112,6 +120,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_ATTEMPT_SERVICE_KEY:-}
     ports:
@@ -121,6 +130,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-result-service:
     build: ./student-backend/student-result-service
@@ -129,6 +139,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_RESULT_SERVICE_KEY:-}
     ports:
@@ -138,6 +149,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-ranking-service:
     build: ./student-backend/student-ranking-service
@@ -146,6 +158,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
     ports:
       - "8008:8001"
@@ -154,6 +167,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-notification-service:
     build: ./student-backend/student-notification-service
@@ -162,6 +176,7 @@ services:
     restart: unless-stopped
     env_file: *student_env
     environment:
+      FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_NOTIFICATION_SERVICE_KEY:-}
       NOTIFICATION_CREATE_API_KEYS: ${STUDENT_NOTIFICATION_CREATE_KEY:-}
@@ -172,6 +187,7 @@ services:
       redis: {condition: service_healthy}
     networks:
       - student-portal-network
+      - student-portal-edge
 
   student-portal-frontend:
     build:
@@ -207,6 +223,7 @@ services:
     env_file: &institute_env
       - {path: ./deploy/institute/institute.env, required: true}
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       SERVICE_NAME: institute-identity
       REDIS_URL: redis://student-auth-redis:6379
       INTERNAL_API_KEYS: ${INSTITUTE_IDENTITY_KEY:-}
@@ -223,6 +240,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
@@ -237,6 +255,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       INTERNAL_API_KEYS: ${INSTITUTE_ACADEMICS_KEY:-}
@@ -252,6 +271,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       INTERNAL_API_KEYS: ${INSTITUTE_ENROLLMENT_KEY:-}
@@ -272,6 +292,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       INTERNAL_API_KEYS: ${INSTITUTE_PAPER_KEY:-}
@@ -292,6 +313,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment: &exam_env
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       OPERATIONS_SERVICE_URL: http://institute-operations-service:8000
@@ -333,6 +355,7 @@ services:
     restart: unless-stopped
     env_file: *institute_env
     environment:
+      FORWARDED_ALLOW_IPS: "*"   # unpublished; only reachable via the gateway, which overwrites X-Forwarded-For
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       INTERNAL_API_KEYS: ${INSTITUTE_OPERATIONS_KEY:-}
@@ -361,7 +384,7 @@ services:
       - institute-paper-service
       - institute-exam-service
       - institute-operations-service
-    networks: [student-portal-network]
+    networks: [student-portal-network, student-portal-edge]
 
   institute-portal-frontend:
     build:
@@ -417,3 +440,14 @@ volumes:
 networks:
   student-portal-network:
     driver: bridge
+  # Demo edge network (deploy/tunnel/README.md). Fixed addressing: portal-edge runs with the reserved address 10.231.47.2
+  # (outside ip_range, so no other container can receive it); the Student services and the Institute gateway trust
+  # X-Forwarded-For from that address only. scripts/gen_gateway_conf.py --check keeps the gateway's copy in sync.
+  student-portal-edge:
+    name: student-portal-edge
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.231.47.0/27
+          ip_range: 10.231.47.16/28
+          gateway: 10.231.47.1

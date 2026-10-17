@@ -4,13 +4,12 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.core import audit, ratelimit, sessions
 from app.core.email import Mail, get_sender
 from app.core.passwords import hash_password, validate_password, verify_password
 from app.core.roles import MFA_ROLES, RANK, ROLE_PERMISSIONS, Role
 from app.core.security import (
-    Principal, api_error, client_ip, cookie_name, get_principal, load_assignments, origin_check,
+    Principal, api_error, clear_session_cookie, client_ip, get_principal, load_assignments, origin_check, set_session_cookie,
 )
 from app.database import get_db, utcnow
 from app.models.staff import Staff
@@ -44,11 +43,7 @@ def _me(staff: Staff, assignments, csrf: str | None = None) -> MeOut:
 def _start_session(response: Response, db: Session, staff: Staff, ip: str) -> AuthResult:
     assignments = load_assignments(db, staff.staff_id)
     sid, csrf = sessions.create_session(str(staff.staff_id))
-    response.set_cookie(
-        key=cookie_name(), value=sid, httponly=True, secure=settings.session_cookie_secure,
-        samesite=settings.session_cookie_samesite.lower(), max_age=int(sessions.ABSOLUTE_LIFETIME.total_seconds()),
-        path="/",  # no Domain attribute => host-only
-    )
+    set_session_cookie(response, sid, int(sessions.ABSOLUTE_LIFETIME.total_seconds()))
     audit.record(db, "auth.login", "SUCCESS", actor=staff.staff_id, ip=ip)
     return AuthResult(status="AUTHENTICATED", me=_me(staff, assignments, csrf))
 
@@ -137,7 +132,7 @@ def mfa_resend(body: MfaResendRequest, request: Request, db: Session = Depends(g
 @router.post("/logout", response_model=Message)
 def logout(response: Response, principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     sessions.delete_session(principal.session_id)
-    response.delete_cookie(cookie_name(), path="/")
+    clear_session_cookie(response)
     audit.record(db, "auth.logout", "SUCCESS", actor=principal.staff_id, ip=principal.ip)
     return Message(message="Logged out.")
 
@@ -219,6 +214,6 @@ def change_password(body: ChangePasswordRequest, response: Response,
     staff.password_changed_at = utcnow()
     db.commit()
     sessions.invalidate_staff_sessions(str(staff.staff_id))  # includes the current session
-    response.delete_cookie(cookie_name(), path="/")
+    clear_session_cookie(response)
     audit.record(db, "auth.password_change", "SUCCESS", actor=staff.staff_id, ip=principal.ip)
     return Message(message="Password changed. Please sign in again.")

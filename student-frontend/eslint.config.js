@@ -19,4 +19,13 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // Cloudflare Pages Functions (Workers runtime: fetch, Request, Response, Headers, URL, AbortSignal)
+    files: ['functions/**/*.js'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: globals.serviceworker,
+      sourceType: 'module',
+    },
+  },
 ])

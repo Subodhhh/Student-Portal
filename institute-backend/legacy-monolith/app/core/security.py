@@ -22,6 +22,21 @@ def cookie_name() -> str:
     return "__Host-inst_sid" if settings.session_cookie_secure else "inst_sid"
 
 
+def session_cookie_attributes() -> dict:
+    """Attributes shared by setting AND clearing the session cookie. Browsers ignore a deletion whose attributes do not
+    satisfy the cookie's requirements: a __Host- cookie can only be cleared with Secure and Path=/ (and no Domain)."""
+    return {"httponly": True, "secure": settings.session_cookie_secure,
+            "samesite": settings.session_cookie_samesite.lower(), "path": "/"}  # no Domain attribute => host-only
+
+
+def set_session_cookie(response, sid: str, max_age: int) -> None:
+    response.set_cookie(key=cookie_name(), value=sid, max_age=max_age, **session_cookie_attributes())
+
+
+def clear_session_cookie(response) -> None:
+    response.delete_cookie(cookie_name(), **session_cookie_attributes())
+
+
 def client_ip(request: Request) -> str:
     """The peer address if it is a valid IP, else "unknown" (never an arbitrary string: it is
     stored in INET columns and used as a rate-limit key)."""

@@ -207,3 +207,37 @@ def test_password_policy_unit():
     assert not validate_password("lowercase only but long enough")        # no composition rules
     assert not validate_password("x" * 20 + "yz1")
     assert not validate_password("p" * 100 + "q!" * 14)                   # 128 accepted
+
+
+def _cookie_attrs(header: str) -> set[str]:
+    """Attribute names/values of one Set-Cookie header, without the name=value pair and the lifetime fields."""
+    parts = [p.strip() for p in header.split(";")[1:]]
+    return {p.lower() for p in parts if not p.lower().startswith(("max-age", "expires"))}
+
+
+def test_logout_clears_the_cookie_with_the_attributes_it_was_set_with(client, world, make_staff, login):
+    _, code = make_staff([(Role.TEACHER, world["p1"], None)])
+    r = client.post("/api/v1/auth/login", json={"staff_code": code, "password": PASSWORD}, headers=ORIGIN)
+    set_header = r.headers["set-cookie"]
+    h = {**ORIGIN, "X-CSRF-Token": r.json()["me"]["csrf_token"]}
+    cleared = client.post("/api/v1/auth/logout", headers=h).headers["set-cookie"]
+    assert cleared.split("=")[0] == set_header.split("=")[0] and "max-age=0" in cleared.lower()
+    assert _cookie_attrs(cleared) == _cookie_attrs(set_header)
+
+
+def test_secure_host_prefixed_cookie_is_cleared_with_secure_and_root_path(monkeypatch):
+    """Browsers ignore a deletion of a __Host- cookie that lacks Secure or Path=/: logout must send both (and no Domain)."""
+    from starlette.responses import Response
+
+    from institute_common.config import settings
+    from institute_common.core.security import clear_session_cookie, set_session_cookie
+
+    monkeypatch.setattr(settings, "session_cookie_secure", True)
+    set_resp, clear_resp = Response(), Response()
+    set_session_cookie(set_resp, "sid-value", 3600)
+    clear_session_cookie(clear_resp)
+    set_header, cleared = set_resp.headers["set-cookie"], clear_resp.headers["set-cookie"]
+    assert cleared.startswith("__Host-inst_sid=") and set_header.startswith("__Host-inst_sid=")
+    attrs = _cookie_attrs(cleared)
+    assert {"secure", "httponly", "path=/", "samesite=strict"} <= attrs and not any(a.startswith("domain") for a in attrs)
+    assert attrs == _cookie_attrs(set_header)

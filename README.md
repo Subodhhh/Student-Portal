@@ -18,13 +18,17 @@ institute-backend/    institute-common (shared library), 7 institute-*-service, 
                       institute-integration-tests, legacy-monolith (pre-microservices app, `--profile legacy`)
 student-frontend/     Student UI (React + Vite)
 student-backend/      student-*-service (each independently built and deployed)
-deploy/               per-portal environment templates (deploy/student, deploy/institute); real copies are git-ignored
+deploy/               per-portal environment templates (deploy/student, deploy/institute; real copies are git-ignored)
+                      and the temporary Cloudflare demo edge (deploy/tunnel)
 scripts/              tooling: gateway config generator, PostgreSQL verification, CI guards
 tests/e2e/            cross-portal end-to-end and browser checks against the running stack
 docs/                 design, operations and readiness notes
 ```
 
 Unit and integration tests live next to the code they test.
+
+Temporary development demo on Cloudflare Pages + Quick Tunnel (no custom domain):
+[docs/demo/CLOUDFLARE_DEMO.md](docs/demo/CLOUDFLARE_DEMO.md).
 
 ## Run
 

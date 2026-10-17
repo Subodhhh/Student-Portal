@@ -1,15 +1,10 @@
-name: Deploy Student Portal
+name: Deploy Student Portal (GitHub Pages, disabled)
 
+# DISABLED: this published the Student frontend to GitHub Pages without any API base URL, so the deployed site could not
+# reach a backend. Both portals are now built and deployed by cloudflare-pages-demo.yml. The file is kept (not deleted)
+# so history and the previous behaviour stay visible; to re-enable it, restore the push trigger and remove the two
+# `if: ${{ false }}` lines (scripts/check_workflow_triggers.py then enforces the Student-only path filter again).
 on:
-  push:
-    branches:
-      - dev
-    # Deploy only when something this workflow actually builds changed (the Student frontend), so Institute-only
-    # or backend-only pushes to dev do not redeploy the Student Portal. Manual runs stay available.
-    paths:
-      - "student-frontend/**"
-      - ".github/workflows/deploy-pages.yml"
-
   workflow_dispatch:
 
 permissions:
@@ -23,6 +18,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ false }}
     runs-on: ubuntu-latest
 
     defaults:
@@ -59,6 +55,7 @@ jobs:
 
   deploy:
     needs: build
+    if: ${{ false }}
     runs-on: ubuntu-latest
 
     environment:

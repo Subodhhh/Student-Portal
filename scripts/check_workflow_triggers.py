@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Guards the two-portal deployment boundary (no dependencies beyond PyYAML).
 
-  * The Student Pages deployment must be path-filtered to the Student frontend: an Institute-only change must not
-    trigger it, while every Student frontend change still must.
+  * The GitHub Pages workflow (deploy-pages.yml) is disabled; if its push trigger is ever restored it must again be
+    path-filtered to the Student frontend (an Institute-only change must not trigger it, every Student change must).
+  * The Cloudflare Pages demo workflow (cloudflare-pages-demo.yml) may deploy only from a manual run, only through the
+    protected "cloudflare-demo" environment, and only that job may see the two Cloudflare secrets.
   * No Institute workflow may deploy anything, reference repository secrets, or use a database URL that is not a
     local/throwaway one, so CI can never reach production credentials.
 """
@@ -39,10 +41,19 @@ def triggers(path: str, patterns: list) -> bool:
     return any(glob_to_regex(p).match(path) for p in patterns)
 
 
-def push_paths(name: str):
-    data = yaml.safe_load((WORKFLOWS / name).read_text())
+def load_workflow(name: str):
+    f = WORKFLOWS / name
+    return yaml.safe_load(f.read_text()) if f.exists() else None
+
+
+def triggers_of(data) -> dict:
+    """The `on:` block as a dict (YAML reads a bare `on` key as True; `on: push` / `on: [push]` are normalised)."""
     on = data.get("on", data.get(True))
-    return (on.get("push") or {}).get("paths")
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list):
+        return {k: None for k in on}
+    return on or {}
 
 
 DEPLOY_STEP = re.compile(r"deploy-pages|upload-pages-artifact|configure-pages|docker (push|login)|kubectl|terraform|\bssh |\bscp ")
@@ -53,10 +64,12 @@ SAFE_DB = re.compile(r"^(sqlite|postgresql(\+\w+)?://[^@/]*@(127\.0\.0\.1|localh
 
 def check() -> list:
     errors = []
-    paths = push_paths("deploy-pages.yml")
-    if not paths:
+    gh_pages = load_workflow("deploy-pages.yml")
+    gh_on = triggers_of(gh_pages) if gh_pages else {}
+    paths = (gh_on.get("push") or {}).get("paths") if "push" in gh_on else None
+    if "push" in gh_on and not paths:
         errors.append("deploy-pages.yml has no push path filter: any push to dev redeploys the Student Portal")
-    else:
+    elif paths:
         for p in ("institute-frontend/src/App.tsx", "institute-backend/legacy-monolith/app/main.py", "docs/institute-portal/README.md",
                   "student-backend/student-test-service/app/main.py", ".github/workflows/institute-backend-ci.yml",
                   "scripts/check_workflow_triggers.py"):
@@ -85,6 +98,8 @@ def check() -> list:
         if perms != {"contents": "read"}:
             errors.append(f"{wf.name} must declare top-level `permissions: {{contents: read}}` (found {perms!r})")
 
+    errors += check_cloudflare_demo()
+
     # Coverage the release process relies on: each of these must be exercised by some CI workflow.
     all_ci = "\n".join(w.read_text() for w in sorted(WORKFLOWS.glob("institute-*.yml")) + sorted(WORKFLOWS.glob("student-*.yml")))
     for needle, what in (("verify-institute-on-postgres.sh", "the PostgreSQL migration/suite verification"),
@@ -100,6 +115,44 @@ def check() -> list:
                          ("institute-backend/institute-integration-tests", "the cross-service integration suite")):
         if needle not in all_ci:
             errors.append(f"no CI workflow runs {what} ({needle!r} not found)")
+    return errors
+
+
+CLOUDFLARE_WORKFLOW = "cloudflare-pages-demo.yml"
+CLOUDFLARE_SECRETS = {"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"}
+
+
+def check_cloudflare_demo() -> list:
+    data = load_workflow(CLOUDFLARE_WORKFLOW)
+    if data is None:
+        return []
+    errors, name = [], CLOUDFLARE_WORKFLOW
+    text = (WORKFLOWS / name).read_text()
+    on = triggers_of(data)
+    if "workflow_dispatch" not in on:
+        errors.append(f"{name} must offer a manual (workflow_dispatch) run: it is the only way to deploy")
+    if "pull_request_target" in on or re.search(r"pull_request_target", text):
+        errors.append(f"{name} uses pull_request_target (would run untrusted code with secrets)")
+    if data.get("permissions") != {"contents": "read"}:
+        errors.append(f"{name} must declare top-level `permissions: {{contents: read}}`")
+    for job_name, job in (data.get("jobs") or {}).items():
+        job_text = yaml.safe_dump(job)
+        secrets = set(SECRET_REF.findall(job_text)) - {"GITHUB_TOKEN"}
+        if re.search(r"deploy-pages|upload-pages-artifact|configure-pages", job_text):
+            errors.append(f"{name}:{job_name} must not publish to GitHub Pages")
+        if "pages deploy" not in job_text and not secrets:
+            continue
+        condition = str(job.get("if", ""))
+        if "github.event_name == 'workflow_dispatch'" not in condition or "inputs.deploy" not in condition:
+            errors.append(f"{name}:{job_name} deploys or uses secrets but is not limited to a manual run with deploy=true")
+        environment = job.get("environment")
+        env_name = environment.get("name") if isinstance(environment, dict) else environment
+        if env_name != "cloudflare-demo":
+            errors.append(f"{name}:{job_name} must run in the protected 'cloudflare-demo' environment")
+        if secrets - CLOUDFLARE_SECRETS:
+            errors.append(f"{name}:{job_name} references unexpected secrets {sorted(secrets - CLOUDFLARE_SECRETS)}")
+        if job.get("permissions") not in (None, {"contents": "read"}):
+            errors.append(f"{name}:{job_name} must not widen permissions beyond contents: read")
     return errors
 
 

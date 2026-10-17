@@ -184,7 +184,13 @@ def logout(
     if session_id:
         delete_session(session_id)
 
-    response.delete_cookie(key="session_id")
+    # Same attributes as at login, so browsers accept the deletion of the Secure cookie.
+    response.delete_cookie(
+        key="session_id",
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+    )
 
     return {"message": "Logout successful"}
 

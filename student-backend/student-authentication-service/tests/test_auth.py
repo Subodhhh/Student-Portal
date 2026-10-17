@@ -125,3 +125,24 @@ def test_logout(monkeypatch):
     me_response = client.get("/auth/me")
 
     assert me_response.status_code == 401
+
+def test_logout_deletes_the_cookie_with_the_login_attributes(monkeypatch):
+    """A Secure session cookie must be deleted with Secure (and the same HttpOnly/SameSite/Path) or browsers keep it."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "session_cookie_secure", True)
+    monkeypatch.setattr("app.routes.auth.verify_password", lambda password, password_hash: True)
+    client = TestClient(app, base_url="https://testserver")
+
+    login_response = client.post("/auth/login", json={"login": student.email, "password": "test-password"})
+    assert login_response.status_code == 200
+    logout_response = client.post("/auth/logout")
+    assert logout_response.status_code == 200
+
+    def attrs(header):
+        return {p.strip().lower() for p in header.split(";")[1:] if not p.strip().lower().startswith(("max-age", "expires"))}
+
+    set_header, cleared = login_response.headers["set-cookie"], logout_response.headers["set-cookie"]
+    assert cleared.startswith("session_id=") and "max-age=0" in cleared.lower()
+    assert {"secure", "httponly", "samesite=lax", "path=/"} <= attrs(cleared)
+    assert attrs(cleared) == attrs(set_header)
