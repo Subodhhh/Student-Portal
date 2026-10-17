@@ -21,7 +21,7 @@ export default function AccountPage() {
   });
   return (
     <>
-      <PageHeader title="My account" subtitle={`${me.full_name} · ${me.staff_code} · ${me.email}`} />
+      <PageHeader subtitle={`${me.full_name} · ${me.staff_code} · ${me.email}`} />
       <div className="grid cols-2">
         <Card>
           <h2>Roles</h2>

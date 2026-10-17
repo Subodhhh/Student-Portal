@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useScope } from "../auth/ScopeContext";
 import NeedBranch from "../components/NeedBranch";
-import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, TextAreaField } from "../components/ui";
+import { StudentDirectory } from "../components/students";
+import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 
@@ -9,8 +12,26 @@ type Enrollment = { enrollment_id: string; student_id: string; student_name: str
 type Batch = { batch_id: string; name: string; status: string };
 type Transfer = { transfer_id: string; student_id: string; to_branch_id: string; status: string; reason: string | null };
 
+/** Students & Enrollments: the global directory (one identity per student, with the enrollments the viewer manages) and the branch
+ * roster where students are enrolled, grouped into batches and transferred. */
 export default function StudentsPage() {
-  return <NeedBranch>{({ providerId, branchId }) => <Inner providerId={providerId} branchId={branchId} />}</NeedBranch>;
+  const scope = useScope();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") ?? "directory";
+  return (
+    <>
+      <Tabs active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })}
+        tabs={[{ id: "directory", label: "Directory" }, { id: "branch", label: "Branch enrollments" }]} />
+      {tab === "directory" ? (
+        <>
+          <PageHeader subtitle="Every student identity with an enrollment you manage. Search by Student ID, email or phone." />
+          <StudentDirectory providers={scope.providers} />
+        </>
+      ) : (
+        <NeedBranch>{({ providerId, branchId }) => <Inner providerId={providerId} branchId={branchId} />}</NeedBranch>
+      )}
+    </>
+  );
 }
 
 function Inner({ providerId, branchId }: { providerId: string; branchId: string }) {
@@ -26,7 +47,7 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
   const decide = useAction();
   return (
     <>
-      <PageHeader title="Students & enrollments" subtitle="One global student identity; enrolled per branch and batch" actions={<Button onClick={() => setEnrolling(true)}>Enroll student</Button>} />
+      <PageHeader subtitle="Enroll students into this branch and its batches; one global student identity across providers." actions={<Button onClick={() => setEnrolling(true)}>Enroll student</Button>} />
       <div className="stack">
         {(transfers.data?.items.length ?? 0) > 0 && (
           <Alert kind="warn">

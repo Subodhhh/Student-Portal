@@ -1,5 +1,5 @@
-
 import type { Role } from "./AuthContext";
+import { routeTitle } from "../routes";
 
 // Navigation is a UI convenience, not an authorization boundary.
 // The backend remains responsible for authorizing every API request.
@@ -10,48 +10,50 @@ export type NavItem = {
   anyPerm?: string[];
 };
 
+const item = (to: string, rest: Omit<NavItem, "label" | "to"> = {}, role?: Role): NavItem => ({
+  label: routeTitle(to, role) ?? to,
+  to,
+  ...rest,
+});
+
+// Super Admin: the platform-wide menu. Batches (a provider's student grouping) and Service Health (internal diagnostics,
+// still reachable at /system-health) are deliberately not listed; Notifications are reached from the dashboard.
 const SUPER_ADMIN_NAV: NavItem[] = [
-  { label: "Dashboard", to: "/" },
-  { label: "Providers & Branches", to: "/providers", perm: "provider.read" },
-  { label: "Role Management", to: "/staff", perm: "staff.read" },
-  { label: "Students & Enrollments", to: "/students", perm: "enrollment.manage" },
-  { label: "Subjects", to: "/academics", perm: "subject.manage" },
-  { label: "Question Bank & Papers", to: "/papers", perm: "paper.read" },
-  { label: "Exam Plans", to: "/exam-plans", perm: "examplan.manage" },
-  { label: "Composite Tests", to: "/composite", perm: "examplan.manage" },
-  { label: "Exams & Results", to: "/exams", perm: "exam.read" },
-  { label: "Service Health", to: "/system-health", perm: "settings.platform" },
-  { label: "Notifications", to: "/notifications" },
-  { label: "Audit Log", to: "/audit", perm: "audit.read" },
-  { label: "Platform Settings", to: "/settings", perm: "settings.platform" },
-  { label: "Support", to: "/support" },
-  { label: "Billing", to: "/billing", perm: "billing.read" },
+  item("/"),
+  item("/providers", { perm: "provider.read" }),
+  item("/staff", { perm: "staff.read" }),
+  item("/students", { perm: "enrollment.manage" }),
+  item("/subjects", { perm: "subject.manage" }),
+  item("/papers", { perm: "paper.read" }),
+  item("/exam-plans", { perm: "examplan.manage" }),
+  item("/composite", { perm: "examplan.manage" }),
+  item("/exams", { perm: "exam.read" }),
+  item("/audit", { perm: "audit.read" }),
+  item("/settings", { perm: "settings.platform" }, "SUPER_ADMIN"),
+  item("/support"),
+  item("/billing", { perm: "billing.read" }),
+  item("/account"),
 ];
 
-// Existing navigation for ADMIN, PROVIDER_ADMIN, BRANCH_ADMIN and TEACHER.
+// ADMIN, PROVIDER_ADMIN, BRANCH_ADMIN and TEACHER: the same pages and permissions as before, with Subjects and Batches
+// as separate pages (the subject catalogue and a branch's student groups are different things).
 const NAV: NavItem[] = [
-  { label: "Dashboard", to: "/" },
-  { label: "Providers", to: "/providers", perm: "provider.read" },
-  { label: "Staff", to: "/staff", perm: "staff.read" },
-  { label: "Students & enrollments", to: "/students", perm: "enrollment.manage" },
-  {
-    label: "Subjects & batches",
-    to: "/academics",
-    anyPerm: ["batch.manage", "subject.manage", "teaching.assign"],
-  },
-  { label: "Question bank & papers", to: "/papers", perm: "paper.read" },
-  { label: "Exam plans", to: "/exam-plans", perm: "examplan.manage" },
-  { label: "Composite tests", to: "/composite", perm: "examplan.manage" },
-  { label: "Exams & results", to: "/exams", perm: "exam.read" },
-  { label: "Notifications", to: "/notifications" },
-  { label: "Support", to: "/support" },
-  { label: "Billing", to: "/billing", perm: "billing.read" },
-  {
-    label: "Settings",
-    to: "/settings",
-    anyPerm: ["settings.platform", "settings.provider", "settings.branch"],
-  },
-  { label: "Audit log", to: "/audit", perm: "audit.read" },
+  item("/"),
+  item("/providers", { perm: "provider.read" }),
+  item("/staff", { perm: "staff.read" }),
+  item("/students", { perm: "enrollment.manage" }),
+  item("/subjects", { anyPerm: ["subject.manage", "teaching.assign"] }),
+  item("/batches", { perm: "batch.manage" }),
+  item("/papers", { perm: "paper.read" }),
+  item("/exam-plans", { perm: "examplan.manage" }),
+  item("/composite", { perm: "examplan.manage" }),
+  item("/exams", { perm: "exam.read" }),
+  item("/notifications"),
+  item("/support"),
+  item("/billing", { perm: "billing.read" }),
+  item("/settings", { anyPerm: ["settings.platform", "settings.provider", "settings.branch"] }),
+  item("/audit", { perm: "audit.read" }),
+  item("/account"),
 ];
 
 export function visibleNav(

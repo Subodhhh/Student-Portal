@@ -1,99 +1,81 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { GlobalTestsPanel } from "../components/globalTests";
 import NeedBranch from "../components/NeedBranch";
-import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge, TextAreaField } from "../components/ui";
+import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 
-type Subject = { subject_id: string; name: string };
-type Batch = { batch_id: string; name: string; status: string };
-type PaperRow = { paper_id: string; subject_id: string; title: string; latest_version: { status: string; version_no: number } | null };
-type Plan = { plan_id: string; name: string; duration_minutes: number; start_at: string; end_at: string; generate_at: string | null; auto_publish: boolean; status: string; batch_ids: string[]; slots: { subject_id: string; paper_id: string | null; paper_version_id: string | null }[] };
+type Plan = { plan_id: string; name: string; duration_minutes: number; start_at: string; end_at: string; generate_at: string | null; auto_publish: boolean; status: string;
+  audience_type: string; batch_ids: string[]; student_ids: string[]; marking_mode: string; marks_correct: number | null; marks_wrong: number | null;
+  global_test_id: string | null; global_test_name: string | null; slots: { subject_id: string; paper_id: string | null; paper_version_id: string | null }[] };
 type Job = { job_id: string; status: string; exam_id: string | null; error: string | null; attempts: number; run_key: string };
 type Exam = { exam_id: string; name: string; status: string; start_at: string | null; end_at: string | null; duration_minutes: number | null; total_questions: number | null; total_marks: string | null;
-  missing_subjects: { subject: string | null; reason: string; detail: string }[]; papers: { subject_id: string; source_provider_id: string; paper_version_id: string; question_count: number }[]; assigned_students: number; delivery_status: string | null };
+  missing_subjects: { subject: string | null; reason: string; detail: string }[]; papers: { subject_id: string; source_provider_id: string | null; platform_paper?: boolean; paper_version_id: string; question_count: number }[];
+  assigned_students: number; assignment_status?: Record<string, number>; delivery_status: string | null;
+  settings?: { marking?: { mode: string; correct?: number; wrong?: number }; audience_type?: string; global_test_id?: string | null; skipped_duplicates?: number } | null };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
-const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+const AUDIENCE: Record<string, string> = { BATCHES: "Batches", BRANCH: "Whole branch", INSTITUTE: "Whole institute", STUDENTS: "Selected students" };
 
 export function ExamPlansPage() {
-  return <NeedBranch>{({ providerId, branchId }) => <Plans providerId={providerId} branchId={branchId} />}</NeedBranch>;
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") ?? "plans";
+  return (
+    <>
+      <Tabs active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })} tabs={[{ id: "plans", label: "Exam plans" }, { id: "global", label: "Global Daily Tests" }]} />
+      {tab === "global" ? <GlobalTestsPanel /> : <NeedBranch>{({ branchId }) => <Plans branchId={branchId} />}</NeedBranch>}
+    </>
+  );
 }
 
-function Plans({ providerId, branchId }: { providerId: string; branchId: string }) {
+function Plans({ branchId }: { branchId: string }) {
   const { can } = useAuth();
   const [page, setPage] = useState(1);
   const list = useApi<Page<Plan>>(`/api/v1/branches/${branchId}/exam-plans?page=${page}&page_size=20`);
-  const [creating, setCreating] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const gen = useAction();
   return (
     <>
-      <PageHeader title="Exam plans" subtitle="Which papers make an exam, who sits it and when it is generated" actions={can("examplan.manage") && <Button onClick={() => setCreating(true)}>New plan</Button>} />
+      <PageHeader subtitle="Plans generate exams automatically from approved papers and the current audience. Exams already generated never change."
+        actions={can("examplan.manage") && <Link className="btn" to="/exam-plans/new">Create a test</Link>} />
       <div className="stack">
         {gen.error && <Alert kind="error">{gen.error}</Alert>}
         {job && <Alert kind={job.status === "FAILED" ? "error" : job.status === "PARTIAL" ? "warn" : "success"}>
           Generation {job.status.toLowerCase()}{job.error ? `: ${job.error}` : ""}. {job.exam_id && <Link to={`/exams/${job.exam_id}`}>Open the exam</Link>}
         </Alert>}
-        {list.error && <Alert kind="error">{list.error}</Alert>}
-        {list.loading ? <Spinner /> : (
+        {list.error && <Alert kind="error">{list.error} <Button small variant="secondary" onClick={list.reload}>Retry</Button></Alert>}
+        {list.loading && !list.data ? <Spinner /> : (
           <>
-            <DataTable rows={list.data?.items ?? []} rowKey={(p) => p.plan_id} empty={<EmptyState title="No exam plans" hint="Create a plan to generate exams automatically." />}
+            <DataTable rows={list.data?.items ?? []} rowKey={(p) => p.plan_id} empty={<EmptyState title="No exam plans" hint="Create a test to generate exams automatically." />}
               columns={[
-                { header: "Plan", render: (p) => p.name }, { header: "Window", render: (p) => `${fmt(p.start_at)} → ${fmt(p.end_at)}` },
-                { header: "Duration", render: (p) => `${p.duration_minutes} min` }, { header: "Subjects", render: (p) => p.slots.length },
-                { header: "Auto-generate", render: (p) => p.generate_at ? fmt(p.generate_at) : "Manual" }, { header: "Publish", render: (p) => (p.auto_publish ? "Automatic" : "Manual") },
-                { header: "", render: (p) => can("exam.generate") && p.status === "ACTIVE" && <Button small onClick={() => void gen.run(async () => { setJob(await api<Job>(`/api/v1/exam-plans/${p.plan_id}/generate`, { method: "POST", body: {} })); })} busy={gen.busy}>Generate now</Button> },
+                { header: "Plan", render: (p) => <><strong>{p.name}</strong>{p.global_test_name && <div className="muted small">Global Daily Test: {p.global_test_name}</div>}</> },
+                { header: "Audience", render: (p) => `${AUDIENCE[p.audience_type] ?? p.audience_type}${p.audience_type === "BATCHES" ? ` (${p.batch_ids.length})` : p.audience_type === "STUDENTS" ? ` (${p.student_ids.length})` : ""}` },
+                { header: "Window", render: (p) => `${fmt(p.start_at)} → ${fmt(p.end_at)}` },
+                { header: "Duration", render: (p) => `${p.duration_minutes} min` },
+                { header: "Marking", render: (p) => (p.marking_mode === "UNIFORM" ? `+${p.marks_correct} / −${p.marks_wrong}` : "Per question") },
+                { header: "Subjects", render: (p) => p.slots.length },
+                { header: "Generates", render: (p) => (p.generate_at ? fmt(p.generate_at) : "Manually") },
+                { header: "Status", render: (p) => <StatusBadge status={p.status} /> },
+                { header: "Actions", render: (p) => (
+                  <div className="row">
+                    {can("exam.generate") && p.status === "ACTIVE" && <Button small busy={gen.busy} onClick={() => void gen.run(async () => {
+                      setJob(await api<Job>(`/api/v1/exam-plans/${p.plan_id}/generate`, { method: "POST", body: {} }));
+                    })}>Generate now</Button>}
+                    {can("examplan.manage") && p.status === "DRAFT" && <Button small variant="secondary" busy={gen.busy} onClick={() => void gen.run(async () => {
+                      await api(`/api/v1/exam-plans/${p.plan_id}`, { method: "PATCH", body: { status: "ACTIVE" } });
+                      list.reload();
+                    })}>Activate</Button>}
+                  </div>
+                ) },
               ]} />
             <Pagination page={page} pageSize={20} total={list.data?.total ?? 0} onChange={setPage} />
           </>
         )}
       </div>
-      {creating && <NewPlan providerId={providerId} branchId={branchId} onClose={() => setCreating(false)} onDone={() => { setCreating(false); list.reload(); }} />}
     </>
-  );
-}
-
-function NewPlan({ providerId, branchId, onClose, onDone }: { providerId: string; branchId: string; onClose: () => void; onDone: () => void }) {
-  const subjects = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`);
-  const papers = useApi<Page<PaperRow>>(`/api/v1/branches/${branchId}/papers?page_size=100`);
-  const [f, setF] = useState(() => {
-    const soon = new Date(Date.now() + 2 * 86400000); // default: two days from now, evaluated once
-    return { name: "", duration: 180, start: toLocalInput(soon), end: toLocalInput(new Date(soon.getTime() + 6 * 3600000)), auto: true, generateAt: "" };
-  });
-  const [batchIds, setBatchIds] = useState<string[]>([]);
-  const [slots, setSlots] = useState<Record<string, string>>({});
-  const { busy, error, run } = useAction();
-  const toggle = (id: string) => setBatchIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
-  const slotList = Object.entries(slots).filter(([, p]) => p).map(([subject_id, paper_id]) => ({ subject_id, paper_id }));
-  return (
-    <Modal title="New exam plan" onClose={onClose}>
-      {error && <Alert kind="error">{error}</Alert>}
-      <Field label="Plan name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-      <div className="grid cols-2">
-        <Field label="Starts (students may begin from)" type="datetime-local" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} />
-        <Field label="Ends (last time to begin)" type="datetime-local" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} />
-        <Field label="Duration (minutes, one shared timer)" type="number" min={1} max={720} value={f.duration} onChange={(e) => setF({ ...f, duration: Number(e.target.value) })} />
-        <Field label="Auto-generate at (optional)" type="datetime-local" value={f.generateAt} onChange={(e) => setF({ ...f, generateAt: e.target.value })} />
-      </div>
-      <label className="row"><input type="checkbox" checked={f.auto} onChange={(e) => setF({ ...f, auto: e.target.checked })} />Publish to students automatically after generation</label>
-      <h3 style={{ marginTop: "var(--space-4)" }}>Batches</h3>
-      {(batches.data?.items ?? []).filter((b) => b.status === "ACTIVE").map((b) => <label key={b.batch_id} className="row"><input type="checkbox" checked={batchIds.includes(b.batch_id)} onChange={() => toggle(b.batch_id)} />{b.name}</label>)}
-      <h3 style={{ marginTop: "var(--space-4)" }}>Papers per subject</h3>
-      <p className="muted small">The latest published version is used at generation time. Missing subjects are reported and the exam is generated from the rest.</p>
-      {(subjects.data ?? []).map((s) => (
-        <SelectField key={s.subject_id} label={s.name} value={slots[s.subject_id] ?? ""} onChange={(e) => setSlots({ ...slots, [s.subject_id]: e.target.value })}>
-          <option value="">Not included</option>
-          {(papers.data?.items ?? []).filter((p) => p.subject_id === s.subject_id).map((p) => <option key={p.paper_id} value={p.paper_id}>{p.title} ({p.latest_version?.status ?? "no version"})</option>)}
-        </SelectField>
-      ))}
-      <Button busy={busy} disabled={f.name.length < 3 || batchIds.length === 0 || slotList.length === 0} onClick={() => void run(async () => {
-        await api(`/api/v1/branches/${branchId}/exam-plans`, { method: "POST", body: { name: f.name, duration_minutes: f.duration, start_at: new Date(f.start).toISOString(), end_at: new Date(f.end).toISOString(), generate_at: f.generateAt ? new Date(f.generateAt).toISOString() : null, auto_publish: f.auto, batch_ids: batchIds, slots: slotList } });
-        onDone();
-      })}>Create plan</Button>
-    </Modal>
   );
 }
 
@@ -106,7 +88,7 @@ function ExamList({ branchId }: { branchId: string }) {
   const list = useApi<Page<Exam>>(`/api/v1/branches/${branchId}/exams?page=${page}&page_size=20`);
   return (
     <>
-      <PageHeader title="Exams & results" subtitle="Generated exams and their delivery to students" />
+      <PageHeader subtitle="Generated exams and their delivery to students" />
       {list.error && <Alert kind="error">{list.error}</Alert>}
       {list.loading ? <Spinner /> : (
         <div className="stack">
@@ -199,7 +181,7 @@ export function ExamDetailPage() {
   const e = exam.data;
   return (
     <>
-      <PageHeader crumbs={["Exams", e.name]} title={e.name} subtitle={`${fmt(e.start_at)} → ${fmt(e.end_at)} · ${e.duration_minutes} min shared timer`}
+      <PageHeader crumbs={[<Link key="exams" to="/exams">Exams & Results</Link>, e.name]} title={e.name} subtitle={`${fmt(e.start_at)} → ${fmt(e.end_at)} · ${e.duration_minutes} min shared timer`}
         actions={<><StatusBadge status={e.status} />
           {e.status === "SCHEDULED" && can("exam.publish") && <Button busy={act.busy} onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/publish`, { method: "POST" }); exam.reload(); })}>Publish to students</Button>}
           {e.status !== "CANCELLED" && can("exam.schedule") && <Button variant="danger" onClick={() => setCancelling(true)}>Cancel exam</Button>}</>} />
@@ -209,13 +191,27 @@ export function ExamDetailPage() {
           <StatCard label="Questions" value={e.total_questions ?? 0} /><StatCard label="Total marks" value={e.total_marks ?? 0} /><StatCard label="Assigned students" value={e.assigned_students} />
           <StatCard label="Delivery to students" value={e.delivery_status ?? "—"} tone={e.delivery_status === "FAILED" ? "danger" : undefined} />
         </div>
+        {e.assignment_status && Object.keys(e.assignment_status).length > 0 && (
+          <p className="small">Attempts: {Object.entries(e.assignment_status).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ")}</p>
+        )}
+        <Card>
+          <h2>Rules this exam was generated with (immutable)</h2>
+          <dl className="facts">
+            <dt>Marking</dt><dd>{e.settings?.marking?.mode === "UNIFORM" ? `+${e.settings.marking.correct} correct, −${e.settings.marking.wrong} wrong, 0 unanswered` : "Each question's own marks, 0 unanswered"}</dd>
+            <dt>Timer</dt><dd>One shared timer of {e.duration_minutes} minutes; starting inside the window gives the full duration</dd>
+            <dt>Attempts</dt><dd>One attempt per student, resumable; students who never start are marked missed</dd>
+            <dt>Results</dt><dd>After evaluation; answers reviewable once the window has closed</dd>
+            {e.settings?.global_test_id && <><dt>Source</dt><dd>Global Daily Test (platform papers, unchanged)</dd></>}
+            {!!e.settings?.skipped_duplicates && <><dt>Duplicates</dt><dd>{e.settings.skipped_duplicates} student(s) not assigned: they already have this test for the same time</dd></>}
+          </dl>
+        </Card>
         {e.missing_subjects.length > 0 && (
           <Alert kind="warn"><strong>Generated without {e.missing_subjects.length} subject(s):</strong>
             <ul>{e.missing_subjects.map((m) => <li key={m.reason + m.subject}>{m.subject ?? "Subject"} — {m.detail} <span className="muted">({m.reason})</span></li>)}</ul>
             Responsible teachers and admins were notified. A paper approved later applies to the next exam, not this one.</Alert>
         )}
         <Card><h2>Paper manifest (immutable)</h2>
-          <DataTable rows={e.papers} rowKey={(p) => p.paper_version_id} columns={[{ header: "Paper version", render: (p) => <Link to={`/papers/${p.paper_version_id}`}>{p.paper_version_id.slice(0, 8)}</Link> }, { header: "Questions", render: (p) => p.question_count }, { header: "Source provider", render: (p) => p.source_provider_id.slice(0, 8) }]} />
+          <DataTable rows={e.papers} rowKey={(p) => p.paper_version_id} columns={[{ header: "Paper version", render: (p) => <Link to={`/papers/${p.paper_version_id}`}>{p.paper_version_id.slice(0, 8)}</Link> }, { header: "Questions", render: (p) => p.question_count }, { header: "Source", render: (p) => (p.platform_paper ? "Platform paper" : p.source_provider_id ? `Provider ${p.source_provider_id.slice(0, 8)}` : "—") }]} />
         </Card>
         {can("result.read") && e.status === "PUBLISHED" && (
           <Card>

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
+import { AuditTable } from "../components/audit";
+import ScopeBar from "../components/ScopeBar";
 import { Alert, Button, Card, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
@@ -15,7 +17,7 @@ export function NotificationsPage() {
   const act = useAction();
   return (
     <>
-      <PageHeader title="Notifications" actions={<Button variant="secondary" busy={act.busy} onClick={() => void act.run(async () => { await api("/api/v1/notifications/read-all", { method: "POST" }); list.reload(); })}>Mark all read</Button>} />
+      <PageHeader subtitle="Messages about your exams, papers, enrollments and support tickets" actions={<Button variant="secondary" busy={act.busy} onClick={() => void act.run(async () => { await api("/api/v1/notifications/read-all", { method: "POST" }); list.reload(); })}>Mark all read</Button>} />
       {list.error && <Alert kind="error">{list.error}</Alert>}
       {list.loading ? <Spinner /> : (
         <div className="stack">
@@ -38,18 +40,27 @@ export function NotificationsPage() {
 type T = { ticket_id: string; subject: string; status: string; priority: string; created_at: string };
 type TD = { ticket: T; messages: { author: string; body: string; at: string }[] };
 export function SupportPage() {
-  const { can } = useAuth();
-  const { providerId } = useScope();
+  const { can, me } = useAuth();
+  const scope = useScope();
   const [page, setPage] = useState(1);
-  const list = useApi<Page<T>>(`/api/v1/support/tickets?page=${page}&page_size=20`);
+  const [status, setStatus] = useState("");
+  const list = useApi<Page<T>>(`/api/v1/support/tickets?page=${page}&page_size=20${status ? `&status=${status}` : ""}`);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const isGlobal = me?.primary_role === "SUPER_ADMIN" || me?.primary_role === "ADMIN";
   const [f, setF] = useState({ subject: "", body: "", priority: "NORMAL" });
+  const [providerId, setProviderId] = useState("");
+  const ticketProvider = providerId || (isGlobal ? "" : scope.providerId);
   const { busy, error, run } = useAction();
   return (
     <>
-      <PageHeader title="Support" subtitle="Tickets you raised, or that your scope can manage" actions={<Button onClick={() => setCreating(true)}>New ticket</Button>} />
-      {list.error && <Alert kind="error">{list.error}</Alert>}
+      <PageHeader subtitle="Tickets you raised, or that your scope can manage" actions={<Button onClick={() => setCreating(true)}>New ticket</Button>} />
+      <div className="toolbar">
+        <SelectField label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+          <option value="">All</option><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option>
+        </SelectField>
+      </div>
+      {list.error && <Alert kind="error">{list.error} <Button small variant="secondary" onClick={list.reload}>Retry</Button></Alert>}
       {list.loading ? <Spinner /> : (
         <div className="stack">
           <DataTable rows={list.data?.items ?? []} rowKey={(t) => t.ticket_id} empty={<EmptyState title="No tickets" />}
@@ -62,8 +73,14 @@ export function SupportPage() {
           {error && <Alert kind="error">{error}</Alert>}
           <Field label="Subject" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} />
           <SelectField label="Priority" value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}><option>LOW</option><option>NORMAL</option><option>HIGH</option></SelectField>
+          {scope.providers.length > 0 && (
+            <SelectField label="Related provider" value={ticketProvider} onChange={(e) => setProviderId(e.target.value)}>
+              {isGlobal && <option value="">None (platform)</option>}
+              {scope.providers.map((p) => <option key={p.provider_id} value={p.provider_id}>{p.name}</option>)}
+            </SelectField>
+          )}
           <TextAreaField label="Describe the problem" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
-          <Button busy={busy} disabled={f.subject.length < 3 || !f.body} onClick={() => void run(async () => { await api("/api/v1/support/tickets", { method: "POST", body: { ...f, provider_id: providerId || null } }); setCreating(false); list.reload(); })}>Submit</Button>
+          <Button busy={busy} disabled={f.subject.length < 3 || !f.body} onClick={() => void run(async () => { await api("/api/v1/support/tickets", { method: "POST", body: { ...f, provider_id: ticketProvider || null } }); setCreating(false); list.reload(); })}>Submit</Button>
         </Modal>
       )}
       {open && <TicketDialog id={open} canManage={can("support.manage")} onClose={() => { setOpen(null); list.reload(); }} />}
@@ -115,7 +132,8 @@ export function BillingPage() {
   const { busy, error, run } = useAction();
   return (
     <>
-      <PageHeader title="Billing" subtitle="Subscription, invoices and payment history" actions={can("billing.routine") && <Button onClick={() => setCreating(true)}>New invoice</Button>} />
+      <PageHeader subtitle="Subscription, invoices and payment history of a provider" actions={can("billing.routine") && providerId && <Button onClick={() => setCreating(true)}>New invoice</Button>} />
+      <ScopeBar branch={false} />
       <div className="stack">
         <Card><h2>Subscription</h2>{sub.data?.subscription ? <p><strong>{sub.data.subscription.plan}</strong> · {sub.data.subscription.price} per period · since {sub.data.subscription.starts_on}</p> : <p className="muted">No active subscription.</p>}</Card>
         {list.error && <Alert kind="error">{list.error}</Alert>}
@@ -181,10 +199,21 @@ export function SettingsPage() {
     { id: "provider", title: "Provider", enabled: can("settings.provider") && !!providerId, data: provider, path: `/api/v1/settings/providers/${providerId}` },
     { id: "branch", title: "Branch", enabled: can("settings.branch") && !!branchId, data: branch, path: `/api/v1/settings/branches/${branchId}` },
   ];
+  const scoped = sections.filter((s) => s.id !== "platform" && (s.id === "provider" ? can("settings.provider") : can("settings.branch")));
+  const card = (s: (typeof sections)[number]) => <SettingsCard key={s.id} title={s.title} path={s.path} data={s.data.data} reload={s.data.reload} error={s.data.error} />;
   return (
     <>
-      <PageHeader title="Settings" subtitle="Changes are audited with the old and new value" />
-      <div className="grid cols-2">{sections.filter((s) => s.enabled).map((s) => <SettingsCard key={s.id} title={s.title} path={s.path} data={s.data.data} reload={s.data.reload} error={s.data.error} />)}</div>
+      <PageHeader subtitle="Changes are audited with the old and new value" />
+      <div className="stack">
+        {sections[0].enabled && <div className="grid cols-2">{card(sections[0])}</div>}
+        {scoped.length > 0 && (
+          <section className="stack" aria-label="Provider and branch settings">
+            {sections[0].enabled && <h2>Provider and branch settings</h2>}
+            <ScopeBar branch={can("settings.branch")} />
+            <div className="grid cols-2">{sections.filter((s) => s.id !== "platform" && s.enabled).map(card)}</div>
+          </section>
+        )}
+      </div>
     </>
   );
 }
@@ -208,25 +237,38 @@ function SettingsCard({ title, path, data, reload, error }: { title: string; pat
 }
 
 // ---------------------------------------------------------------- audit
-type A = { audit_id: string; at: string; actor: string | null; action: string; target_type: string | null; target_id: string | null; outcome: string; reason: string | null };
 export function AuditPage() {
-  const [page, setPage] = useState(1);
-  const [outcome, setOutcome] = useState("");
-  const [action, setAction] = useState("");
-  const list = useApi<Page<A>>(`/api/v1/audit-logs?page=${page}&page_size=50${outcome ? `&outcome=${outcome}` : ""}${action ? `&action=${encodeURIComponent(action)}` : ""}`);
+  const { me } = useAuth();
+  const scope = useScope();
+  const [f, setF] = useState({ from: "", to: "", actor_code: "", action: "", outcome: "", provider_id: "", target_type: "" });
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
+  // Dates are whole local days: "to" includes that day.
+  const filters: Record<string, string> = {
+    action: f.action.trim(), outcome: f.outcome, provider_id: f.provider_id, target_type: f.target_type, actor_code: f.actor_code.trim(),
+    since: f.from ? new Date(`${f.from}T00:00`).toISOString() : "",
+    until: f.to ? new Date(new Date(`${f.to}T00:00`).getTime() + 86400000).toISOString() : "",
+  };
+  const isGlobal = me?.primary_role === "SUPER_ADMIN" || me?.primary_role === "ADMIN";
   return (
     <>
-      <PageHeader title="Audit log" subtitle="Read-only. Entries cannot be edited or deleted from the application." />
-      <div className="row"><SelectField label="Outcome" value={outcome} onChange={(e) => { setOutcome(e.target.value); setPage(1); }}><option value="">All</option><option>SUCCESS</option><option>DENIED</option><option>FAILURE</option></SelectField>
-        <Field label="Action (exact)" value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }} placeholder="auth.login" /></div>
-      {list.error && <Alert kind="error">{list.error}</Alert>}
-      {list.loading ? <Spinner /> : (
-        <div className="stack">
-          <DataTable rows={list.data?.items ?? []} rowKey={(a) => a.audit_id} empty={<EmptyState title="No matching entries" />}
-            columns={[{ header: "When", render: (a) => when(a.at) }, { header: "Actor", render: (a) => a.actor?.slice(0, 8) ?? "system" }, { header: "Action", render: (a) => a.action }, { header: "Target", render: (a) => `${a.target_type ?? ""} ${a.target_id?.slice(0, 8) ?? ""}` }, { header: "Outcome", render: (a) => <StatusBadge status={a.outcome} /> }, { header: "Reason", render: (a) => a.reason ?? "" }]} />
-          <Pagination page={page} pageSize={50} total={list.data?.total ?? 0} onChange={setPage} />
-        </div>
-      )}
+      <PageHeader subtitle="Read-only. Entries cannot be edited or deleted from the application." />
+      <div className="toolbar audit-filters">
+        <Field label="From" type="date" value={f.from} onChange={set("from")} />
+        <Field label="To" type="date" value={f.to} onChange={set("to")} />
+        <Field label="Actor (Staff ID)" value={f.actor_code} onChange={set("actor_code")} placeholder="STF000001" />
+        <Field label="Action (exact)" value={f.action} onChange={set("action")} placeholder="staff.deactivate" />
+        <SelectField label="Outcome" value={f.outcome} onChange={set("outcome")}><option value="">All</option><option>SUCCESS</option><option>DENIED</option><option>FAILURE</option></SelectField>
+        <SelectField label="Record type" value={f.target_type} onChange={set("target_type")}>
+          <option value="">All</option>
+          {["staff", "provider", "branch", "subject", "question", "paper_version", "exam_plan", "exam", "global_test", "ticket", "invoice"].map((t) => <option key={t} value={t}>{t}</option>)}
+        </SelectField>
+        {(isGlobal || scope.providers.length > 1) && (
+          <SelectField label="Provider" value={f.provider_id} onChange={set("provider_id")}>
+            <option value="">All</option>{scope.providers.map((p) => <option key={p.provider_id} value={p.provider_id}>{p.name}</option>)}
+          </SelectField>
+        )}
+      </div>
+      <AuditTable key={JSON.stringify(filters)} filters={filters} pageSize={50} />
     </>
   );
 }

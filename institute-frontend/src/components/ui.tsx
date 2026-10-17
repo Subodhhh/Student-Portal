@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 export function Button({ variant = "primary", small, busy, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger"; small?: boolean; busy?: boolean }) {
@@ -23,7 +24,9 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "ok" | "
 }
 
 const STATUS_TONE: Record<string, "ok" | "warn" | "danger" | "info"> = {
-  ACTIVE: "ok", PUBLISHED: "ok", PAID: "ok", SUCCEEDED: "ok", SENT: "ok", APPROVED: "info", VALIDATED: "info", SCHEDULED: "info", ASSIGNED: "info",
+  ACTIVE: "ok", PUBLISHED: "ok", PAID: "ok", SUCCEEDED: "ok", SENT: "ok", COMPLETED: "ok", SUCCESS: "ok",
+  APPROVED: "info", VALIDATED: "info", SCHEDULED: "info", ASSIGNED: "info", STARTED: "info", DRAFT: "info", GLOBAL: "info",
+  ARCHIVED: "warn", FAILURE: "danger",
   OPEN: "warn", IN_PROGRESS: "warn", PENDING: "warn", PARTIAL: "warn", PARTIALLY_PAID: "warn", ISSUED: "warn", SUPERSEDED: "warn",
   INACTIVE: "danger", FAILED: "danger", REJECTED: "danger", CANCELLED: "danger", WITHDRAWN: "danger", DENIED: "danger", MISSED: "danger", VOID: "danger",
 };
@@ -43,26 +46,47 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
   );
 }
 
-export function PageHeader({ title, subtitle, actions, crumbs }: { title: string; subtitle?: string; actions?: ReactNode; crumbs?: string[] }) {
+/** Intro row under the shared header (which already shows the page title as the only <h1>): an optional entity title for
+ * detail pages (h2), a one-line description and the page's actions. */
+export function PageHeader({ title, subtitle, actions, crumbs }: { title?: string; subtitle?: string; actions?: ReactNode; crumbs?: ReactNode[] }) {
+  if (!title && !subtitle && !actions && !crumbs) return null;
   return (
-    <header className="stack" style={{ marginBottom: "var(--space-5)" }}>
-      {crumbs && <div className="breadcrumbs" aria-label="Breadcrumb">{crumbs.join(" / ")}</div>}
+    <div className="page-intro">
+      {crumbs && (
+        <nav className="breadcrumbs" aria-label="Breadcrumb">
+          {crumbs.map((c, i) => <span key={i}>{i > 0 && " / "}{c}</span>)}
+        </nav>
+      )}
       <div className="row between">
-        <div>
-          <h1>{title}</h1>
-          {subtitle && <p className="muted" style={{ margin: "4px 0 0" }}>{subtitle}</p>}
+        <div className="page-intro-text">
+          {title && <h2>{title}</h2>}
+          {subtitle && <p className="muted">{subtitle}</p>}
         </div>
-        <div className="row">{actions}</div>
+        {actions && <div className="row">{actions}</div>}
       </div>
-    </header>
+    </div>
   );
 }
 
-export function StatCard({ label, value, tone }: { label: string; value: ReactNode; tone?: "danger" | "warn" }) {
-  return (
-    <div className="stat" style={tone ? { borderColor: tone === "danger" ? "var(--c-danger)" : "var(--c-warn)" } : undefined}>
+export function StatCard({ label, value, tone, hint, to }: { label: string; value: ReactNode; tone?: "danger" | "warn"; hint?: ReactNode; to?: string }) {
+  const body = (
+    <>
       <div className="value">{value}</div>
       <div className="label">{label}</div>
+      {hint && <div className="hint">{hint}</div>}
+    </>
+  );
+  const style = tone ? { borderColor: tone === "danger" ? "var(--c-danger)" : "var(--c-warn)" } : undefined;
+  return to ? <Link className="stat stat-link" style={style} to={to}>{body}</Link> : <div className="stat" style={style}>{body}</div>;
+}
+
+/** Search box for list pages: a labelled input with the search role. */
+export function SearchField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const id = useId();
+  return (
+    <div className="field search-field" role="search">
+      <label htmlFor={id}>{label}</label>
+      <input id={id} type="search" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -103,6 +127,8 @@ export function TextAreaField({ label, error, ...rest }: FieldProps & TextareaHT
   );
 }
 
+const OPEN_MODALS: string[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -114,13 +140,18 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
 
   useEffect(() => {
     const previousActiveElement = document.activeElement as HTMLElement | null;
+    OPEN_MODALS.push(titleId);
+    ref.current?.focus({ preventScroll: true });   // keyboard users land in the dialog
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      // Only the top-most dialog reacts, so Escape in a confirmation does not also close the dialog underneath.
+      if (event.key === "Escape" && OPEN_MODALS[OPEN_MODALS.length - 1] === titleId) {
         event.preventDefault();
-        onClose();
+        closeRef.current();
       }
     };
 
@@ -128,9 +159,10 @@ export function Modal({
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      OPEN_MODALS.splice(OPEN_MODALS.indexOf(titleId), 1);
       previousActiveElement?.focus();
     };
-  }, []);
+  }, [titleId]);
 
   return (
     <div className="modal-backdrop">
@@ -157,7 +189,7 @@ export function ConfirmDialog({ title, message, confirmLabel = "Confirm", danger
     <Modal title={title} onClose={onCancel}>
       <p>{message}</p>
       {children}
-      <div className="row" style={{ justifyContent: "flex-end" }}>
+      <div className="modal-actions">
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
         <Button variant={danger ? "danger" : "primary"} onClick={onConfirm} busy={busy}>{confirmLabel}</Button>
       </div>
