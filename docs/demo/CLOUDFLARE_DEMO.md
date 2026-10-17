@@ -51,22 +51,37 @@ the Institute's Origin check refuses them and cookies are not shared, so do not 
 ## 2. GitHub (manual)
 
 Workflow: [.github/workflows/cloudflare-pages-demo.yml](../../.github/workflows/cloudflare-pages-demo.yml).
-Pushes and pull requests only **build and validate** (lint, tests, build, bundle check, Functions compile, proxy tests).
-Deployment happens only from a manual run with `deploy = true`, in the protected environment.
 
+**Branch policy:** everything stays on `feature/*` branches. Nothing is pushed or merged to `main`, `QA` or `dev`, and no
+pull request targets them. (A manual "Run workflow" would need the file on the default branch, so it is not used.)
+
+* Pushes to any `feature/*` branch and pull requests only **build and validate** (lint, tests, build, bundle check,
+  Functions compile, proxy tests). They never deploy and never see a Cloudflare secret.
+* A deployment happens only for a push to **`feature/cloudflare-demo-release`**, a branch that only ever points at a
+  commit already reviewed on `feature/institute-portal` (pushing the same commit creates no new commits). The deploy job
+  runs in the protected `cloudflare-demo` environment and **waits for your approval**.
+
+Settings:
 * Repository → Settings → Secrets and variables → Actions → **Variables**:
   `STUDENT_PAGES_URL=https://<student-project>.pages.dev`, `INSTITUTE_PAGES_URL=https://<institute-project>.pages.dev`,
   `STUDENT_PAGES_PROJECT=<student-project>`, `INSTITUTE_PAGES_PROJECT=<institute-project>`,
-  optional `PAGES_PRODUCTION_BRANCH` (default `main`). These are public values; they end up in the bundles.
+  optional `PAGES_PRODUCTION_BRANCH` (default `main`). `PAGES_PRODUCTION_BRANCH` is the Cloudflare Pages project's
+  production-branch label, not a GitHub branch. These are public values; they end up in the bundles.
 * Settings → Environments → **New environment `cloudflare-demo`**:
-  * Required reviewers: yourself.
-  * Deployment branches: "Selected branches" → the branch you deploy from (e.g. `feature/institute-portal`).
+  * Required reviewers: yourself (every deployment waits for this approval).
+  * Deployment branches and tags: "Selected branches and tags" → add the branch rule `feature/cloudflare-demo-release`
+    only. No other branch can then deploy or read the environment's secrets, even with an edited workflow.
+  * Untick "Allow administrators to bypass configured protection rules".
   * Environment secrets: `CLOUDFLARE_API_TOKEN` (the `github-pages-deploy` token), `CLOUDFLARE_ACCOUNT_ID`.
-    Use environment secrets, not repository secrets, so only the deploy job can read them.
-* **GitHub limitation:** the "Run workflow" button (and `gh workflow run`) exists only once the workflow file is on the
-  repository's **default branch**. The run itself can then target `feature/institute-portal`. Decide how to land the
-  workflow file there (for example a small pull request containing only that file) before the first deploy.
-* Run: Actions → "Cloudflare Pages demo" → Run workflow → branch → `deploy = true` → approve the environment.
+    Use environment secrets, not repository secrets, so only the approved deploy job can read them.
+
+Deploy (from `~/Student-Portal-Review/Student-Portal`, after the commit is on GitHub's `feature/institute-portal`):
+```bash
+git push <github-remote> feature/institute-portal:refs/heads/feature/cloudflare-demo-release
+```
+Then Actions → "Cloudflare Pages demo" → the run for `feature/cloudflare-demo-release` → review → approve the
+`cloudflare-demo` deployment. Later deployments: push the same refspec again (a fast-forward). Never force-push the
+release branch without explicit approval; to go back, use "Rollback to this deployment" in the Cloudflare Pages project.
 
 The old GitHub Pages workflow (`deploy-pages.yml`) is disabled (no push trigger, jobs `if: false`); it is kept for
 history. `scripts/check_workflow_triggers.py` validates both workflows in CI.

@@ -1,23 +1,20 @@
 name: Cloudflare Pages demo
 
 # Development demo of both portals on Cloudflare Pages (docs/demo/CLOUDFLARE_DEMO.md).
-#   * build: runs on changes to either frontend; lint, test, build, validate the Pages Functions bundle. Never deploys and
-#     never sees a secret.
-#   * deploy: ONLY when started by hand (Actions -> "Cloudflare Pages demo" -> Run workflow, deploy = true). Runs in the
-#     protected "cloudflare-demo" environment, which holds the Cloudflare secrets and its own reviewer/branch rules.
-# Ordinary pushes and pull requests can never deploy.
+#   * build: runs on every push to a feature/* branch and on pull requests touching the frontends; lint, test, build,
+#     validate the Pages Functions bundle. Never deploys and never sees a secret.
+#   * deploy: ONLY for a push to feature/cloudflare-demo-release (a branch that just points at an already reviewed commit
+#     of feature/institute-portal). Runs in the protected "cloudflare-demo" environment: its required reviewer must
+#     approve every deployment, its deployment-branch rule admits only that branch, and only it holds the Cloudflare
+#     secrets. Ordinary feature pushes and pull requests can never deploy or read those secrets.
+# Branch policy: nothing in this workflow targets main, QA or dev (a manual workflow_dispatch would need the file on the
+# default branch, so it is deliberately not used).
 
 on:
   push:
-    paths: ["student-frontend/**", "institute-frontend/**", "deploy/tunnel/**", ".github/workflows/cloudflare-pages-demo.yml"]
+    branches: ["feature/**"]   # no paths filter: the release-branch push must always run
   pull_request:
     paths: ["student-frontend/**", "institute-frontend/**", "deploy/tunnel/**", ".github/workflows/cloudflare-pages-demo.yml"]
-  workflow_dispatch:
-    inputs:
-      deploy:
-        description: "Deploy both frontends to their Cloudflare Pages production branch"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -58,7 +55,7 @@ jobs:
       - name: Same-origin API base URLs
         env:
           PORTAL: ${{ matrix.portal }}
-          DEPLOYING: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true }}
+          DEPLOYING: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feature/cloudflare-demo-release' }}
           STUDENT_PAGES_URL: ${{ vars.STUDENT_PAGES_URL }}
           INSTITUTE_PAGES_URL: ${{ vars.INSTITUTE_PAGES_URL }}
         run: |
@@ -108,7 +105,7 @@ jobs:
   deploy:
     name: Deploy ${{ matrix.portal }}
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/cloudflare-demo-release'
     runs-on: ubuntu-latest
     environment: cloudflare-demo
     strategy:

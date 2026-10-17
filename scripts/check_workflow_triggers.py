@@ -3,8 +3,9 @@
 
   * The GitHub Pages workflow (deploy-pages.yml) is disabled; if its push trigger is ever restored it must again be
     path-filtered to the Student frontend (an Institute-only change must not trigger it, every Student change must).
-  * The Cloudflare Pages demo workflow (cloudflare-pages-demo.yml) may deploy only from a manual run, only through the
-    protected "cloudflare-demo" environment, and only that job may see the two Cloudflare secrets.
+  * The Cloudflare Pages demo workflow (cloudflare-pages-demo.yml) runs only for feature/* pushes and pull requests, may
+    deploy only for a push to feature/cloudflare-demo-release, only through the protected "cloudflare-demo" environment,
+    and only that job may see the two Cloudflare secrets. Nothing in it may target main, QA or dev.
   * No Institute workflow may deploy anything, reference repository secrets, or use a database URL that is not a
     local/throwaway one, so CI can never reach production credentials.
 """
@@ -120,6 +121,19 @@ def check() -> list:
 
 CLOUDFLARE_WORKFLOW = "cloudflare-pages-demo.yml"
 CLOUDFLARE_SECRETS = {"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"}
+RELEASE_REF = "refs/heads/feature/cloudflare-demo-release"
+# The ONLY condition under which a job may deploy or read a secret. Compared exactly (whitespace-normalised), so an
+# added `|| ...` or a different event/branch can never widen it.
+DEPLOY_CONDITION = f"github.event_name == 'push' && github.ref == '{RELEASE_REF}'"
+ALLOWED_TRIGGERS = {"push", "pull_request"}
+PROTECTED_BRANCH = re.compile(r"(?<![\w/-])(main|QA|dev)(?![\w/-])")
+
+
+def _norm(expr) -> str:
+    text = str(expr or "").strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    return " ".join(text.split())
 
 
 def check_cloudflare_demo() -> list:
@@ -129,24 +143,31 @@ def check_cloudflare_demo() -> list:
     errors, name = [], CLOUDFLARE_WORKFLOW
     text = (WORKFLOWS / name).read_text()
     on = triggers_of(data)
-    if "workflow_dispatch" not in on:
-        errors.append(f"{name} must offer a manual (workflow_dispatch) run: it is the only way to deploy")
-    if "pull_request_target" in on or re.search(r"pull_request_target", text):
+    if set(on) - ALLOWED_TRIGGERS:
+        errors.append(f"{name} may only run on push (feature/*) and pull_request, found {sorted(set(on) - ALLOWED_TRIGGERS)}")
+    if re.search(r"pull_request_target", text):
         errors.append(f"{name} uses pull_request_target (would run untrusted code with secrets)")
+    push = on.get("push") if isinstance(on.get("push"), dict) else {}
+    branches = push.get("branches") or []
+    if "push" in on and (not branches or any(not str(b).startswith("feature/") for b in branches)
+                         or push.get("branches-ignore") or push.get("tags") or push.get("tags-ignore")):
+        errors.append(f"{name}: push must be limited to feature/* branches (no tags, no branches-ignore)")
     if data.get("permissions") != {"contents": "read"}:
         errors.append(f"{name} must declare top-level `permissions: {{contents: read}}`")
     for job_name, job in (data.get("jobs") or {}).items():
         job_text = yaml.safe_dump(job)
+        condition = _norm(job.get("if"))
+        if PROTECTED_BRANCH.search(condition):
+            errors.append(f"{name}:{job_name} condition refers to a protected branch (main/QA/dev)")
         secrets = set(SECRET_REF.findall(job_text)) - {"GITHUB_TOKEN"}
         if re.search(r"deploy-pages|upload-pages-artifact|configure-pages", job_text):
             errors.append(f"{name}:{job_name} must not publish to GitHub Pages")
-        if "pages deploy" not in job_text and not secrets:
-            continue
-        condition = str(job.get("if", ""))
-        if "github.event_name == 'workflow_dispatch'" not in condition or "inputs.deploy" not in condition:
-            errors.append(f"{name}:{job_name} deploys or uses secrets but is not limited to a manual run with deploy=true")
         environment = job.get("environment")
         env_name = environment.get("name") if isinstance(environment, dict) else environment
+        if "pages deploy" not in job_text and not secrets and env_name is None:
+            continue
+        if condition != DEPLOY_CONDITION:
+            errors.append(f"{name}:{job_name} deploys or uses secrets but is not limited to `if: {DEPLOY_CONDITION}`")
         if env_name != "cloudflare-demo":
             errors.append(f"{name}:{job_name} must run in the protected 'cloudflare-demo' environment")
         if secrets - CLOUDFLARE_SECRETS:
