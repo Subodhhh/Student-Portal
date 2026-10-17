@@ -97,3 +97,7 @@ export function updateTestAttempt(
 
   saveAttempts(updatedAttempts);
 }
+
+export function clearTestAttempts() {
+  localStorage.removeItem(STORAGE_KEY);
+}

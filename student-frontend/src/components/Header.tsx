@@ -4,6 +4,8 @@ import {
   PROFILE_API_URL,
   NOTIFICATION_API_URL,
 } from "../services/api";
+import { logoutStudent } from "../services/authService";
+import { clearTestAttempts } from "../utils/testAttemptStorage";
 
 type HeaderProps = {
   onMenuClick?: () => void;
@@ -65,6 +67,9 @@ function Header({ onMenuClick }: HeaderProps) {
   );
 
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
 
   const isTestResultPage =
     location.pathname.startsWith("/tests/result/");
@@ -145,6 +150,27 @@ function Header({ onMenuClick }: HeaderProps) {
 
   const studentInitial = studentName.charAt(0).toUpperCase();
 
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    setLogoutError("");
+
+    try {
+      // The server must end the session; only then is the student treated as logged out.
+      await logoutStudent();
+    } catch (error) {
+      console.error("Logout failed:", error);
+      setLogoutError(
+        "Logout failed. You are still signed in. Please try again."
+      );
+      setLoggingOut(false);
+      return;
+    }
+
+    sessionStorage.removeItem("student_name");
+    clearTestAttempts();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <header className="student-header">
       <div className="student-header-left">
@@ -218,10 +244,17 @@ function Header({ onMenuClick }: HeaderProps) {
 
               <button
                 className="logout-button"
-                onClick={() => navigate("/login")}
+                onClick={handleLogout}
+                disabled={loggingOut}
               >
-                Logout
+                {loggingOut ? "Logging out..." : "Logout"}
               </button>
+
+              {logoutError && (
+                <p className="logout-error" role="alert">
+                  {logoutError}
+                </p>
+              )}
             </div>
           )}
         </div>

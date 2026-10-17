@@ -62,3 +62,17 @@ export async function forgotStudentPassword(email: string) {
 
   return response.json();
 }
+
+export async function logoutStudent() {
+  const response = await fetch(`${AUTH_API_URL}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Logout failed.");
+  }
+
+  return response.json();
+}

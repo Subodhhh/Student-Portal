@@ -409,6 +409,12 @@ body,
   background: var(--danger-background);
 }
 
+.student-profile-dropdown .logout-error {
+  margin: 6px 10px 2px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
 /* =========================
    PAGE CONTENT
    ========================= */
