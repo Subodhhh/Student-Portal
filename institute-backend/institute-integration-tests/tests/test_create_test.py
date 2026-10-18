@@ -426,4 +426,5 @@ def test_concurrent_publication_requests_create_one_test(client, world, ct, logi
     [t.start() for t in ts]
     [t.join() for t in ts]
     c = counts(db_factory)
-    assert (c["plans"], c["exams"], c["assignments"]) == (1, 1, 2), (results, c)
+    assert (c["plans"], c["exams"], c["assignments"], c["outbox"]) == (1, 1, 2, 1), (results, c)
+    assert results == [201, 201, 201], results                     # every concurrent request returns the same published test

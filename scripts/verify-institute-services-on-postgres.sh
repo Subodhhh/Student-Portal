@@ -45,8 +45,12 @@ echo "== B: service chains on an empty database"
 prep inst_verify_services
 services_up inst_verify_services
 inventory inst_verify_services "$NEW_TABLES" > /tmp/inv_B.txt
-if ! diff -u /tmp/inv_A.txt /tmp/inv_B.txt; then echo "FAIL: service chains do not reproduce the legacy schema" >&2; exit 1; fi
-echo "  schema identical to the legacy chain apart from the new tables ($(wc -l < /tmp/inv_A.txt) objects compared)"
+# Every legacy object must still exist, except the documented intentional changes (scripts/legacy_schema_evolutions.txt);
+# objects ADDED by later revisions are expected (they are additive) and are listed for information.
+ALLOW="$(grep -v '^#' "$ROOT/scripts/legacy_schema_evolutions.txt" | grep -v '^$')"
+missing=$(comm -23 <(sort /tmp/inv_A.txt) <(sort /tmp/inv_B.txt) | grep -v -F -f <(printf '%s\n' "$ALLOW") || true)
+if [ -n "$missing" ]; then echo "FAIL: service chains lost or changed legacy objects not listed in scripts/legacy_schema_evolutions.txt:" >&2; echo "$missing" >&2; exit 1; fi
+echo "  every legacy object present except $(printf '%s\n' "$ALLOW" | wc -l) documented evolutions; $(comm -13 <(sort /tmp/inv_A.txt) <(sort /tmp/inv_B.txt) | wc -l) objects added by later revisions"
 
 echo "== C: service chains adopt the legacy schema"
 services_up inst_verify_legacy

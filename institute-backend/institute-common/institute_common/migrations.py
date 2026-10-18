@@ -7,6 +7,7 @@ Later revisions are ordinary forward-only migrations of the tables that service 
 
 Tables whose DDL belongs to the Student enrollment chain (providers, branches, batches, enrollments, enrollment_batches, students) are
 never created or altered here."""
+import re
 from sqlalchemy import inspect
 
 from institute_common.database import Base
@@ -116,7 +117,19 @@ def ensure_triggers(bind, service: str) -> None:
         bind.execute(text(FUNCTIONS[fn]))
     for name, table, clause, fn in specs:
         bind.execute(text(f"DROP TRIGGER IF EXISTS {name} ON {table}"))
-        bind.execute(text(f"CREATE TRIGGER {name} BEFORE {clause} ON {table} FOR EACH ROW EXECUTE FUNCTION {fn}()"))
+        bind.execute(text(f"CREATE TRIGGER {name} BEFORE {_existing_columns_only(bind, table, clause)} ON {table} FOR EACH ROW EXECUTE FUNCTION {fn}()"))
+
+
+def _existing_columns_only(bind, table: str, clause: str) -> str:
+    """`UPDATE OF a, b, c OR DELETE` restricted to the columns the table has NOW. When a baseline adopts an older schema, a column
+    added by a later revision (e.g. exam_versions.settings, exam 0004) does not exist yet; that revision re-installs the trigger
+    with the full column list after adding it."""
+    m = re.match(r"^UPDATE OF (.+?)( OR DELETE)?$", clause)
+    if not m:
+        return clause
+    have = existing_columns(bind, table)
+    cols = [c.strip() for c in m.group(1).split(",") if c.strip() in have]
+    return f"UPDATE OF {', '.join(cols)}{m.group(2) or ''}"
 
 
 def baseline(bind, service: str) -> None:

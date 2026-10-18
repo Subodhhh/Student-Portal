@@ -204,7 +204,7 @@ def extract_docx(data: bytes, max_questions: int) -> ExtractionResult:
                 if len(values) != len(header):
                     rows.append((idx, None))
                     continue
-                row = {h: v.strip() for h, v in zip(header, values) if h}
+                row = {h: v.strip() for h, v in zip(header, values, strict=False) if h}
                 if any(row.values()):
                     rows.append((idx, row))
             _validate_rows(res, rows, max_questions)
