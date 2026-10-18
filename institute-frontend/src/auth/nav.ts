@@ -8,6 +8,7 @@ export type NavItem = {
   to: string;
   perm?: string;
   anyPerm?: string[];
+  section?: string;   // items sharing a section are grouped under that heading in the sidebar
 };
 
 const item = (to: string, rest: Omit<NavItem, "label" | "to"> = {}, role?: Role): NavItem => ({
@@ -25,6 +26,8 @@ const SUPER_ADMIN_NAV: NavItem[] = [
   item("/students", { perm: "enrollment.manage" }),
   item("/subjects", { perm: "subject.manage" }),
   item("/papers", { perm: "paper.read" }),
+  item("/tests/new", { perm: "test.create", section: "Test" }),
+  item("/tests", { perm: "test.create", section: "Test" }),
   item("/exam-plans", { perm: "examplan.manage" }),
   item("/composite", { perm: "examplan.manage" }),
   item("/exams", { perm: "exam.read" }),
@@ -45,6 +48,8 @@ const NAV: NavItem[] = [
   item("/subjects", { anyPerm: ["subject.manage", "teaching.assign"] }),
   item("/batches", { perm: "batch.manage" }),
   item("/papers", { perm: "paper.read" }),
+  item("/tests/new", { perm: "test.create", section: "Test" }),
+  item("/tests", { perm: "test.create", section: "Test" }),
   item("/exam-plans", { perm: "examplan.manage" }),
   item("/composite", { perm: "examplan.manage" }),
   item("/exams", { perm: "exam.read" }),

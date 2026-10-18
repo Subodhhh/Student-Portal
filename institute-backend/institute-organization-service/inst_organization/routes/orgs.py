@@ -4,14 +4,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, can_see_provider, get_principal
 from institute_common.database import get_db
-from institute_common.models.org import Branch, Provider
+from institute_common.models.org import Branch, Enrollment, Provider
+from institute_common.models.staff import StaffRoleAssignment
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.schemas.common import Page
 
@@ -44,6 +45,30 @@ class ProviderOut(BaseModel):
     address: str | None
     status: str
     created_at: datetime
+
+
+class ProviderSummary(ProviderOut):
+    """Directory row: live counts (branches not deleted; people with an ACTIVE role; distinct students with an ACTIVE enrollment)."""
+    branch_count: int = 0
+    staff_count: int = 0
+    student_count: int = 0
+
+
+def _counts(db: Session, provider_ids: list[UUID]) -> dict[UUID, dict[str, int]]:
+    if not provider_ids:
+        return {}
+    out = {pid: {"branch_count": 0, "staff_count": 0, "student_count": 0} for pid in provider_ids}
+    for pid, n in db.execute(select(Branch.provider_id, func.count()).where(Branch.provider_id.in_(provider_ids), Branch.deleted_at.is_(None))
+                             .group_by(Branch.provider_id)):
+        out[pid]["branch_count"] = n
+    for pid, n in db.execute(select(StaffRoleAssignment.provider_id, func.count(func.distinct(StaffRoleAssignment.staff_id)))
+                             .where(StaffRoleAssignment.provider_id.in_(provider_ids), StaffRoleAssignment.status == "ACTIVE")
+                             .group_by(StaffRoleAssignment.provider_id)):
+        out[pid]["staff_count"] = n
+    for pid, n in db.execute(select(Enrollment.provider_id, func.count(func.distinct(Enrollment.student_id)))
+                             .where(Enrollment.provider_id.in_(provider_ids), Enrollment.status == "ACTIVE").group_by(Enrollment.provider_id)):
+        out[pid]["student_count"] = n
+    return out
 
 
 class BranchIn(Strict):
@@ -108,7 +133,7 @@ def create_provider(body: ProviderIn, p: Principal = Depends(get_principal), db:
     return prov
 
 
-@router.get("/providers", response_model=Page[ProviderOut])
+@router.get("/providers", response_model=Page[ProviderSummary])
 def list_providers(
     q: str | None = Query(default=None, max_length=100), status: str | None = Query(default=None, pattern="^(ACTIVE|INACTIVE)$"),
     page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
@@ -121,14 +146,18 @@ def list_providers(
         stmt = stmt.where(Provider.name.ilike(f"%{escape_like(q)}%", escape="\\"))
     if status:
         stmt = stmt.where(Provider.status == status)
-    return paginate(db, stmt.order_by(Provider.name), page, page_size)
+    res = paginate(db, stmt.order_by(Provider.name), page, page_size)
+    counts = _counts(db, [x.provider_id for x in res["items"]])
+    res["items"] = [ProviderSummary(**ProviderOut.model_validate(x).model_dump(), **counts[x.provider_id]) for x in res["items"]]
+    return res
 
 
-@router.get("/providers/{provider_id}", response_model=ProviderOut)
+@router.get("/providers/{provider_id}", response_model=ProviderSummary)
 def get_provider(provider_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     if not can_see_provider(p, provider_id):
         p.require(db, "provider.read", provider_id=provider_id)
-    return _provider(db, provider_id)
+    prov = _provider(db, provider_id)
+    return ProviderSummary(**ProviderOut.model_validate(prov).model_dump(), **_counts(db, [provider_id])[provider_id])
 
 
 @router.patch("/providers/{provider_id}", response_model=ProviderOut)

@@ -1,3 +1,5 @@
+import CreateTestPage from "./pages/CreateTestPage";
+import ScheduledTestsPage from "./pages/ScheduledTestsPage";
 import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
 import "./styles/base.css";
 import { AuthProvider } from "./auth/AuthContext";
@@ -64,6 +66,10 @@ export function AppRoutes() {
           <Route path="exam-plans/new" element={<TestWizardPage />} />
         </Route>
           <Route element={<ProtectedRoute perm="examplan.manage" />}><Route path="composite" element={<CompositePage />} /></Route>
+          <Route element={<ProtectedRoute perm="test.create" />}>
+            <Route path="tests" element={<ScheduledTestsPage />} />
+            <Route path="tests/new" element={<CreateTestPage />} />
+          </Route>
           {/* Internal diagnostics: not in any menu, still available to the platform owner at this address. */}
           <Route element={<ProtectedRoute perm="settings.platform" />}><Route path="system-health" element={<SystemHealthPage />} /></Route>
           <Route element={<ProtectedRoute perm="exam.read" />}>

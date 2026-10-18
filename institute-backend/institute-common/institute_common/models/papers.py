@@ -2,9 +2,10 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from institute_common.core.taxonomy import DIFFICULTIES, PATTERNS, QUESTION_TYPES, sql_in
 from institute_common.database import Base, IPAddress, JSONType, UTCDateTime, utcnow
 
 
@@ -32,14 +33,38 @@ class Question(Base):
     (the questions of one delivered test) in the same shared database."""
 
     __tablename__ = "bank_questions"
+    __table_args__ = (
+        # GLOBAL questions belong to the platform catalogue (no provider/branch); PROVIDER questions to one provider's branch.
+        CheckConstraint("(scope = 'GLOBAL' AND provider_id IS NULL AND branch_id IS NULL) OR "
+                        "(scope = 'PROVIDER' AND provider_id IS NOT NULL AND branch_id IS NOT NULL)", name="bank_questions_scope_check"),
+        CheckConstraint(f"difficulty IS NULL OR difficulty IN ({sql_in(DIFFICULTIES)})", name="bank_questions_difficulty_check"),
+        CheckConstraint(f"pattern IN ({sql_in(PATTERNS)})", name="bank_questions_pattern_check"),
+        CheckConstraint(f"question_type IN ({sql_in(QUESTION_TYPES)})", name="bank_questions_type_check"),
+        Index("ix_bank_questions_catalogue", "scope", "subject_id", "status"),
+        Index("ix_bank_questions_taxonomy", "subject_id", "exam_type", "target_class", "chapter"),
+    )
 
     question_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
-    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False, default="PROVIDER", server_default="PROVIDER")
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"), index=True)
+    branch_id: Mapped[UUID | None] = mapped_column(ForeignKey("branches.branch_id"))
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     owner_staff_id: Mapped[UUID] = mapped_column(nullable=False)
+    # Set on a provider's own copy made when it corrected a question it does not own (platform / other branch / other teacher).
+    forked_from_question_id: Mapped[UUID | None] = mapped_column(ForeignKey("bank_questions.question_id"))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    # Classification (mutable metadata: re-classifying never changes question content, which lives in immutable versions).
+    exam_type: Mapped[str | None] = mapped_column(String(80))
+    target_class: Mapped[str | None] = mapped_column(String(80))
+    chapter: Mapped[str | None] = mapped_column(String(80))
+    topic: Mapped[str | None] = mapped_column(String(200))
+    subtopic: Mapped[str | None] = mapped_column(String(80))
+    difficulty: Mapped[str | None] = mapped_column(String(10))
+    pattern: Mapped[str] = mapped_column(String(30), nullable=False, default="SINGLE_CORRECT", server_default="SINGLE_CORRECT")
+    subtype: Mapped[str | None] = mapped_column(String(80))
+    question_type: Mapped[str] = mapped_column(String(20), nullable=False, default="MCQ_SINGLE", server_default="MCQ_SINGLE")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, onupdate=utcnow)
 
 
 class QuestionVersion(Base):
@@ -78,6 +103,8 @@ class PaperUpload(Base):
     branch_id: Mapped[UUID] = mapped_column(nullable=False)
     subject_id: Mapped[UUID] = mapped_column(nullable=False)
     file_id: Mapped[UUID] = mapped_column(ForeignKey("stored_files.file_id"), nullable=False)
+    answer_key_file_id: Mapped[UUID | None] = mapped_column(ForeignKey("stored_files.file_id"))   # separate answer-key upload, if used
+    title: Mapped[str | None] = mapped_column(String(255))
     uploaded_by: Mapped[UUID] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     question_count: Mapped[int | None] = mapped_column(Integer)
@@ -89,12 +116,20 @@ class PaperUpload(Base):
 
 class Paper(Base):
     __tablename__ = "papers"
+    __table_args__ = (
+        # GLOBAL papers are platform content built from global questions (used by Global Daily Tests and, read-only, by providers).
+        CheckConstraint("(scope = 'GLOBAL' AND provider_id IS NULL AND branch_id IS NULL) OR "
+                        "(scope = 'PROVIDER' AND provider_id IS NOT NULL AND branch_id IS NOT NULL)", name="papers_scope_check"),
+    )
 
     paper_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
-    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False, default="PROVIDER", server_default="PROVIDER")
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"), index=True)
+    branch_id: Mapped[UUID | None] = mapped_column(ForeignKey("branches.branch_id"))
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    exam_type: Mapped[str | None] = mapped_column(String(80))
+    target_class: Mapped[str | None] = mapped_column(String(80))
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
 

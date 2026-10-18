@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 type Handler = unknown | ((url: URL, init: RequestInit) => unknown);
-export type Call = { method: string; path: string; search: URLSearchParams; body: unknown };
+export type Call = { method: string; path: string; search: URLSearchParams; body: unknown; headers: Record<string, string> };
 
 /** Stubs fetch with responses keyed by "METHOD /path" or "/path" (GET). Unknown routes answer 404. Returns the calls made. */
 export function stubApi(routes: Record<string, Handler>) {
@@ -12,7 +12,7 @@ export function stubApi(routes: Record<string, Handler>) {
     // JSON bodies are parsed; multipart uploads are recorded as { field: value or file name }.
     const body = typeof init.body === "string" ? JSON.parse(init.body)
       : init.body instanceof FormData ? Object.fromEntries([...init.body.entries()].map(([k, v]) => [k, typeof v === "string" ? v : (v as File).name])) : undefined;
-    calls.push({ method, path: url.pathname, search: url.searchParams, body });
+    calls.push({ method, path: url.pathname, search: url.searchParams, body, headers: { ...((init.headers as Record<string, string>) ?? {}) } });
     const handler = routes[`${method} ${url.pathname}`] ?? (method === "GET" ? routes[url.pathname] : undefined);
     const data = typeof handler === "function" ? (handler as (u: URL, i: RequestInit) => unknown)(url, init) : handler;
     if (data instanceof Failure) return { ok: false, status: data.status, json: async () => data.body } as Response;

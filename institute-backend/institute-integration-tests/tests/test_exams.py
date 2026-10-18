@@ -182,7 +182,10 @@ def test_late_approved_paper_applies_only_to_next_exam(client, world, ctx, pa, l
         db.commit()
     unchanged = client.get(f"{API}/exams/{first['exam_id']}", headers=h).json()
     assert len(unchanged["papers"]) == 1 and unchanged["total_questions"] == 3              # scheduled exam untouched
-    second = client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", json={}, headers={**h, "Idempotency-Key": "week-2"}).json()
+    # the NEXT exam is the next window; the same window would return the same exam (one exam per plan and start)
+    nxt_start = utcnow() + timedelta(days=9)
+    second = client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", headers={**h, "Idempotency-Key": "week-2"},
+                         json={"start_at": nxt_start.isoformat(), "end_at": (nxt_start + timedelta(hours=3)).isoformat()}).json()
     assert second["status"] == "SUCCEEDED"
     nxt = client.get(f"{API}/exams/{second['exam_id']}", headers=h).json()
     assert len(nxt["papers"]) == 2 and nxt["total_questions"] == 6 and nxt["missing_subjects"] == []
@@ -244,7 +247,9 @@ def test_composite_exam_requires_share_and_records_provenance(client, world, ctx
     client.delete(f"{API}/papers/{p2_paper}/shares/{world['p1']}", headers=h2)
     h = login(pa)
     assert client.get(f"{API}/exams/{job['exam_id']}", headers=h).json()["total_questions"] == 6
-    nxt = client.post(f"{API}/exam-plans/{plan.json()['plan_id']}/generate", json={}, headers={**h, "Idempotency-Key": "after-revoke"}).json()
+    nxt_start = utcnow() + timedelta(days=9)
+    nxt = client.post(f"{API}/exam-plans/{plan.json()['plan_id']}/generate", headers={**h, "Idempotency-Key": "after-revoke"},
+                      json={"start_at": nxt_start.isoformat(), "end_at": (nxt_start + timedelta(hours=3)).isoformat()}).json()
     assert nxt["status"] == "PARTIAL"                                               # revoked => excluded and reported
     miss = client.get(f"{API}/exams/{nxt['exam_id']}", headers=h).json()["missing_subjects"]
     assert miss[0]["reason"] == "NOT_AUTHORIZED"

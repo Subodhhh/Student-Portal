@@ -5,14 +5,21 @@ from uuid import UUID, uuid4
 from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from institute_common.core.taxonomy import sql_in
 from institute_common.database import Base, JSONType, UTCDateTime, utcnow
+
+AUDIENCE_TYPES = ("BATCHES", "BRANCH", "INSTITUTE", "STUDENTS", "TARGETED")
 
 
 class ExamPlan(Base):
     __tablename__ = "exam_plans"
     __table_args__ = (
-        CheckConstraint("status IN ('ACTIVE','INACTIVE')", name="exam_plans_status_check"),
+        # DRAFT plans are saved from the test-creation wizard and never generate until activated.
+        CheckConstraint("status IN ('DRAFT','ACTIVE','INACTIVE')", name="exam_plans_status_check"),
         CheckConstraint("duration_minutes > 0", name="exam_plans_duration_check"),
+        CheckConstraint(f"audience_type IN ({sql_in(AUDIENCE_TYPES)})", name="exam_plans_audience_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="exam_plans_marking_check"),
+        CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="exam_plans_uniform_marks_check"),
     )
 
     plan_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -26,9 +33,49 @@ class ExamPlan(Base):
     generate_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     auto_publish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    # Who sits the exam (resolved at every generation from current enrollments; see exam_generation.eligible_students):
+    #   BATCHES   the plan's batches (exam_plan_batches) in its branch - the original behaviour and the default
+    #   BRANCH    every active batch of the plan's branch
+    #   INSTITUTE every active batch of every branch of the provider (provider-level permission required)
+    #   STUDENTS  the listed students (exam_plan_students) with an active enrollment at the provider
+    #   TARGETED  Test -> Create Test: the UNION of whole branches (exam_plan_branches), batches of any of the provider's branches
+    #             (exam_plan_batches) and listed students (exam_plan_students); one assignment per student
+    audience_type: Mapped[str] = mapped_column(String(12), nullable=False, default="BATCHES", server_default="BATCHES")
+    # PER_QUESTION: each question's own marks (default). UNIFORM: +marks_correct / -marks_wrong for every question of the exam.
+    marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
+    marks_correct: Mapped[int | None] = mapped_column(Integer)
+    marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    exam_type: Mapped[str | None] = mapped_column(String(80))
+    target_class: Mapped[str | None] = mapped_column(String(80))
+    # Set when the plan schedules a published Global Daily Test: its papers, duration and marking are locked to the test's.
+    global_test_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_tests.test_id"), index=True)
+    # Idempotency key of the Create Test request that made this plan: a retried publication finds it instead of duplicating it.
+    client_request_id: Mapped[str | None] = mapped_column(String(100), unique=True)
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class ExamPlanStudent(Base):
+    """Explicitly selected students of a STUDENTS-audience plan (global Student IDs; never a copy of the identity)."""
+
+    __tablename__ = "exam_plan_students"
+    __table_args__ = (UniqueConstraint("plan_id", "student_id", name="uq_exam_plan_student"),)
+
+    plan_student_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("exam_plans.plan_id"), nullable=False, index=True)
+    student_id: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class ExamPlanBranch(Base):
+    """Whole branches targeted by a TARGETED-audience plan (every active batch member of the branch)."""
+
+    __tablename__ = "exam_plan_branches"
+    __table_args__ = (UniqueConstraint("plan_id", "branch_id", name="uq_exam_plan_branch"),)
+
+    plan_branch_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("exam_plans.plan_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
 
 
 class ExamPlanBatch(Base):
@@ -126,6 +173,8 @@ class ExamVersion(Base):
     total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     missing_subjects: Mapped[list | None] = mapped_column(JSONType)
     generation_job_id: Mapped[UUID | None] = mapped_column()
+    # Frozen configuration used for this exam (marking, policies, audience, source Global Daily Test); immutable like the manifest.
+    settings: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
@@ -139,7 +188,7 @@ class ExamVersionPaper(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     subject_id: Mapped[UUID] = mapped_column(nullable=False)
     paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)
-    source_provider_id: Mapped[UUID] = mapped_column(nullable=False)
+    source_provider_id: Mapped[UUID | None] = mapped_column()   # NULL: a GLOBAL (platform) paper
     question_count: Mapped[int] = mapped_column(Integer, nullable=False)
     total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
 
@@ -326,3 +375,47 @@ class CompositeRequestSlot(Base):
     responded_by: Mapped[UUID | None] = mapped_column()
     responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decline_reason: Mapped[str | None] = mapped_column(String(1000))
+
+
+class GlobalTest(Base):
+    """A platform-published test (Global Daily Test) that providers schedule for their own students.
+
+    DRAFT -> PUBLISHED -> WITHDRAWN. Once PUBLISHED its sections (exact GLOBAL paper versions), duration and marking never change:
+    providers schedule it through an exam plan locked to those versions, and a different test is always a new record
+    (optionally `derived_from_test_id`). Withdrawing stops new schedules only; exams already generated keep their manifest."""
+
+    __tablename__ = "global_tests"
+    __table_args__ = (
+        CheckConstraint("status IN ('DRAFT','PUBLISHED','WITHDRAWN')", name="global_tests_status_check"),
+        CheckConstraint("duration_minutes > 0 AND duration_minutes <= 720", name="global_tests_duration_check"),
+    )
+
+    test_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    exam_type: Mapped[str | None] = mapped_column(String(80))
+    target_class: Mapped[str | None] = mapped_column(String(80))
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT", server_default="DRAFT")
+    derived_from_test_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_tests.test_id"))
+    created_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    published_by: Mapped[UUID | None] = mapped_column()
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class GlobalTestSection(Base):
+    """One subject section of a global test: an exact, approved GLOBAL paper version."""
+
+    __tablename__ = "global_test_sections"
+    __table_args__ = (
+        UniqueConstraint("test_id", "position", name="uq_global_test_section_position"),
+        UniqueConstraint("test_id", "subject_id", name="uq_global_test_section_subject"),
+    )
+
+    section_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    test_id: Mapped[UUID] = mapped_column(ForeignKey("global_tests.test_id"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)

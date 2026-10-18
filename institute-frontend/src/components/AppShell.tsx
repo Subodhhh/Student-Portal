@@ -33,11 +33,12 @@ export default function AppShell() {
         <div className="brand">Institute Portal</div>
 
         <nav className="sidebar-nav" onClick={() => setOpen(false)}>
-          {main.map((item) => (
+          {main.map((item, i) => (
+            <div key={item.to} className="nav-item-wrap">
+            {item.section && item.section !== main[i - 1]?.section && <div className="nav-section" role="presentation">{item.section}</div>}
             <NavLink
-              key={item.to}
               to={item.to}
-              end={item.to === "/"}
+              end={item.to === "/" || item.to === "/tests"}
             >
               <NavIcon to={item.to} />
               {item.label}
@@ -45,6 +46,7 @@ export default function AppShell() {
                 ? ` (${unreadCount})`
                 : ""}
             </NavLink>
+            </div>
           ))}
         </nav>
 

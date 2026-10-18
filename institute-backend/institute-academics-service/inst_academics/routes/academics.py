@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from institute_common.core.security import Principal, api_error, can_see_provide
 from institute_common.database import get_db
 from institute_common.models.academics import BatchSubject, ProviderSubject, Subject
 from institute_common.models.org import Batch, Branch
-from institute_common.util import escape_like, paginate
+from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
 
@@ -23,6 +23,12 @@ router = APIRouter(prefix="/api/v1", tags=["Academics"])
 class SubjectIn(Strict):
     code: str = Field(min_length=2, max_length=30, pattern=r"^[A-Z0-9_]+$")
     name: str = Field(min_length=2, max_length=120)
+
+
+class SubjectPatch(Strict):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    status: str | None = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class SubjectOut(BaseModel):
@@ -63,10 +69,15 @@ class SubjectRef(Strict):
     subject_id: UUID
 
 
-@router.post("/subjects", response_model=SubjectOut, status_code=201)
-def create_subject(body: SubjectIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+def _require_catalogue_admin(db: Session, p: Principal) -> None:
+    """The platform subject catalogue is managed by global roles only (providers opt in via provider_subjects)."""
     if not (p.is_global and p.has_perm("subject.manage")):
         p.require(db, "subject.create_global")
+
+
+@router.post("/subjects", response_model=SubjectOut, status_code=201)
+def create_subject(body: SubjectIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    _require_catalogue_admin(db, p)
     s = Subject(code=body.code, name=body.name, created_by=p.staff_id)
     db.add(s)
     try:
@@ -79,12 +90,44 @@ def create_subject(body: SubjectIn, p: Principal = Depends(get_principal), db: S
 
 
 @router.get("/subjects", response_model=Page[SubjectOut])
-def list_subjects(q: str | None = Query(default=None, max_length=100), page: int = 1, page_size: int = 50,
-                  p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    stmt = select(Subject).where(Subject.status == "ACTIVE")
+def list_subjects(q: str | None = Query(default=None, max_length=100), status: str = Query(default="ACTIVE", pattern="^(ACTIVE|INACTIVE|ALL)$"),
+                  page: int = 1, page_size: int = 50, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    # Everyone sees the active catalogue; deactivated subjects are only listed for the catalogue administrators.
+    if status != "ACTIVE":
+        _require_catalogue_admin(db, p)
+    stmt = select(Subject)
+    if status != "ALL":
+        stmt = stmt.where(Subject.status == status)
     if q:
-        stmt = stmt.where(Subject.name.ilike(f"%{escape_like(q)}%", escape="\\"))
+        like = f"%{escape_like(q)}%"
+        stmt = stmt.where(or_(Subject.name.ilike(like, escape="\\"), Subject.code.ilike(like, escape="\\")))
     return paginate(db, stmt.order_by(Subject.name), page, page_size)
+
+
+@router.patch("/subjects/{subject_id}", response_model=SubjectOut)
+def update_subject(subject_id: UUID, body: SubjectPatch, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Rename, deactivate or reactivate a catalogue subject. There is deliberately no delete: papers, exams, teaching
+    assignments and results keep referring to the subject. A deactivated subject can no longer be enabled by a provider
+    and disappears from the active catalogue; everything already using it is untouched."""
+    _require_catalogue_admin(db, p)
+    s = db.get(Subject, subject_id)
+    if not s:
+        raise api_error(404, "NOT_FOUND", "Subject not found.")
+    status_changes = body.status is not None and body.status != s.status
+    reason = need_reason(body.reason) if status_changes else body.reason   # validated before anything is changed
+    changes: dict[str, dict[str, str]] = {}
+    if body.name is not None and body.name != s.name:
+        changes["name"] = {"old": s.name, "new": body.name}
+        s.name = body.name
+    if status_changes:
+        changes["status"] = {"old": s.status, "new": body.status}
+        s.status = body.status
+    if changes:
+        db.commit()
+        action = ("subject.deactivate" if s.status == "INACTIVE" else "subject.reactivate") if "status" in changes else "subject.update"
+        audit.record(db, action, "SUCCESS", actor=p.staff_id, target_type="subject", target_id=s.subject_id, reason=reason,
+                     ip=p.ip, details=changes)
+    return s
 
 
 @router.put("/providers/{provider_id}/subjects/{subject_id}", response_model=SubjectOut)

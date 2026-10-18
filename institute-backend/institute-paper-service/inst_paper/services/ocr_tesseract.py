@@ -35,7 +35,7 @@ class TesseractBackend:
         critical: dict[int, float] = {}
         words: dict[int, list[float]] = {}
         default_conf, current, expected = 100.0, None, 1
-        for (text, c), word_confs in zip(ordered, [[c for _, c in ws] for _, ws in sorted(lines.items())]):
+        for (text, c), word_confs in zip(ordered, [[c for _, c in ws] for _, ws in sorted(lines.items())], strict=False):
             q = _Q.match(text)
             if q and int(q.group(1)) >= expected:
                 current, expected = int(q.group(1)), int(q.group(1)) + 1

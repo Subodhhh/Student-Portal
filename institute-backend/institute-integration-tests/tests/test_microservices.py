@@ -266,6 +266,22 @@ NEW_ROUTES = {
     ("POST", f"{API}/composite-requests/{{request_id}}/slots/{{slot_id}}/contribute"),
     ("POST", f"{API}/composite-requests/{{request_id}}/slots/{{slot_id}}/decline"),
     ("GET", f"{API}/system/health"),
+    ("PATCH", f"{API}/subjects/{{subject_id}}"),
+    # question bank, paper building, import history
+    ("GET", f"{API}/questions"), ("GET", f"{API}/questions/{{question_id}}"), ("PATCH", f"{API}/questions/{{question_id}}"),
+    ("GET", f"{API}/question-taxonomy"), ("POST", f"{API}/papers"), ("GET", f"{API}/papers"),
+    ("GET", f"{API}/papers/{{paper_id}}/versions"), ("GET", f"{API}/uploads"),
+    # student directory
+    ("GET", f"{API}/students"), ("GET", f"{API}/students/{{student_id}}"),
+    # test creation: audiences and Global Daily Tests
+    ("POST", f"{API}/branches/{{branch_id}}/audience-preview"), ("PUT", f"{API}/exam-plans/{{plan_id}}/audience"),
+    ("POST", f"{API}/branches/{{branch_id}}/exam-plans/check"), ("POST", f"{API}/papers/check"),
+    ("GET", f"{API}/tests"), ("POST", f"{API}/tests"), ("GET", f"{API}/tests/scope"), ("GET", f"{API}/tests/students"),
+    ("POST", f"{API}/tests/audience"), ("POST", f"{API}/tests/check"),
+    ("GET", f"{API}/global-tests"), ("POST", f"{API}/global-tests"), ("GET", f"{API}/global-tests/{{test_id}}"),
+    ("PUT", f"{API}/global-tests/{{test_id}}"), ("POST", f"{API}/global-tests/{{test_id}}/publish"),
+    ("POST", f"{API}/global-tests/{{test_id}}/withdraw"), ("POST", f"{API}/global-tests/{{test_id}}/derive"),
+    ("POST", f"{API}/global-tests/{{test_id}}/schedule"),
 }
 
 

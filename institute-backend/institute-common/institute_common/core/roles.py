@@ -54,6 +54,7 @@ _ALL = {
     "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
     "paper.override_status",
     "examplan.manage", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
+    "test.create",
     "result.read", "result.correct",
     "analytics.read", "notification.manage", "notification.read",
     "support.manage", "billing.read", "billing.routine", "billing.refund", "billing.adjust",
@@ -75,7 +76,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "enrollment.transfer_request", "enrollment.transfer_approve", "teaching.assign",
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
-        "examplan.manage", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
+        "examplan.manage", "test.create", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
         "result.read", "analytics.read", "notification.manage", "notification.read",
         "support.manage", "billing.read", "settings.provider", "settings.branch", "audit.read",
     },
@@ -95,6 +96,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "provider.read", "branch.read", "student.read",
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
+        "test.create",   # scoped by teaching assignments (branch, subject, batch) like every other teacher permission
         "exam.read", "result.read", "analytics.read", "notification.read",
     },
 }

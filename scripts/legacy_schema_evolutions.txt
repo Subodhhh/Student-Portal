@@ -1,0 +1,20 @@
+# Legacy-monolith schema objects that the service migration chains INTENTIONALLY changed (each line: the start of the legacy
+# inventory line, tab-separated: table, kind, object). verify-institute-services-on-postgres.sh fails if any OTHER legacy object
+# is missing from the service-chain schema; additions are allowed (later revisions are additive).
+# enrollment 0002_enrollment_student_identity: enrollments reference the global Student ID without a foreign key
+enrollments	constraint	enrollments_student_id_fkey
+# paper 0002_paper_question_bank: platform (GLOBAL) questions and papers have no provider/branch
+bank_questions	column	branch_id uuid NO
+bank_questions	column	provider_id uuid NO
+papers	column	branch_id uuid NO
+papers	column	provider_id uuid NO
+# (PostgreSQL 18 also reports the same NOT NULL rules as named constraints)
+bank_questions	constraint	bank_questions_branch_id_not_null
+bank_questions	constraint	bank_questions_provider_id_not_null
+papers	constraint	papers_branch_id_not_null
+papers	constraint	papers_provider_id_not_null
+# exam 0004_exam_tests_audience: DRAFT plans, platform papers in exams, exam settings in the append-only trigger
+exam_plans	constraint	exam_plans_status_check
+exam_version_papers	column	source_provider_id uuid NO
+exam_version_papers	constraint	exam_version_papers_source_provider_id_not_null
+exam_versions	trigger	exam_versions_immutable

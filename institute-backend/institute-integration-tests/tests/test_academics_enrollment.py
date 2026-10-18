@@ -82,6 +82,58 @@ def test_subject_catalogue_is_platform_managed(client, world, make_staff, login)
     assert client.post(f"{API}/subjects", json={"code": "CHEM", "name": "Again"}, headers=h2).status_code == 409
 
 
+def test_subject_catalogue_edit_and_deactivation(client, world, make_staff, login, db_factory):
+    """Global roles rename / deactivate / reactivate catalogue subjects; nothing is ever deleted and scoped roles cannot.
+    (The test client holds one session at a time, so every switch of user logs in again.)"""
+    from uuid import UUID
+
+    from institute_common.models.academics import ProviderSubject, Subject
+    _, sa = make_staff([(Role.SUPER_ADMIN, None, None)])
+    _, pa = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    _, pa2 = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
+    active = lambda h: {x["subject_id"] for x in client.get(f"{API}/subjects", headers=h).json()["items"]}  # noqa: E731
+
+    h = login(sa)
+    sid = client.post(f"{API}/subjects", json={"code": "BIO", "name": "Biology"}, headers=h).json()["subject_id"]
+    h = login(pa)
+    assert client.put(f"{API}/providers/{world['p1']}/subjects/{sid}", headers=h).status_code == 200    # in use by p1
+    assert client.patch(f"{API}/subjects/{sid}", json={"name": "Biology (NEET)"}, headers=h).status_code == 403
+    assert client.patch(f"{API}/subjects/{sid}", json={"status": "INACTIVE", "reason": "not mine to do"}, headers=h).status_code == 403
+
+    h = login(sa)
+    r = client.patch(f"{API}/subjects/{sid}", json={"name": "Biology (NEET)"}, headers=h)
+    assert r.status_code == 200 and r.json()["name"] == "Biology (NEET)" and r.json()["status"] == "ACTIVE"
+    # deactivation needs a reason, which is validated before anything changes
+    r = client.patch(f"{API}/subjects/{sid}", json={"name": "Renamed", "status": "INACTIVE"}, headers=h)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED"
+    with db_factory() as db:
+        assert db.get(Subject, UUID(sid)).name == "Biology (NEET)"
+    r = client.patch(f"{API}/subjects/{sid}", json={"status": "INACTIVE", "reason": "Merged into Life Sciences"}, headers=h)
+    assert r.status_code == 200 and r.json()["status"] == "INACTIVE"
+    # gone from the active catalogue, listed for the catalogue admins
+    assert sid not in active(h)
+    assert {x["subject_id"] for x in client.get(f"{API}/subjects?status=INACTIVE", headers=h).json()["items"]} == {sid}
+
+    h = login(pa)
+    assert sid not in active(h)
+    assert client.get(f"{API}/subjects?status=INACTIVE", headers=h).status_code == 403
+    # ...but kept for the provider already using it: nothing that references it is touched
+    assert sid in {x["subject_id"] for x in client.get(f"{API}/providers/{world['p1']}/subjects", headers=h).json()}
+    with db_factory() as db:
+        assert db.query(ProviderSubject).filter_by(subject_id=UUID(sid)).count() == 1
+    # a deactivated subject cannot be newly enabled by another provider
+    h = login(pa2)
+    assert client.put(f"{API}/providers/{world['p2']}/subjects/{sid}", headers=h).status_code == 404
+
+    h = login(sa)
+    assert client.patch(f"{API}/subjects/{sid}", json={"status": "ACTIVE", "reason": "Back on the syllabus"}, headers=h).json()["status"] == "ACTIVE"
+    assert sid in active(h)
+    assert client.get(f"{API}/subjects?q=bio", headers=h).json()["total"] == 1      # search by code or name
+    assert client.patch(f"{API}/subjects/{world['p1']}", json={"name": "Nothing"}, headers=h).status_code == 404
+    actions = {a["action"] for a in client.get(f"{API}/audit-logs?page_size=50", headers=h).json()["items"]}
+    assert {"subject.update", "subject.deactivate", "subject.reactivate"} <= actions
+
+
 def test_batches_are_branch_scoped(client, world, seeded, make_staff, login):
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     h = login(ba)

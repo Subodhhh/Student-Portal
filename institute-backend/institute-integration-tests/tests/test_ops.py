@@ -181,3 +181,53 @@ def test_dashboards_return_scoped_real_numbers(client, world, make_staff, login,
     assert d["role"] == "BRANCH_ADMIN" and d["students"] == 1
     d = client.get(f"{API}/dashboard", headers=login(t)).json()
     assert d["role"] == "TEACHER" and d["teaching"] == [] and "providers" not in d and "students" not in d
+
+
+def test_global_dashboard_platform_overview(client, world, make_staff, login, db_factory):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from institute_common.database import utcnow
+    from institute_common.models.academics import ProviderSubject, Subject
+    from institute_common.models.exams import Exam, ExamPlan, ExamVersion
+    from institute_common.models.org import Enrollment, Provider
+    now = utcnow()
+    with db_factory() as db:
+        db.get(Provider, world["p2"]).status = "INACTIVE"
+        db.add(Enrollment(enrollment_id="e1", provider_id=world["p1"], branch_id=world["p1b1"], student_id="STU000001"))
+        db.add(Enrollment(enrollment_id="e2", provider_id=world["p1"], branch_id=world["p1b2"], student_id="STU000001"))
+        db.add(Enrollment(enrollment_id="e3", provider_id=world["p2"], branch_id=world["p2b1"], student_id="STU000002", status="INACTIVE"))
+        phy, old = Subject(code="PHY", name="Physics"), Subject(code="OLD", name="Old", status="INACTIVE")
+        db.add_all([phy, old, Subject(code="CHE", name="Chemistry")])
+        db.flush()
+        db.add_all([ProviderSubject(provider_id=world["p1"], subject_id=phy.subject_id), ProviderSubject(provider_id=world["p2"], subject_id=phy.subject_id),
+                    ProviderSubject(provider_id=world["p1"], subject_id=old.subject_id)])
+        plan = ExamPlan(provider_id=world["p1"], branch_id=world["p1b1"], name="Weekly", duration_minutes=60, start_at=now,
+                        end_at=now + timedelta(days=30), created_by=uuid4())
+        db.add(plan)
+        db.flush()
+        for i, (start, status) in enumerate([(now + timedelta(days=2), "SCHEDULED"), (now - timedelta(days=3), "SCHEDULED"),
+                                             (now + timedelta(days=1), "CANCELLED")]):
+            e = Exam(plan_id=plan.plan_id, run_key=f"r{i}", provider_id=world["p1"], branch_id=world["p1b1"], name=f"Exam {i}", status=status)
+            db.add(e)
+            db.flush()
+            db.add(ExamVersion(exam_id=e.exam_id, version_no=1, duration_minutes=60, start_at=start, end_at=start + timedelta(hours=1),
+                               total_questions=10, total_marks=40))
+        db.commit()
+    _, sa = make_staff([(Role.SUPER_ADMIN, None, None)])
+    make_staff([(Role.TEACHER, world["p1"], None), (Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
+    make_staff([(Role.TEACHER, world["p1"], None)], active=False)        # inactive people are not counted
+    d = client.get(f"{API}/dashboard", headers=login(sa)).json()
+    assert d["providers_by_status"] == {"ACTIVE": 1, "INACTIVE": 1}
+    assert d["branches_by_status"] == {"ACTIVE": 4}
+    assert d["students"] == 1 and d["active_enrollments"] == 2
+    assert d["staff_by_role"] == {"SUPER_ADMIN": 1, "TEACHER": 1, "BRANCH_ADMIN": 1}
+    assert d["subjects"] == 2 and d["subjects_offered"] == 1          # the inactive subject counts for neither
+    assert d["recent_exams_30d"] == 1
+    assert [e["name"] for e in d["upcoming_exam_list"]] == ["Exam 0"]
+    assert d["upcoming_exam_list"][0]["provider_name"] == "Provider p1" and d["upcoming_exam_list"][0]["branch_name"] == "p1-b1"
+    assert d["composite_by_status"] == {} and d["questions"] == 0
+    # scoped roles never receive platform-wide numbers
+    _, pa = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    d = client.get(f"{API}/dashboard", headers=login(pa)).json()
+    assert not {"providers_by_status", "staff_by_role", "upcoming_exam_list", "subjects"} & set(d)
