@@ -315,36 +315,70 @@ def _paper_problems(db: Session, body: TestDraftIn) -> list[dict]:
 
 
 def _plan_summary(db: Session, plan: ExamPlan) -> dict:
-    exam = db.scalar(select(Exam).where(Exam.plan_id == plan.plan_id).order_by(Exam.created_at.desc()).limit(1))
-    ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam.exam_id).order_by(ExamVersion.version_no.desc()).limit(1)) if exam else None
-    job = db.scalar(select(ExamGenerationJob).where(ExamGenerationJob.plan_id == plan.plan_id).order_by(ExamGenerationJob.started_at.desc()).limit(1))
-    ob = db.scalar(select(ExamOutbox).where(ExamOutbox.exam_version_id == ev.exam_version_id, ExamOutbox.operation == "PUBLISH")) if ev else None
-    subjects = db.execute(select(Subject.name).join(ExamPlanSubject, ExamPlanSubject.subject_id == Subject.subject_id)
-                          .where(ExamPlanSubject.plan_id == plan.plan_id).order_by(ExamPlanSubject.position)).scalars().all()
-    branches = db.execute(select(Branch.name).join(ExamPlanBranch, ExamPlanBranch.branch_id == Branch.branch_id).where(ExamPlanBranch.plan_id == plan.plan_id)).scalars().all()
-    batches = db.execute(select(Batch.name).join(ExamPlanBatch, ExamPlanBatch.batch_id == Batch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id)).scalars().all()
-    students = db.scalar(select(func.count()).select_from(ExamPlanStudent).where(ExamPlanStudent.plan_id == plan.plan_id)) or 0
-    assigned = db.scalar(select(func.count()).select_from(StudentExamAssignment).where(StudentExamAssignment.exam_id == exam.exam_id)) if exam else 0
-    if exam and exam.status == "PUBLISHED":
-        state = "PUBLISHED" if (ob and ob.status == "SENT") else "PUBLISHED_DELIVERY_PENDING" if (not ob or ob.status == "PENDING") else "DELIVERY_FAILED"
-    elif exam and exam.status == "CANCELLED":
-        state = "CANCELLED"
-    elif job and job.status == "FAILED":
-        state = "PUBLICATION_FAILED"
-    elif job and job.status == "RUNNING":
-        state = "PUBLISHING"
-    else:
-        state = "NOT_PUBLISHED"
-    prov, home = db.get(Provider, plan.provider_id), db.get(Branch, plan.branch_id)
-    return {"plan_id": plan.plan_id, "exam_id": exam.exam_id if exam else None, "exam_version_id": ev.exam_version_id if ev else None,
-            "name": plan.name, "state": state, "exam_status": exam.status if exam else None, "delivery_status": ob.status if ob else None,
-            "job_status": job.status if job else None, "error": (job.error if job and job.status != "SUCCEEDED" else None) or (exam.cancelled_reason if exam else None),
-            "provider_id": plan.provider_id, "provider_name": prov.name if prov else None, "home_branch": home.name if home else None,
-            "start_at": ev.start_at if ev else plan.start_at, "end_at": ev.end_at if ev else plan.end_at, "duration_minutes": plan.duration_minutes,
-            "subjects": list(subjects), "audience": {"type": plan.audience_type, "branches": sorted(branches), "batches": sorted(batches), "students": students},
-            "assigned_students": assigned or 0, "question_count": ev.total_questions if ev else None,
-            "total_marks": str(ev.total_marks) if ev else None, "marking": ev.settings.get("marking") if ev and ev.settings else None,
-            "created_by": plan.created_by, "created_at": plan.created_at}
+    return _summaries(db, [plan])[0]
+
+
+def _summaries(db: Session, plans: list[ExamPlan]) -> list[dict]:
+    """Summaries of many plans in a fixed number of bulk queries (independent of how many plans: a remote database answers each
+    round trip in tens of milliseconds, so per-plan queries made the Scheduled Tests list take most of a minute)."""
+    if not plans:
+        return []
+    ids = [pl.plan_id for pl in plans]
+    exams: dict = {}
+    for e in db.scalars(select(Exam).where(Exam.plan_id.in_(ids)).order_by(Exam.created_at)):
+        exams[e.plan_id] = e                                                        # latest wins
+    exam_ids = [e.exam_id for e in exams.values()]
+    versions: dict = {}
+    for v in db.scalars(select(ExamVersion).where(ExamVersion.exam_id.in_(exam_ids or [None])).order_by(ExamVersion.version_no)):
+        versions[v.exam_id] = v
+    ev_ids = [v.exam_version_id for v in versions.values()]
+    outboxes = {o.exam_version_id: o for o in db.scalars(select(ExamOutbox).where(ExamOutbox.exam_version_id.in_(ev_ids or [None]), ExamOutbox.operation == "PUBLISH"))}
+    jobs: dict = {}
+    for j in db.scalars(select(ExamGenerationJob).where(ExamGenerationJob.plan_id.in_(ids)).order_by(ExamGenerationJob.started_at)):
+        jobs[j.plan_id] = j
+    subjects: dict = {}
+    for pid, name in db.execute(select(ExamPlanSubject.plan_id, Subject.name).join(Subject, Subject.subject_id == ExamPlanSubject.subject_id)
+                                .where(ExamPlanSubject.plan_id.in_(ids)).order_by(ExamPlanSubject.position)):
+        subjects.setdefault(pid, []).append(name)
+    branches: dict = {}
+    for pid, name in db.execute(select(ExamPlanBranch.plan_id, Branch.name).join(Branch, Branch.branch_id == ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id.in_(ids))):
+        branches.setdefault(pid, []).append(name)
+    batches: dict = {}
+    for pid, name in db.execute(select(ExamPlanBatch.plan_id, Batch.name).join(Batch, Batch.batch_id == ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id.in_(ids))):
+        batches.setdefault(pid, []).append(name)
+    students = dict(db.execute(select(ExamPlanStudent.plan_id, func.count()).where(ExamPlanStudent.plan_id.in_(ids)).group_by(ExamPlanStudent.plan_id)).all())
+    assigned = dict(db.execute(select(StudentExamAssignment.exam_id, func.count()).where(StudentExamAssignment.exam_id.in_(exam_ids or [None]))
+                               .group_by(StudentExamAssignment.exam_id)).all())
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({pl.provider_id for pl in plans}))).all())
+    homes = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({pl.branch_id for pl in plans}))).all())
+    out = []
+    for plan in plans:
+        exam, job = exams.get(plan.plan_id), jobs.get(plan.plan_id)
+        ev = versions.get(exam.exam_id) if exam else None
+        ob = outboxes.get(ev.exam_version_id) if ev else None
+        if exam and exam.status == "PUBLISHED":
+            state = "PUBLISHED" if (ob and ob.status == "SENT") else "PUBLISHED_DELIVERY_PENDING" if (not ob or ob.status == "PENDING") else "DELIVERY_FAILED"
+        elif exam and exam.status == "CANCELLED":
+            state = "CANCELLED"
+        elif job and job.status == "FAILED":
+            state = "PUBLICATION_FAILED"
+        elif job and job.status == "RUNNING":
+            state = "PUBLISHING"
+        else:
+            state = "NOT_PUBLISHED"
+        out.append({"plan_id": plan.plan_id, "exam_id": exam.exam_id if exam else None, "exam_version_id": ev.exam_version_id if ev else None,
+                    "name": plan.name, "state": state, "exam_status": exam.status if exam else None, "delivery_status": ob.status if ob else None,
+                    "job_status": job.status if job else None,
+                    "error": (job.error if job and job.status != "SUCCEEDED" else None) or (exam.cancelled_reason if exam else None),
+                    "provider_id": plan.provider_id, "provider_name": providers.get(plan.provider_id), "home_branch": homes.get(plan.branch_id),
+                    "start_at": ev.start_at if ev else plan.start_at, "end_at": ev.end_at if ev else plan.end_at, "duration_minutes": plan.duration_minutes,
+                    "subjects": subjects.get(plan.plan_id, []),
+                    "audience": {"type": plan.audience_type, "branches": sorted(branches.get(plan.plan_id, [])), "batches": sorted(batches.get(plan.plan_id, [])),
+                                 "students": students.get(plan.plan_id, 0)},
+                    "assigned_students": assigned.get(exam.exam_id, 0) if exam else 0, "question_count": ev.total_questions if ev else None,
+                    "total_marks": str(ev.total_marks) if ev else None, "marking": ev.settings.get("marking") if ev and ev.settings else None,
+                    "created_by": plan.created_by, "created_at": plan.created_at})
+    return out
 
 
 @router.post("/tests", status_code=201)
@@ -441,14 +475,17 @@ def list_tests(provider_id: UUID | None = None, page: int = 1, page_size: int = 
     if provs is not None:
         stmt = stmt.where(ExamPlan.provider_id.in_(provs or [None]))
     plans = db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all()
+    plan_subjects: dict = {}
+    for pid, sid in db.execute(select(ExamPlanSubject.plan_id, ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id.in_([x.plan_id for x in plans] or [None]))):
+        plan_subjects.setdefault(pid, []).append(sid)
     visible = []
     for plan in plans:
         if _manager(p, plan.provider_id, plan.branch_id) or plan.created_by == p.staff_id:
             visible.append(plan)
             continue
-        subjects = db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)).all()
-        if subjects and all(p.can(PERM, provider_id=plan.provider_id, branch_id=plan.branch_id, subject_id=s) for s in subjects):
+        subs = plan_subjects.get(plan.plan_id, [])
+        if subs and all(p.can(PERM, provider_id=plan.provider_id, branch_id=plan.branch_id, subject_id=sid) for sid in subs):
             visible.append(plan)
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
     chunk = visible[(page - 1) * page_size: page * page_size]
-    return {"items": [_plan_summary(db, x) for x in chunk], "total": len(visible), "page": page, "page_size": page_size}
+    return {"items": _summaries(db, chunk), "total": len(visible), "page": page, "page_size": page_size}
