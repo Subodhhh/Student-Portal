@@ -276,6 +276,8 @@ NEW_ROUTES = {
     # test creation: audiences and Global Daily Tests
     ("POST", f"{API}/branches/{{branch_id}}/audience-preview"), ("PUT", f"{API}/exam-plans/{{plan_id}}/audience"),
     ("POST", f"{API}/branches/{{branch_id}}/exam-plans/check"), ("POST", f"{API}/papers/check"),
+    ("GET", f"{API}/tests"), ("POST", f"{API}/tests"), ("GET", f"{API}/tests/scope"), ("GET", f"{API}/tests/students"),
+    ("POST", f"{API}/tests/audience"), ("POST", f"{API}/tests/check"),
     ("GET", f"{API}/global-tests"), ("POST", f"{API}/global-tests"), ("GET", f"{API}/global-tests/{{test_id}}"),
     ("PUT", f"{API}/global-tests/{{test_id}}"), ("POST", f"{API}/global-tests/{{test_id}}/publish"),
     ("POST", f"{API}/global-tests/{{test_id}}/withdraw"), ("POST", f"{API}/global-tests/{{test_id}}/derive"),

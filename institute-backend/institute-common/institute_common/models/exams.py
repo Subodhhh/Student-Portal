@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from institute_common.core.taxonomy import sql_in
 from institute_common.database import Base, JSONType, UTCDateTime, utcnow
 
-AUDIENCE_TYPES = ("BATCHES", "BRANCH", "INSTITUTE", "STUDENTS")
+AUDIENCE_TYPES = ("BATCHES", "BRANCH", "INSTITUTE", "STUDENTS", "TARGETED")
 
 
 class ExamPlan(Base):
@@ -38,6 +38,8 @@ class ExamPlan(Base):
     #   BRANCH    every active batch of the plan's branch
     #   INSTITUTE every active batch of every branch of the provider (provider-level permission required)
     #   STUDENTS  the listed students (exam_plan_students) with an active enrollment at the provider
+    #   TARGETED  Test -> Create Test: the UNION of whole branches (exam_plan_branches), batches of any of the provider's branches
+    #             (exam_plan_batches) and listed students (exam_plan_students); one assignment per student
     audience_type: Mapped[str] = mapped_column(String(12), nullable=False, default="BATCHES", server_default="BATCHES")
     # PER_QUESTION: each question's own marks (default). UNIFORM: +marks_correct / -marks_wrong for every question of the exam.
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
@@ -47,6 +49,8 @@ class ExamPlan(Base):
     target_class: Mapped[str | None] = mapped_column(String(80))
     # Set when the plan schedules a published Global Daily Test: its papers, duration and marking are locked to the test's.
     global_test_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_tests.test_id"), index=True)
+    # Idempotency key of the Create Test request that made this plan: a retried publication finds it instead of duplicating it.
+    client_request_id: Mapped[str | None] = mapped_column(String(100), unique=True)
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
@@ -61,6 +65,17 @@ class ExamPlanStudent(Base):
     plan_student_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     plan_id: Mapped[UUID] = mapped_column(ForeignKey("exam_plans.plan_id"), nullable=False, index=True)
     student_id: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class ExamPlanBranch(Base):
+    """Whole branches targeted by a TARGETED-audience plan (every active batch member of the branch)."""
+
+    __tablename__ = "exam_plan_branches"
+    __table_args__ = (UniqueConstraint("plan_id", "branch_id", name="uq_exam_plan_branch"),)
+
+    plan_branch_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("exam_plans.plan_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
 
 
 class ExamPlanBatch(Base):

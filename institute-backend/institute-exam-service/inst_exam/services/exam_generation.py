@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from institute_common.core import audit
 from institute_common.database import utcnow
 from institute_common.models.exams import (
+    ExamPlanBranch,
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
     ExamVersion, ExamVersionPaper, GlobalTest, GlobalTestSection, StudentExamAssignment,
 )
@@ -139,17 +140,37 @@ def eligible_students(db: Session, plan: ExamPlan) -> list[tuple[str, str, UUID 
     """The plan's audience resolved from CURRENT data (see `resolve_audience`)."""
     batch_ids = [b for (b,) in db.execute(select(ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id))]
     student_ids = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id))]
-    return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids)
+    branch_ids = [b for (b,) in db.execute(select(ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id == plan.plan_id))]
+    return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids)
 
 
 def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_type: str, batch_ids: list[UUID],
-                     student_ids: list[str]) -> list[tuple[str, str, UUID | None]]:
+                     student_ids: list[str], *, branch_ids: list[UUID] = ()) -> list[tuple[str, str, UUID | None]]:
     """(student_id, enrollment_id, batch_id), one row per student. Used by generation and by the wizard's audience preview.
 
     BATCHES / BRANCH / INSTITUTE: an ACTIVE enrollment at the provider (in the plan's branch for BATCHES and BRANCH) and an
     active membership in an ACTIVE batch of that enrollment's branch (the listed batches / any batch of the branch / any batch
     of any active branch). STUDENTS: the listed students with an ACTIVE enrollment at the provider (the plan's branch is
-    preferred when a student is enrolled in several branches); a listed student without one is not assigned."""
+    preferred when a student is enrolled in several branches); a listed student without one is not assigned.
+    TARGETED: the union of whole branches (`branch_ids`, BRANCH rule), batches of any branch of the provider (BATCHES rule in each
+    batch's own branch) and listed students (STUDENTS rule); a student reached several ways is assigned once."""
+    if audience_type == "TARGETED":
+        rows: list[tuple[str, str, UUID | None]] = []
+        for b in dict.fromkeys(branch_ids):
+            rows += resolve_audience(db, provider_id, b, "BRANCH", [], [])
+        by_branch: dict[UUID, list[UUID]] = {}
+        for bid, br in db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))):
+            by_branch.setdefault(br, []).append(bid)
+        for br, bids in by_branch.items():
+            rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [])
+        rows += resolve_audience(db, provider_id, branch_id, "STUDENTS", [], list(student_ids))
+        seen: set[str] = set()
+        unique = []
+        for row in rows:
+            if row[0] not in seen:
+                seen.add(row[0])
+                unique.append(row)
+        return sorted(unique)
     if audience_type == "STUDENTS":
         if not student_ids:
             return []
@@ -206,7 +227,7 @@ def _event(db: Session, job: ExamGenerationJob, kind: str, details: dict | None 
 
 
 def _notify_failure(db: Session, plan: ExamPlan, job: ExamGenerationJob, message: str) -> None:
-    staff = responsible_staff(db, plan.provider_id, plan.branch_id, institute=plan.audience_type == "INSTITUTE")
+    staff = responsible_staff(db, plan.provider_id, plan.branch_id, institute=plan.audience_type in ("INSTITUTE", "TARGETED"))
     notify(db, staff, kind="EXAM_GENERATION_FAILED", title=f"Exam generation failed: {plan.name}",
            body=f"{message}\n\nRun: {job.run_key}", dedupe=f"genfail:{job.job_id}:{job.attempts}", provider_id=plan.provider_id)
 
@@ -335,7 +356,7 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
 
 def _notify_missing(db: Session, plan: ExamPlan, job: ExamGenerationJob, m: dict) -> None:
     subject_id = UUID(m["subject_id"])
-    staff = responsible_staff(db, plan.provider_id, plan.branch_id, subject_id, institute=plan.audience_type == "INSTITUTE")
+    staff = responsible_staff(db, plan.provider_id, plan.branch_id, subject_id, institute=plan.audience_type in ("INSTITUTE", "TARGETED"))
     notify(db, staff, kind="MISSING_PAPER", title=f"Missing paper: {m.get('subject') or 'subject'} for {plan.name}",
            body=f"{m['detail']} ({m['reason']}). The exam was generated without this subject; "
                 "once the paper is approved it will be used in the next exam.",

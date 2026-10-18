@@ -707,8 +707,13 @@ def upload_paper(branch_id: UUID, subject_id: UUID, title: str = Form(min_length
         db.commit()  # keep the rejected upload and its precise errors for the uploader
         audit.record(db, "paper.upload", "FAILURE", actor=p.staff_id, target_type="upload", target_id=upload.upload_id,
                      provider_id=br.provider_id, branch_id=branch_id, ip=p.ip, details={"errors": len(result.errors)})
-        raise api_error_detail(422, "EXTRACTION_FAILED", "The paper was rejected: no questions were imported.",
-                               upload_id=str(upload.upload_id), errors=result.errors[:200])
+        summary = validation_summary(result)
+        message = ("The paper was rejected as a whole: more than five questions failed validation. Correct the files and upload them again."
+                   if summary["threshold_exceeded"] else
+                   "The paper was rejected: the files cannot be imported reliably. Correct the problems below and upload again."
+                   if summary["critical"] else
+                   f"The paper was rejected: {summary['failed_questions']} question(s) need correcting. Nothing was imported; fix them and upload again.")
+        raise api_error_detail(422, "EXTRACTION_FAILED", message, upload_id=str(upload.upload_id), errors=result.errors[:200], summary=summary)
 
     content_hash = _hash_questions([(q.stem, *q.options.values(), q.correct, q.marks, q.negative) for q in result.questions])
     dup = db.scalar(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
@@ -1094,6 +1099,17 @@ def owns_for_versioning(p: Principal, q: Question, paper: Paper) -> bool:
     (same platform/provider and branch) and the caller may manage `q` itself (teachers: their own questions)."""
     same_scope = (q.scope, q.provider_id, q.branch_id) == (paper.scope, paper.provider_id, paper.branch_id)
     return same_scope and _can_edit_question(p, q)
+
+
+def validation_summary(result) -> dict:
+    """Counts for the validation report. A paper is imported only when NOTHING failed (all or nothing); `threshold_exceeded`
+    (more than five failed questions) and `critical` (file-level or answer-key problems that make the question set unreliable)
+    explain why it was rejected as a whole."""
+    failed = {e.get("question") for e in result.errors if e.get("question")}
+    detected = max(result.detected, len(failed))
+    return {"questions_detected": detected, "questions_failed": len(failed), "failed_questions": len(failed),
+            "questions_valid": max(detected - len(failed), 0), "threshold_exceeded": len(failed) > 5,
+            "critical": any(not e.get("question") for e in result.errors), "error_count": len(result.errors)}
 
 
 def _transition(db: Session, p: Principal, pv_id: UUID, perm: str, expect: str, to: str, kind: str, reason: str | None):

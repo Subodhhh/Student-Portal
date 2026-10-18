@@ -40,7 +40,8 @@ def frontend_calls() -> set[tuple[str, str, str]]:
             if text[max(0, m.start() - 12):m.start()].endswith("startsWith("):
                 continue                                    # a prefix comparison, not a request
             tail = text[m.end():m.end() + 200]
-            method = METHOD.search(tail[:tail.find("})") if "})" in tail else 120])
+            # options belong to THIS call only when they follow the path directly: `api(path, { method: ... })`
+            method = METHOD.search(tail[:tail.find("})") if "})" in tail else 120]) if tail.lstrip().startswith(",") else None
             verbs = VERBS.findall(method.group(1)) if method else []
             before = text[:m.start()].rstrip()
             if len(verbs) == 2 and before.endswith("?"):            # `cond ? PATH_A : PATH_B, { method: cond ? A : B }`: pair by branch

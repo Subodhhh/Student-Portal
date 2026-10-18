@@ -492,7 +492,7 @@ def _exam(db: Session, exam_id: UUID) -> Exam:
 
 def is_institute_wide(db: Session, e: Exam) -> bool:
     plan = db.get(ExamPlan, e.plan_id)
-    return bool(plan and plan.audience_type == "INSTITUTE")
+    return bool(plan and plan.audience_type in ("INSTITUTE", "TARGETED"))   # TARGETED: Create Test, may span the provider's branches
 
 
 def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | None:

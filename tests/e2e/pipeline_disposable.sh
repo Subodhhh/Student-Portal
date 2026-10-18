@@ -7,7 +7,7 @@
 #   tests/e2e/pipeline_disposable.sh
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"; PY="$ROOT/.venv/bin/python"; export PATH="$ROOT/.venv/bin:$PATH"
-PGPORT=55433; RPORT=56380; DB=pipeline_verify; KEY="pipeline-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+PGPORT="${PIPELINE_PGPORT:-55433}"; RPORT="${PIPELINE_RPORT:-56380}"; DB=pipeline_verify; KEY="pipeline-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 PG="postgresql://postgres@127.0.0.1:$PGPORT"; SA="postgresql+psycopg://postgres@127.0.0.1:$PGPORT"
 WORK="$(mktemp -d)"; PIDS=()
 cleanup() {
@@ -60,4 +60,5 @@ for svc in "${!PORTS[@]}"; do
 done
 echo "student services up: ${!PORTS[*]}"
 
-PIPELINE_DB="$SA/$DB" PIPELINE_KEY="$KEY" PIPELINE_AUTH_LOG="$WORK/student-authentication-service.log" "$PY" "$ROOT/tests/e2e/pipeline_disposable.py"
+# driver: pipeline_disposable.py (default) or another driver in tests/e2e, e.g. create_test_disposable.py
+PIPELINE_DB="$SA/$DB" PIPELINE_KEY="$KEY" PIPELINE_AUTH_LOG="$WORK/student-authentication-service.log" "$PY" "$ROOT/tests/e2e/${1:-pipeline_disposable.py}"

@@ -23,7 +23,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 REQUIRED = ["question", "option_a", "option_b", "option_c", "option_d", "correct", "marks", "negative_marks"]
-OPTIONAL = ["explanation", "topic"]
+OPTIONAL = ["explanation", "topic", "question_id"]
+# Header spellings accepted for the same column (e.g. a paper exported with "correct_option").
+ALIASES = {"correct_option": "correct", "answer": "correct", "question_text": "question", "qid": "question_id", "id": "question_id"}
 MAX_CELL = 5000
 
 
@@ -43,6 +45,7 @@ class ExtractedQuestion:
 class ExtractionResult:
     questions: list[ExtractedQuestion] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
+    detected: int = 0          # question rows found (valid or not): the basis of the validation summary
 
     @property
     def ok(self) -> bool:
@@ -67,13 +70,30 @@ def _dec(value: str) -> Decimal | None:
 # printed in the paper, a question without a key answer, or a key answer for a question that is not in the paper all reject the WHOLE
 # paper, like every other validation problem. Questions are matched by their number in the paper (1, 2, 3, ... in document order).
 
-_ANSWER_KEY: ContextVar[dict[int, str] | None] = ContextVar("answer_key", default=None)
+@dataclass
+class AnswerKey:
+    """A parsed separate answer key: answers by question NUMBER (document order) or by explicit QUESTION ID, never both.
+    Each entry is (answer, explanation or None)."""
+    by_number: dict[int, tuple[str, str | None]] = field(default_factory=dict)
+    by_id: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+
+    @property
+    def keyed_by_id(self) -> bool:
+        return bool(self.by_id)
+
+
+_ANSWER_KEY: ContextVar[AnswerKey | None] = ContextVar("answer_key", default=None)
 _KEY_LINE = re.compile(r"^\s*(?:q(?:uestion)?\s*\.?\s*)?(\d{1,4})\s*(?:[.):,;\-\t]|\s)\s*\(?([A-Za-z])\)?\s*[.,;]?\s*$")
-_KEY_HEADER = re.compile(r"^\s*(q(uestion)?|no\.?|number|#|sr)\b.*(answer|ans|key|correct)", re.IGNORECASE)
+_ID_COLS = {"question_id", "qid", "id"}
+_NUM_COLS = {"question", "question_no", "question_number", "no", "no.", "number", "q", "#", "sr", "sr_no"}
+_ANS_COLS = {"correct_option", "correct", "answer", "ans", "key", "correct_answer"}
+_ID_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-/]{0,49}$")
 
 
 @contextmanager
-def answer_key(mapping: dict[int, str] | None) -> Iterator[None]:
+def answer_key(mapping: "AnswerKey | dict[int, str] | None") -> Iterator[None]:
+    if isinstance(mapping, dict):           # older callers: {number: answer}
+        mapping = AnswerKey(by_number={k: (v, None) for k, v in mapping.items()})
     token = _ANSWER_KEY.set(mapping)
     try:
         yield
@@ -82,69 +102,143 @@ def answer_key(mapping: dict[int, str] | None) -> Iterator[None]:
 
 
 def required_columns() -> list[str]:
-    """Columns a CSV/XLSX/DOCX table must have; `correct` may be left out when a separate answer key supplies it."""
-    return [c for c in REQUIRED if c != "correct"] if _ANSWER_KEY.get() is not None else REQUIRED
+    """Columns a CSV/XLSX/DOCX table must have; `correct` may be left out when a separate answer key supplies it, and an answer key
+    that identifies questions by ID needs a `question_id` column in the paper."""
+    key = _ANSWER_KEY.get()
+    if key is None:
+        return REQUIRED
+    cols = [c for c in REQUIRED if c != "correct"]
+    return cols + ["question_id"] if key.keyed_by_id else cols
 
 
-def parse_answer_key(data: bytes, max_questions: int) -> tuple[dict[int, str], list[dict]]:
-    """Answer key as UTF-8 text/CSV, one question per line: `1,B`, `1. B`, `1 - (b)`, `Q1 B`. An optional header line is skipped.
-    Returns (question number -> answer, errors); any error rejects the paper it belongs to."""
-    errors: list[dict] = []
+def parse_answer_key(data: bytes, max_questions: int) -> tuple[AnswerKey, list[dict]]:
+    """Separate answer key (UTF-8 CSV/text), parsed with a real CSV reader (quoted fields, commas inside explanations, whitespace).
+
+    Formats:
+      * by question ID:      header `question_id,correct_option[,explanation]` (also `id`/`qid`, `correct`/`answer`) - matched to the
+                             paper's `question_id` column, never by position;
+      * by question number:  header `question,answer[,explanation]` (also `no`, `number`, ...) or no header with lines such as
+                             `1,B`, `1. B`, `1 - (b)`, `Q1 B` - matched to the question's position in the paper.
+    Any unreadable, duplicate or invalid entry is an error; errors reject the paper the key belongs to."""
+    key, errors = AnswerKey(), []
     if b"\x00" in data:
-        return {}, [_err(None, "answer_key", "The answer key must be a text or CSV file.")]
+        return key, [_err(None, "answer_key", "The answer key must be a text or CSV file.")]
     try:
         text = data.decode("utf-8-sig", errors="strict")
     except UnicodeDecodeError:
-        return {}, [_err(None, "answer_key", "The answer key must be UTF-8 encoded text.")]
-    out: dict[int, str] = {}
-    for line_no, line in enumerate(text.splitlines(), start=1):
-        if not line.strip():
-            continue
-        if line_no == 1 and _KEY_HEADER.match(line):
-            continue
-        m = _KEY_LINE.match(line.replace('"', ""))
-        if not m:
-            errors.append(_err(line_no, "answer_key", f"Unreadable answer-key line: {line.strip()[:60]!r}. Use 'number,answer', e.g. 1,B."))
-            continue
-        number, answer = int(m.group(1)), m.group(2).upper()
-        if number < 1 or number > max_questions:
-            errors.append(_err(line_no, "answer_key", f"Question number {number} is out of range."))
-        elif answer not in {"A", "B", "C", "D"}:
-            errors.append(_err(line_no, "answer_key", f"Answer for question {number} must be A, B, C or D."))
-        elif number in out:
-            errors.append(_err(line_no, "answer_key", f"Question {number} appears twice in the answer key."))
-        else:
-            out[number] = answer
-    if not out and not errors:
+        return key, [_err(None, "answer_key", "The answer key must be UTF-8 encoded text.")]
+    csv.field_size_limit(MAX_CELL * 2)
+    try:
+        rows = [r for r in csv.reader(io.StringIO(text, newline=""))]
+    except csv.Error as exc:
+        return key, [_err(None, "answer_key", f"Unreadable answer key: {exc}")]
+    rows = [(n, [c.strip() for c in r]) for n, r in enumerate(rows, start=1) if any(c.strip() for c in r)]
+    if not rows:
+        return key, [_err(None, "answer_key", "The answer key is empty.")]
+    head = [c.lower().replace(" ", "_") for c in rows[0][1]]
+    id_col = next((i for i, c in enumerate(head) if c in _ID_COLS), None)
+    num_col = next((i for i, c in enumerate(head) if c in _NUM_COLS), None)
+    ans_col = next((i for i, c in enumerate(head) if c in _ANS_COLS), None)
+    exp_col = next((i for i, c in enumerate(head) if c in {"explanation", "solution", "explain"}), None)
+    if ans_col is not None and (id_col is not None or num_col is not None):       # a header row: column-based key
+        by_id = id_col is not None
+        col = id_col if by_id else num_col
+        for line_no, r in rows[1:]:
+            if not by_id and len(r) == 1 and (m := _KEY_LINE.match(r[0])):     # `2. b` style line under a numbered header
+                r = [""] * len(head)
+                r[col], r[ans_col] = m.group(1), m.group(2)
+            ref = r[col] if col < len(r) else ""
+            answer = (r[ans_col] if ans_col < len(r) else "").upper().strip("() .")
+            expl = (r[exp_col] if exp_col is not None and exp_col < len(r) else "") or None
+            label = ref or f"line {line_no}"
+            if len(r) > len(head):
+                errors.append(_err(line_no, "answer_key", f"Question {label}: the line has more columns than the header (quote explanations that contain commas)."))
+                continue
+            if by_id:
+                if not _ID_VALUE.match(ref):
+                    errors.append(_err(line_no, "answer_key", f"Line {line_no}: question ID {ref!r} is missing or not a valid ID."))
+                    continue
+                target, ident = key.by_id, ref
+            else:
+                if not ref.isdigit() or not 1 <= int(ref) <= max_questions:
+                    errors.append(_err(line_no, "answer_key", f"Line {line_no}: question number {ref!r} is missing or out of range."))
+                    continue
+                target, ident = key.by_number, int(ref)
+            if answer not in {"A", "B", "C", "D"}:
+                errors.append(_err(line_no, "answer_key", f"Question {label}: answer {answer or '(empty)'!r} must be A, B, C or D."))
+            elif ident in target:
+                errors.append(_err(line_no, "answer_key", f"Question {label} appears twice in the answer key."))
+            else:
+                target[ident] = (answer, expl)
+    else:                                                                            # no header: `number,answer` lines
+        for line_no, r in rows:
+            m = _KEY_LINE.match(",".join(r[:2]) if len(r) >= 2 else r[0])
+            if not m:
+                if line_no == rows[0][0] and re.search(r"answer|ans|key|correct", " ".join(r), re.I):
+                    continue                                                         # an unrecognised header line
+                errors.append(_err(line_no, "answer_key", f"Unreadable answer-key line: {','.join(r)[:60]!r}. Use 'number,answer', e.g. 1,B, "
+                                                          "or a header 'question_id,correct_option'."))
+                continue
+            number, answer = int(m.group(1)), m.group(2).upper()
+            expl = (r[2] if len(r) > 2 else "") or None
+            if number < 1 or number > max_questions:
+                errors.append(_err(line_no, "answer_key", f"Question number {number} is out of range."))
+            elif answer not in {"A", "B", "C", "D"}:
+                errors.append(_err(line_no, "answer_key", f"Answer for question {number} must be A, B, C or D."))
+            elif number in key.by_number:
+                errors.append(_err(line_no, "answer_key", f"Question {number} appears twice in the answer key."))
+            else:
+                key.by_number[number] = (answer, expl)
+    if not key.by_number and not key.by_id and not errors:
         errors.append(_err(None, "answer_key", "The answer key is empty."))
-    return out, errors
+    return key, errors
 
 
 def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
     """The single validation path for every input format: `rows` yields (row_number, dict-of-stripped-text) or
     (row_number, None) for a structurally broken row. Any problem anywhere rejects the whole paper (see callers)."""
     seen: dict[str, int] = {}
-    answers = _ANSWER_KEY.get()
-    qno = 0   # question number in document order (matches the answer key)
+    ids: dict[str, int] = {}
+    used_ids: set[str] = set()
+    akey = _ANSWER_KEY.get()
+    qno = 0   # question number in document order (matches a numbered answer key)
     for idx, row in rows:
         if idx - 1 > max_questions:
             res.errors.append(_err(idx, None, f"Too many questions (limit {max_questions})."))
             break
         if row is None:
             qno += 1
-            res.errors.append(_err(idx, None, "Row has the wrong number of columns."))
+            res.detected = qno
+            res.errors.append({**_err(idx, None, "Row has the wrong number of columns."), "question": str(qno)})
             continue
         if not any(row.values()):
             continue  # blank line: ignorable, never a question
         qno += 1
+        res.detected = qno
         problems = []
-        if answers is not None:
-            given, keyed = (row.get("correct") or "").strip().upper(), answers.get(qno)
-            if keyed is None:
-                problems.append(("correct", f"The answer key has no answer for question {qno}."))
-            elif given and given != keyed:
-                problems.append(("correct", f"Answer mismatch for question {qno}: the paper says {given}, the answer key says {keyed}."))
-            row = {**row, "correct": keyed or given}
+        qid = (row.get("question_id") or "").strip()
+        label = qid or str(qno)
+        if qid:
+            if qid in ids:
+                problems.append(("question_id", f"The question ID {qid} appears more than once (also row {ids[qid]})."))
+            ids.setdefault(qid, idx)
+        if akey is not None:
+            given = (row.get("correct") or "").strip().upper()
+            if akey.keyed_by_id:
+                entry = akey.by_id.get(qid) if qid else None
+                if not qid:
+                    problems.append(("question_id", "The question has no question_id, so the answer key cannot be matched to it."))
+                elif entry is None:
+                    problems.append(("correct", f"The answer key has no answer for question {qid}."))
+                used_ids.add(qid)
+            else:
+                entry = akey.by_number.get(qno)
+                if entry is None:
+                    problems.append(("correct", f"The answer key has no answer for question {qno}."))
+            keyed, key_expl = entry if entry else (None, None)
+            if keyed and given and given != keyed:
+                problems.append(("correct", f"Answer mismatch for question {label}: the paper says {given}, the answer key says {keyed}."))
+            row = {**row, "correct": keyed or given, "explanation": row.get("explanation") or key_expl or ""}
         if any(len(v) > MAX_CELL for v in row.values()):
             problems.append(("question", f"A cell exceeds {MAX_CELL} characters."))
         if not row["question"]:
@@ -168,12 +262,17 @@ def _validate_rows(res: ExtractionResult, rows, max_questions: int) -> None:
             problems.append(("question", f"Duplicate of row {seen[norm]}."))
         seen.setdefault(norm, idx)
         if problems:
-            res.errors.extend(_err(idx, f, m) for f, m in problems)
+            res.errors.extend({**_err(idx, f, m), "question": label} for f, m in problems)
             continue
         res.questions.append(ExtractedQuestion(idx, row["question"], opts, correct, marks, neg,
                                                row.get("explanation") or None, row.get("topic") or None))
-    if answers is not None:
-        extra = sorted(n for n in answers if n > qno)
+    if akey is not None and akey.keyed_by_id:
+        extra = sorted(set(akey.by_id) - used_ids)
+        if extra:
+            shown = ", ".join(extra[:10]) + (" ..." if len(extra) > 10 else "")
+            res.errors.append(_err(None, "answer_key", f"The answer key has answers for question IDs that are not in the paper: {shown}."))
+    elif akey is not None:
+        extra = sorted(n for n in akey.by_number if n > qno)
         if extra:
             shown = ", ".join(map(str, extra[:10])) + (" ..." if len(extra) > 10 else "")
             res.errors.append(_err(None, "answer_key", f"The answer key has answers for questions that are not in the paper: {shown}."))
@@ -207,7 +306,7 @@ def extract_csv(data: bytes, max_questions: int) -> ExtractionResult:
     csv.field_size_limit(MAX_CELL * 2)
     try:
         reader = csv.DictReader(io.StringIO(text, newline=""))
-        header = [h.strip().lower() for h in (reader.fieldnames or [])]
+        header = [ALIASES.get(h.strip().lower(), h.strip().lower()) for h in (reader.fieldnames or [])]
     except csv.Error as exc:
         res.errors.append(_err(None, None, f"Unreadable CSV: {exc}"))
         return res
