@@ -1,5 +1,5 @@
 """Test creation: audiences (batches, branch, institute, students), drafts, exam-level marking frozen into the exam and applied at
-delivery, and Global Daily Tests (platform-published, provider-scheduled, never modified by a provider)."""
+delivery, and Global Tests (platform-published, provider-scheduled, never modified by a provider)."""
 from datetime import timedelta
 from uuid import UUID
 
@@ -150,7 +150,7 @@ def test_the_exam_settings_cannot_be_rewritten(db_factory, client, world, tc, lo
     assert "settings" in clause
 
 
-# ------------------------------------------------------------------ Global Daily Tests
+# ------------------------------------------------------------------ Global Tests
 
 @pytest.fixture()
 def gtest(client, world, tc, login, db_factory):

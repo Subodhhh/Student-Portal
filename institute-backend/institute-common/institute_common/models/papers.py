@@ -117,7 +117,7 @@ class PaperUpload(Base):
 class Paper(Base):
     __tablename__ = "papers"
     __table_args__ = (
-        # GLOBAL papers are platform content built from global questions (used by Global Daily Tests and, read-only, by providers).
+        # GLOBAL papers are platform content built from global questions (used by Global Tests and, read-only, by providers).
         CheckConstraint("(scope = 'GLOBAL' AND provider_id IS NULL AND branch_id IS NULL) OR "
                         "(scope = 'PROVIDER' AND provider_id IS NOT NULL AND branch_id IS NOT NULL)", name="papers_scope_check"),
     )
@@ -195,3 +195,41 @@ class PaperShare(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
     granted_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GlobalPaperCopy(Base):
+    """Idempotency record for an authorized provider-to-platform paper copy."""
+
+    __tablename__ = "global_paper_copies"
+    __table_args__ = (
+        UniqueConstraint(
+            "contribution_id",
+            name="uq_global_paper_copy_contribution",
+        ),
+    )
+
+    copy_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    contribution_id: Mapped[UUID] = mapped_column(nullable=False)
+    source_paper_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("paper_versions.paper_version_id"),
+        nullable=False,
+    )
+    global_paper_id: Mapped[UUID] = mapped_column(
+        ForeignKey("papers.paper_id"),
+        nullable=False,
+    )
+    global_paper_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("paper_versions.paper_version_id"),
+        nullable=False,
+    )
+    authorization_reference: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+    copied_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        nullable=False,
+        default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )

@@ -28,12 +28,12 @@ describe("Exam Plans", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ status: "ACTIVE" }));
   });
 
-  it("lets providers schedule published Global Daily Tests but not manage them", async () => {
+  it("lets providers schedule published Global Tests but not manage them", async () => {
     stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["examplan.manage"]), "/api/v1/global-tests": page([test("PUBLISHED")]) });
     renderApp("/exam-plans?tab=global");
     expect(await screen.findByText("Daily Physics #7")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Schedule" }).getAttribute("href")).toBe("/exam-plans/new?global=gt1");
-    expect(screen.queryByRole("button", { name: /New Global Daily Test|Publish|Withdraw/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Schedule" }).getAttribute("href")).toBe("/tests/global/gt1/schedule");
+    expect(screen.queryByRole("button", { name: /New Global Test|Publish|Withdraw/ })).toBeNull();
   });
 
   it("lets the platform publish and withdraw a test, with a reason and an explanation of the impact", async () => {
@@ -46,7 +46,7 @@ describe("Exam Plans", () => {
     fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: "Wrong key in Q3" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Withdraw" }));
     await waitFor(() => expect(calls.find((c) => c.path.endsWith("/withdraw"))?.body).toEqual({ reason: "Wrong key in Q3" }));
-    expect(screen.getByRole("button", { name: "Derive copy" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create new version" })).toBeTruthy();
   });
 });
 

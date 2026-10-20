@@ -82,11 +82,16 @@ describe("test creation wizard", () => {
     expect(calls.some((c) => c.path === "/api/v1/exam-plans/plan1/generate")).toBe(true);
   });
 
-  it("schedules a Global Daily Test without a question-source step and without changing its papers, duration or marking", async () => {
+  it("schedules a Global Test from its own Global Tests page, without changing its papers, duration or marking", async () => {
     const calls = stubApi(routes());
-    renderApp("/exam-plans/new?global=gt1");
+    renderApp("/tests/global/gt1/schedule");
     expect(await screen.findByText("Who takes this test?")).toBeTruthy();
-    expect(within(screen.getByRole("list", { name: "Steps" })).queryByText("Question source")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Global Tests" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Schedule Global Test" })).toBeTruthy();
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Global Tests" }).getAttribute("href")).toBe("/tests/global");
+    const steps = within(screen.getByRole("list", { name: "Steps" }));
+    expect(steps.queryByText("Question source")).toBeNull();
+    expect(steps.queryByText("Choose test")).toBeNull();
     fireEvent.click(screen.getByLabelText(/The whole institute/));                 // provider-level user
     await next();
     const duration = await screen.findByLabelText(/Duration/) as HTMLInputElement;
@@ -94,7 +99,7 @@ describe("test creation wizard", () => {
     expect((screen.getByLabelText("Test name") as HTMLInputElement).value).toBe("Daily Physics #7");
     expect((screen.getByLabelText("Marks") as HTMLSelectElement).disabled).toBe(true);
     await next();
-    expect(await screen.findByText(/Global Daily Test “Daily Physics #7”/)).toBeTruthy();
+    expect(await screen.findByText(/Global Test “Daily Physics #7”/)).toBeTruthy();
     expect(screen.getByText("Total marks").nextElementSibling?.textContent).toBe("80");
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
     expect(await screen.findByText("Test scheduled")).toBeTruthy();
@@ -104,6 +109,22 @@ describe("test creation wizard", () => {
     expect(sent).not.toHaveProperty("marking_mode");
     expect(sent).not.toHaveProperty("slots");
     expect(calls.some((c) => c.path === "/api/v1/papers" && c.method === "POST")).toBe(false);
+    expect(screen.getByRole("link", { name: "Back to the Global Test" }).getAttribute("href")).toBe("/tests/global/gt1");
+    expect(screen.queryByRole("button", { name: "Save as draft" })).toBeNull();
+  });
+
+  it("no longer offers Global Tests in the generic Exam Plans wizard, and sends old links to the Global Tests page", async () => {
+    stubApi(routes());
+    renderApp("/exam-plans/new");
+    expect(await screen.findByText("What do you want to conduct?")).toBeTruthy();
+    expect(screen.queryByText("Global Test", { exact: true })).toBeNull();
+    expect(screen.getByRole("link", { name: "Test → Global Tests" }).getAttribute("href")).toBe("/tests/global");
+  });
+
+  it("redirects an old Exam Plans Global Test link to the dedicated schedule page", async () => {
+    stubApi(routes());
+    renderApp("/exam-plans/new?global=gt1");
+    expect(await screen.findByRole("heading", { level: 2, name: "Schedule Global Test" })).toBeTruthy();
   });
 
   it("saves a draft that generates nothing, and never approves papers for a draft", async () => {

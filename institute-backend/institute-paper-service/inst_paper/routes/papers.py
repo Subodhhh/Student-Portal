@@ -147,7 +147,7 @@ class BankQuestionOut(BaseModel):
     latest: QuestionVersionOut
     usage_count: int
     can_edit: bool
-    reserved_for_global_test: bool = False   # part of a Global Daily Test: providers cannot reuse it in their own papers
+    reserved_for_global_test: bool = False   # part of a Global Test: providers cannot reuse it in their own papers
 
 
 class PaperVersionOut(BaseModel):
@@ -451,8 +451,8 @@ def _can_edit_question(p: Principal, q: Question) -> bool:
     return p.can("question.manage", exclude_roles=(Role.TEACHER,), **kw) or (p.can("question.manage", **kw) and q.owner_staff_id == p.staff_id)
 
 
-# ---------------------------------------------------------------- Global Daily Test answer protection
-# Platform content that belongs to a Global Daily Test (any version of it appears in a global_test_sections paper version) is RESERVED:
+# ---------------------------------------------------------------- Global Test answer protection
+# Platform content that belongs to a Global Test (any version of it appears in a global_test_sections paper version) is RESERVED:
 #   * platform roles see everything;
 #   * a provider's staff see its questions but not the correct answers or explanations, until the review point for their provider:
 #     an exam of their provider that used that paper version and whose window has closed (the moment students may review answers);
@@ -871,7 +871,7 @@ def _check_build(body: PaperBuildIn, p: Principal, db: Session):
         if not usable:
             problems.append({"position": pos, "message": "Question not found."})   # same answer as missing: no cross-provider probing
         elif body.scope == "PROVIDER" and qq.question_id in reserved:
-            problems.append({"position": pos, "message": "This platform question belongs to a Global Daily Test and cannot be reused."})
+            problems.append({"position": pos, "message": "This platform question belongs to a Global Test and cannot be reused."})
         elif qq.status != "ACTIVE":
             problems.append({"position": pos, "message": "Question is archived."})
         elif qq.subject_id != body.subject_id:
@@ -1153,13 +1153,13 @@ def withdraw(pv_id: UUID, body: ReasonIn, p: Principal = Depends(get_principal),
 
 
 def _refuse_if_in_published_test(db: Session, pv_id: UUID) -> None:
-    """A paper version that is a section of a PUBLISHED Global Daily Test stays usable: withdraw the test first (its scheduled
+    """A paper version that is a section of a PUBLISHED Global Test stays usable: withdraw the test first (its scheduled
     plans then stop), so a published test never points at a withdrawn paper."""
     from institute_common.models.exams import GlobalTest, GlobalTestSection
     names = db.scalars(select(GlobalTest.name).join(GlobalTestSection, GlobalTestSection.test_id == GlobalTest.test_id)
                        .where(GlobalTestSection.paper_version_id == pv_id, GlobalTest.status == "PUBLISHED")).all()
     if names:
-        raise api_error_detail(409, "PAPER_IN_GLOBAL_TEST", "This paper version is part of a published Global Daily Test. "
+        raise api_error_detail(409, "PAPER_IN_GLOBAL_TEST", "This paper version is part of a published Global Test. "
                                "Withdraw the test first.", tests=sorted(names))
 
 

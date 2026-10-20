@@ -1,4 +1,4 @@
-"""Global Daily Tests: tests the platform publishes once and providers schedule for their own students.
+"""Global Tests: tests the platform publishes once and providers schedule for their own students.
 
 Lifecycle DRAFT -> PUBLISHED -> WITHDRAWN, managed only by the platform roles (Super Admin / Admin). A test is a list of sections, each
 an exact approved/published version of a GLOBAL (platform) paper. Once published nothing about the test changes: providers schedule it
@@ -27,7 +27,7 @@ from inst_exam.routes.exams import (
     AudienceIn, PlanOut, _branch, _plan_out, api_error_detail, require_plan_scope, validate_audience, write_audience,
 )
 
-router = APIRouter(prefix="/api/v1", tags=["Global Daily Tests"])
+router = APIRouter(prefix="/api/v1", tags=["Global Tests"])
 
 USABLE = {"APPROVED", "PUBLISHED"}
 
@@ -106,7 +106,7 @@ def _is_platform(p: Principal) -> bool:
 def _require_platform(db: Session, p: Principal) -> None:
     if not _is_platform(p):
         audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": "global_test.manage"})
-        raise api_error(403, "FORBIDDEN", "Only platform administrators manage Global Daily Tests.")
+        raise api_error(403, "FORBIDDEN", "Only platform administrators manage Global Tests.")
 
 
 def _test(db: Session, p: Principal, test_id: UUID) -> GlobalTest:
@@ -265,13 +265,13 @@ def derive_global_test(test_id: UUID, p: Principal = Depends(get_principal), db:
 
 @router.post("/global-tests/{test_id}/schedule", response_model=PlanOut, status_code=201)
 def schedule_global_test(test_id: UUID, body: ScheduleIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """A provider schedules a published Global Daily Test for its own audience. The resulting plan names the test's exact paper versions
+    """A provider schedules a published Global Test for its own audience. The resulting plan names the test's exact paper versions
     and uses its duration and per-question marking; those can never be changed on the plan, so the published test is never modified."""
     br = _branch(db, body.branch_id)
     require_plan_scope(db, p, br, body.audience_type)
     t = _test(db, p, test_id)
     if t.status != "PUBLISHED":
-        raise api_error(409, "NOT_PUBLISHED", "Only a published Global Daily Test can be scheduled.")
+        raise api_error(409, "NOT_PUBLISHED", "Only a published Global Test can be scheduled.")
     sections = db.scalars(select(GlobalTestSection).where(GlobalTestSection.test_id == test_id).order_by(GlobalTestSection.position)).all()
     for s in sections:
         if not db.scalar(select(ProviderSubject).where(ProviderSubject.provider_id == br.provider_id, ProviderSubject.subject_id == s.subject_id)):

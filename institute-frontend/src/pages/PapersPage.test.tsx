@@ -31,7 +31,7 @@ describe("paper actions follow who may change the paper", () => {
     }
   });
 
-  it("explains withheld Global Daily Test answers", async () => {
+  it("explains withheld Global Test answers", async () => {
     open(me("TEACHER", PERMS), "GLOBAL", "PUBLISHED");
     expect(await screen.findByText(/hidden until your students' review window opens/)).toBeTruthy();
   });

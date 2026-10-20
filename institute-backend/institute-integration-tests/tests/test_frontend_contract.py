@@ -17,7 +17,9 @@ METHOD = re.compile(r"""method:\s*([^,}]+)""")
 VERBS = re.compile(r"""["'](GET|POST|PUT|PATCH|DELETE)["']""")
 # Action segments chosen at run time; the values are the union declared next to the call (kept in sync by a test below).
 DYNAMIC = {("components/staff.tsx", "confirm.kind"): ["deactivate", "reactivate"],   # "remove" uses its own DELETE call
-           ("components/globalTests.tsx", "confirm.kind"): ["publish", "withdraw"]}
+           ("components/globalTests.tsx", "confirm.kind"): ["publish", "withdraw"],
+           ("pages/GlobalTestsPage.tsx", "kind"): ["approve", "reject", "withdraw"],
+           ("pages/GlobalTestsPage.tsx", "change"): ["publish", "withdraw"]}
 
 
 def _interpolations(path: str, src: str = "") -> list[str]:

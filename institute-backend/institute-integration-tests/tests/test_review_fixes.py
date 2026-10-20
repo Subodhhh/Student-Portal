@@ -107,7 +107,7 @@ def test_concurrent_manual_and_scheduled_generation_create_one_exam(client, worl
     assert len(set(results)) == 1 and len(exams_of(db_factory, plan["plan_id"])) == 1
 
 
-# ------------------------------------------------------------------ 4. withdrawn Global Daily Tests
+# ------------------------------------------------------------------ 4. withdrawn Global Tests
 
 def schedule(client, world, tc, gtest, h, branch="p1b1", hours=2):  # noqa: F811
     start = utcnow() + timedelta(hours=hours)
@@ -226,11 +226,11 @@ def test_a_teacher_correcting_another_teachers_question_makes_a_copy(client, wor
     assert _versions(db_factory, theirs) == [(1, "Teacher two question?")]
 
 
-# ------------------------------------------------------------------ 3 + 5. Global Daily Test answers and papers are reserved
+# ------------------------------------------------------------------ 3 + 5. Global Test answers and papers are reserved
 
 @pytest.fixture()
 def gdt(client, world, bank, login):  # noqa: F811
-    """A published Global Daily Test built entirely through the API from platform questions."""
+    """A published Global Test built entirely through the API from platform questions."""
     h = login(bank["sa"])
     qids = [create(client, login, bank["sa"], q_body(bank["phy"], scope="GLOBAL", stem=f"Daily question {i}?")) for i in range(2)]
     h = login(bank["sa"])
@@ -299,7 +299,7 @@ def test_answers_are_released_to_a_provider_once_its_exam_window_has_closed(clie
 def test_providers_cannot_build_reserved_questions_into_their_papers(client, world, bank, gdt, login):  # noqa: F811
     r = client.post(f"{API}/papers", json={"branch_id": str(world["p1b1"]), "subject_id": str(bank["phy"]), "title": "Copy", "question_ids": gdt["qids"]},
                     headers=login(bank["pa1"]))
-    assert r.status_code == 422 and "Global Daily Test" in r.json()["detail"]["errors"][0]["message"]
+    assert r.status_code == 422 and "Global Test" in r.json()["detail"]["errors"][0]["message"]
     item = next(x for x in client.get(f"{API}/questions?scope=GLOBAL", headers=login(bank["pa1"])).json()["items"] if x["question_id"] == gdt["qids"][0])
     assert item["reserved_for_global_test"] is True
 

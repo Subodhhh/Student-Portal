@@ -18,8 +18,9 @@ describe("navigation", () => {
       "Students & Enrollments",
       "Subjects",
       "Question Bank & Papers",
+      "Global Tests",
+      "Scheduled Tests",
       "Exam Plans",
-      "Composite Tests",
       "Exams & Results",
       "Audit Log",
       "Platform Settings",
@@ -60,10 +61,14 @@ describe("navigation", () => {
     expect(result).not.toContain("Audit Log");
   });
 
-  it("offers composite tests only to the people who decide for a provider", () => {
-    expect(labels(["examplan.manage"], "PROVIDER_ADMIN")).toContain("Composite Tests");
-    expect(labels(["paper.read", "paper.publish", "exam.read"], "TEACHER")).not.toContain("Composite Tests");
-    expect(labels(["exam.schedule", "exam.read"], "BRANCH_ADMIN")).not.toContain("Composite Tests");
+  it("lists the three test types and no longer offers Composite Tests", () => {
+    const testItems = (perms: string[], role: Parameters<typeof visibleNav>[1]) => visibleNav(perms, role).filter((i) => i.section === "Test").map((i) => i.label);
+    expect(testItems(["test.create", "examplan.manage", "paper.publish", "exam.read"], "PROVIDER_ADMIN")).toEqual(["Daily Test", "Weekly Test", "Global Tests", "Scheduled Tests"]);
+    expect(testItems(["test.create", "paper.publish", "exam.read"], "BRANCH_ADMIN")).toEqual(["Daily Test", "Weekly Test", "Global Tests", "Scheduled Tests"]);
+    expect(testItems(["paper.read", "paper.publish", "exam.read"], "TEACHER")).toEqual(["Global Tests", "Scheduled Tests"]);   // no test creation
+    for (const role of ["SUPER_ADMIN", "PROVIDER_ADMIN", "BRANCH_ADMIN", "TEACHER"] as const) {
+      expect(labels(["examplan.manage", "test.create", "paper.publish", "exam.read"], role)).not.toContain("Composite Tests");
+    }
     expect(labels(["settings.provider"], "PROVIDER_ADMIN")).not.toContain("Service Health");
   });
 

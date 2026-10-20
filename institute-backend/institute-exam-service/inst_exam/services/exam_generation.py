@@ -13,7 +13,7 @@ Rules implemented here (all unit-tested):
     request or a concurrent scheduler run returns the same exam and never duplicates exams, assignments or notifications;
     runs recorded under the older "manual:..." / "scheduled:..." keys are recognised for the same start;
   * the audience (batches, a branch, the whole institute or listed students) is resolved from CURRENT active enrollments and
-    batch memberships at generation time; each student is assigned once, and a student already holding the same Global Daily
+    batch memberships at generation time; each student is assigned once, and a student already holding the same Global
     Test for the same start time (from another plan of the provider) is not assigned it again;
   * the configuration the exam is generated with (marking, fixed policies, audience, source test) is frozen into
     exam_versions.settings next to the manifest, so changing the plan later never changes an existing exam.
@@ -88,9 +88,9 @@ def authorized_source(db: Session, plan_provider_id: UUID, paper: Paper) -> bool
 
 
 def may_use_platform_paper(db: Session, plan_global_test_id: UUID | None, paper: Paper, version_id: UUID | None) -> bool:
-    """A platform paper that belongs to a Global Daily Test (any of its versions is a test section) is scheduled only through that
+    """A platform paper that belongs to a Global Test (any of its versions is a test section) is scheduled only through that
     test's own plan, with exactly the section's version; an ordinary plan cannot reuse it with other marking or duration.
-    Platform papers that are in no Global Daily Test are freely usable."""
+    Platform papers that are in no Global Test are freely usable."""
     if paper.scope != "GLOBAL":
         return True
     sections = db.execute(select(GlobalTestSection.test_id, GlobalTestSection.paper_version_id)
@@ -130,7 +130,7 @@ def resolve_slots(db: Session, plan: ExamPlan) -> Resolution:
             miss("NOT_AUTHORIZED", "The paper is not shared with this provider.")
             continue
         if not may_use_platform_paper(db, plan.global_test_id, paper, version.paper_version_id):
-            miss("RESERVED_FOR_GLOBAL_TEST", "This platform paper belongs to a Global Daily Test; schedule that test instead.")
+            miss("RESERVED_FOR_GLOBAL_TEST", "This platform paper belongs to a Global Test; schedule that test instead.")
             continue
         out.resolved.append(Resolved(slot, version, paper))
     return out
@@ -209,7 +209,7 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
 
 
 def already_holding_global_test(db: Session, plan: ExamPlan, start: datetime, student_ids: list[str]) -> set[str]:
-    """Students who already have this Global Daily Test for the same start time through ANOTHER plan of the same provider."""
+    """Students who already have this Global Test for the same start time through ANOTHER plan of the same provider."""
     if not plan.global_test_id or not student_ids:
         return set()
     rows = db.execute(
@@ -248,7 +248,7 @@ def prior_run(db: Session, plan_id: UUID, start: datetime) -> ExamGenerationJob 
 
 
 class PlanNotGeneratable(ValueError):
-    """The plan cannot generate (missing, not ACTIVE, or its Global Daily Test is not published)."""
+    """The plan cannot generate (missing, not ACTIVE, or its Global Test is not published)."""
 
 
 def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: UUID | None = None,
@@ -377,12 +377,12 @@ def run_due_plans(db: Session, now: datetime | None = None) -> list[ExamGenerati
         try:
             jobs.append(generate(db, plan.plan_id, now=now))
         except PlanNotGeneratable:
-            continue   # e.g. its Global Daily Test was withdrawn
+            continue   # e.g. its Global Test was withdrawn
     return jobs
 
 
 def require_published_global_test(db: Session, plan: ExamPlan, *, lock: bool = False) -> None:
-    """A plan that schedules a Global Daily Test generates only while that test is PUBLISHED. With `lock`, the test row is locked
+    """A plan that schedules a Global Test generates only while that test is PUBLISHED. With `lock`, the test row is locked
     (SELECT ... FOR UPDATE) for the rest of the transaction, so a concurrent withdrawal is serialised after this generation."""
     if not plan.global_test_id:
         return
@@ -391,4 +391,4 @@ def require_published_global_test(db: Session, plan: ExamPlan, *, lock: bool = F
         stmt = stmt.with_for_update()
     gt = db.scalar(stmt)
     if not gt or gt.status != "PUBLISHED":
-        raise PlanNotGeneratable("The Global Daily Test of this plan is not published (withdrawn or never published).")
+        raise PlanNotGeneratable("The Global Test of this plan is not published (withdrawn or never published).")

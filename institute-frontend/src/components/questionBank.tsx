@@ -79,7 +79,7 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
               ...(selectable ? [{ header: "Select", render: (q: BankQuestion) => (
                 <input type="checkbox" aria-label={`Select question: ${shorten(q.latest.stem, 60)}`} checked={!!selected?.has(q.question_id)}
                   disabled={q.status !== "ACTIVE" || (!platform && !!q.reserved_for_global_test)}
-                  title={!platform && q.reserved_for_global_test ? "Part of a Global Daily Test: schedule that test instead" : undefined} onChange={() => onToggle?.(q)} />
+                  title={!platform && q.reserved_for_global_test ? "Part of a Global Test: schedule that test instead" : undefined} onChange={() => onToggle?.(q)} />
               ) }] : []),
               { header: "Question", render: (q) => <button className="link-btn left" onClick={() => setPreview(q.question_id)}>{shorten(q.latest.stem)}</button> },
               { header: "Subject", render: (q) => sName(q.subject_id) },
@@ -130,7 +130,7 @@ function QuestionPreview({ questionId, subjectName, onClose }: { questionId: str
           </ol>
           <p className="small">Marks: +{Number(v.marks_positive)} for a correct answer, −{Number(v.marks_negative)} for a wrong one, 0 if unanswered.</p>
           {v.explanation && <p className="small muted">Explanation: {v.explanation}</p>}
-          {v.answers_hidden && <Alert kind="info">This platform question is part of a Global Daily Test. Its answer and explanation are hidden until your students' review window opens.</Alert>}
+          {v.answers_hidden && <Alert kind="info">This platform question is part of a Global Test. Its answer and explanation are hidden until your students' review window opens.</Alert>}
           {q.forked_from_question_id && <p className="small muted">Your provider's corrected copy of a question it does not own; the original is unchanged.</p>}
           <p className="small muted">Staff-only view. Students see answers and explanations only at result review, after the exam window closes.</p>
           <h3>Used in papers</h3>

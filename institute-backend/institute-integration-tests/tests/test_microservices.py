@@ -273,7 +273,7 @@ NEW_ROUTES = {
     ("GET", f"{API}/papers/{{paper_id}}/versions"), ("GET", f"{API}/uploads"),
     # student directory
     ("GET", f"{API}/students"), ("GET", f"{API}/students/{{student_id}}"),
-    # test creation: audiences and Global Daily Tests
+    # test creation: audiences and Global Tests
     ("POST", f"{API}/branches/{{branch_id}}/audience-preview"), ("PUT", f"{API}/exam-plans/{{plan_id}}/audience"),
     ("POST", f"{API}/branches/{{branch_id}}/exam-plans/check"), ("POST", f"{API}/papers/check"),
     ("GET", f"{API}/tests"), ("POST", f"{API}/tests"), ("GET", f"{API}/tests/scope"), ("GET", f"{API}/tests/students"),
@@ -282,6 +282,16 @@ NEW_ROUTES = {
     ("PUT", f"{API}/global-tests/{{test_id}}"), ("POST", f"{API}/global-tests/{{test_id}}/publish"),
     ("POST", f"{API}/global-tests/{{test_id}}/withdraw"), ("POST", f"{API}/global-tests/{{test_id}}/derive"),
     ("POST", f"{API}/global-tests/{{test_id}}/schedule"),
+    # three test types: Daily paper choice, Weekly Tests (series) and Global Test contributions
+    ("GET", f"{API}/tests/papers"),
+    ("POST", f"{API}/test-series/preview"), ("POST", f"{API}/test-series"), ("GET", f"{API}/test-series"),
+    ("GET", f"{API}/test-series/{{series_id}}"), ("POST", f"{API}/test-series/{{series_id}}/generate"),
+    ("POST", f"{API}/test-series/{{series_id}}/cancel"),
+    ("GET", f"{API}/global-tests/{{test_id}}/contribution-options"), ("POST", f"{API}/global-tests/{{test_id}}/contributions"),
+    ("GET", f"{API}/global-test-contributions"), ("POST", f"{API}/global-test-contributions/{{contribution_id}}/withdraw"),
+    ("POST", f"{API}/global-test-contributions/{{contribution_id}}/approve"),
+    ("POST", f"{API}/global-test-contributions/{{contribution_id}}/reject"),
+    ("POST", f"{API}/global-test-contributions/{{contribution_id}}/retry-copy"),
 }
 
 
@@ -309,7 +319,7 @@ def test_internal_routes_exist_only_where_designed(client):
     assert internal["identity"] == ["/internal/v1/audit/events", "/internal/v1/introspect"]
     assert internal["academics"] == ["/internal/v1/teaching/retire"]
     assert internal["operations"] == ["/internal/v1/notifications"]
-    assert internal["paper"] == ["/internal/v1/paper-shares"]
+    assert internal["paper"] == ["/internal/v1/paper-shares", "/internal/v1/papers/copy-global"]
     assert internal["enrollment"] == ["/internal/v1/reference-sync"]
     assert all(not v for k, v in internal.items() if k not in {"identity", "academics", "operations", "paper", "enrollment"})
 
