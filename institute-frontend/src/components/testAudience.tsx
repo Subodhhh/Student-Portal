@@ -6,7 +6,9 @@ import type { AudienceState, ScopeResponse, TestPaper } from "../services/create
 // Shared by the Daily Test and the Weekly Test: who takes the test, and which approved paper a subject uses.
 // The server decides every rule (scope, eligibility, paper availability); these components only collect the choice.
 
-export function AudienceFields({ providerId, scope, value, onChange }: { providerId: string; scope: ScopeResponse; value: AudienceState; onChange: (a: AudienceState) => void }) {
+export function AudienceFields({ providerId, scope, value, onChange, studentsPath = "/api/v1/tests/students" }: {
+  providerId: string; scope: ScopeResponse; value: AudienceState; onChange: (a: AudienceState) => void; studentsPath?: string;
+}) {
   const chosen = scope.branches.filter((b) => value.branchIds.includes(b.branch_id));
   const flip = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   const toggleBranch = (id: string) => {
@@ -34,17 +36,20 @@ export function AudienceFields({ providerId, scope, value, onChange }: { provide
           ))}
         </fieldset>
       ))}
-      {value.branchIds.length > 0 && <StudentPicker providerId={providerId} branchIds={value.branchIds} selected={value.students} onChange={(students) => onChange({ ...value, students })} />}
+      {value.branchIds.length > 0 && <StudentPicker providerId={providerId} branchIds={value.branchIds} selected={value.students} path={studentsPath}
+        onChange={(students) => onChange({ ...value, students })} />}
     </>
   );
 }
 
-function StudentPicker({ providerId, branchIds, selected, onChange }: { providerId: string; branchIds: string[]; selected: Map<string, string>; onChange: (m: Map<string, string>) => void }) {
+function StudentPicker({ providerId, branchIds, selected, onChange, path }: {
+  providerId: string; branchIds: string[]; selected: Map<string, string>; onChange: (m: Map<string, string>) => void; path: string;
+}) {
   const [q, setQ] = useState("");
   const qs = new URLSearchParams({ provider_id: providerId });
   branchIds.forEach((b) => qs.append("branch_ids", b));
   if (q.trim()) qs.set("q", q.trim());
-  const list = useApi<{ items: { student_id: string; name: string | null; branches: string[]; batches: string[] }[]; total: number }>(`/api/v1/tests/students?${qs.toString()}`);
+  const list = useApi<{ items: { student_id: string; name: string | null; branches: string[]; batches: string[] }[]; total: number }>(`${path}?${qs.toString()}`);
   const label = (s: { student_id: string; name: string | null; branches: string[]; batches: string[] }) =>
     `${s.name ?? "Name unavailable"} · ${s.student_id} · ${s.branches.join(", ")}${s.batches.length ? ` (${s.batches.join(", ")})` : ""}`;
   return (

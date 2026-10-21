@@ -219,6 +219,13 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
       <PageHeader subtitle={`Imports into ${scope.branch?.name ?? "this branch"}. Files are validated completely when uploaded: one problem rejects the whole paper.`} />
       {can("paper.upload") && (
         <Card>
+          <div className="card-head"><h2>Photos of a printed paper</h2><Link className="btn" to="/papers/photo">Upload photos</Link></div>
+          <p className="muted small">Take photos of each page (and, separately, of the answer key) with your phone. The questions are read automatically and shown for you to
+            check and correct before anything is imported.</p>
+        </Card>
+      )}
+      {can("paper.upload") && (
+        <Card>
           <h2>Upload a question file</h2>
           <p className="muted small">
             CSV or one-sheet Excel (.xlsx) with the template columns, Word (.docx) or a text PDF with numbered questions. Scanned PNG/JPEG pages are read only where the

@@ -10,9 +10,50 @@ from inst_paper.services.documents import _DEFAULT, _FIELD, _Q, parse_question_b
 from inst_paper.services.extraction import ExtractionResult, OcrQuestion, OcrRejected
 
 TIMEOUT_SECONDS = 60
+MIN_WIDTH = 1600            # phone photos are usually larger; small scans are upscaled so 10-12 pt text is legible to Tesseract
+
+
+def preprocess(image: bytes):
+    """Mobile-photo clean-up before OCR: honour the camera's EXIF orientation, greyscale, stretch contrast only when the photo is washed
+    out, remove isolated specks, upscale small images, then let Tesseract's orientation detection fix pages photographed sideways or
+    upside down (skipped when the page has too little text to decide)."""
+    import pytesseract
+    from PIL import Image, ImageFilter, ImageOps
+
+    with Image.open(io.BytesIO(image)) as img:
+        img.load()
+        img = ImageOps.exif_transpose(img)
+        gray = img.convert("L")
+    low, high = gray.getextrema()
+    if high - low < 140:                       # washed out (dim room, grey paper): stretch, without clipping (clipping amplifies JPEG noise)
+        gray = ImageOps.autocontrast(gray, cutoff=0)
+    gray = gray.filter(ImageFilter.MedianFilter(3))
+    if gray.width < MIN_WIDTH:
+        scale = MIN_WIDTH / gray.width
+        gray = gray.resize((MIN_WIDTH, int(gray.height * scale)), Image.LANCZOS)
+    try:
+        rotate = int(pytesseract.image_to_osd(gray, output_type=pytesseract.Output.DICT, timeout=TIMEOUT_SECONDS).get("rotate", 0))
+        if rotate:
+            gray = gray.rotate(-rotate, expand=True, fillcolor=255)
+    except Exception:  # noqa: BLE001 - too little text for orientation detection: keep the page as photographed
+        pass
+    return gray
 
 
 class TesseractBackend:
+    def read_lines(self, image: bytes, mime: str) -> list[list]:
+        """Text lines of one page in reading order: [text, weakest word confidence, mean word confidence] (confidences 0..100)."""
+        import pytesseract
+
+        data = pytesseract.image_to_data(preprocess(image), output_type=pytesseract.Output.DICT, config="--psm 6", timeout=TIMEOUT_SECONDS)
+        lines: dict[tuple, list[tuple[str, float]]] = {}
+        for i, word in enumerate(data["text"]):
+            if not (word or "").strip():
+                continue
+            key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+            lines.setdefault(key, []).append((word, float(data["conf"][i])))
+        return [[" ".join(w for w, _ in ws), min(c for _, c in ws), sum(c for _, c in ws) / len(ws)] for _, ws in sorted(lines.items())]
+
     def read_questions(self, image: bytes, mime: str) -> list[OcrQuestion]:
         import pytesseract
         from PIL import Image

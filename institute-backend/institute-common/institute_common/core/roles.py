@@ -88,6 +88,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "teaching.assign",
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
+        "test.create",   # Daily and Weekly Tests for the admin's own branch only (Principal.can matches the branch)
         "exam.read", "exam.generate", "exam.schedule", "exam.publish",
         "result.read", "analytics.read", "notification.manage", "notification.read",
         "support.manage", "settings.branch",
@@ -96,7 +97,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "provider.read", "branch.read", "student.read",
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
-        "test.create",   # scoped by teaching assignments (branch, subject, batch) like every other teacher permission
+        # No test.create: teachers upload and contribute papers and see the scheduled tests of what they teach, but never create tests.
         "exam.read", "result.read", "analytics.read", "notification.read",
     },
 }

@@ -1,4 +1,5 @@
 """Exam plans, generation, exams, composite papers and assignments."""
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -26,7 +27,7 @@ from institute_common.util import Strict
 from institute_common.schemas.common import Page
 from institute_common.core.roles import Role
 from inst_exam.services import exam_generation as gen
-from inst_exam.services import assignment_sync
+from inst_exam.services import assignment_sync, teacher_scope
 from institute_common.clients.attempt_client import AttemptClient, get_attempt_client
 from institute_common.internal_http import InternalServiceError
 from institute_common.clients.result_client import ResultClient, ResultServiceError, get_result_client
@@ -288,7 +289,7 @@ def _validate_slots(db: Session, provider_id: UUID, slots: list[SlotIn]) -> None
             version_id = db.scalar(select(PaperVersion.paper_version_id).where(PaperVersion.paper_id == paper.paper_id, PaperVersion.status == "PUBLISHED")
                                    .order_by(PaperVersion.version_no.desc()).limit(1))
         if not gen.may_use_platform_paper(db, None, paper, version_id):
-            raise api_error(422, "GLOBAL_TEST_PAPER", "This platform paper belongs to a Global Daily Test: schedule that test instead of reusing its paper.")
+            raise api_error(422, "GLOBAL_TEST_PAPER", "This platform paper belongs to a Global Test: schedule that test instead of reusing its paper.")
 
 
 def _write_slots(db: Session, plan: ExamPlan, slots: list[SlotIn]) -> None:
@@ -399,11 +400,11 @@ def update_plan(plan_id: UUID, body: PlanPatch, p: Principal = Depends(get_princ
     p.require(db, "examplan.manage", provider_id=plan.provider_id, branch_id=plan.branch_id)
     changes = body.model_dump(exclude_unset=True)
     if plan.global_test_id and {"duration_minutes", "marking_mode", "marks_correct", "marks_wrong"} & changes.keys():
-        raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Daily Test keeps its own duration and marking scheme.")
+        raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Test keeps its own duration and marking scheme.")
     if changes.get("status") == "ACTIVE" and plan.global_test_id:
         gt = db.get(GlobalTest, plan.global_test_id)
         if not gt or gt.status != "PUBLISHED":
-            raise api_error(409, "GLOBAL_TEST_NOT_PUBLISHED", "This plan's Global Daily Test was withdrawn; it cannot be reactivated.")
+            raise api_error(409, "GLOBAL_TEST_NOT_PUBLISHED", "This plan's Global Test was withdrawn; it cannot be reactivated.")
     for k, v in changes.items():
         setattr(plan, k, v)
     if plan.end_at <= plan.start_at:
@@ -425,7 +426,7 @@ def replace_slots(plan_id: UUID, slots: list[SlotIn], p: Principal = Depends(get
     plan = _plan(db, plan_id)
     p.require(db, "examplan.manage", provider_id=plan.provider_id, branch_id=plan.branch_id)
     if plan.global_test_id:
-        raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Daily Test uses exactly its published papers.")
+        raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Test uses exactly its published papers.")
     if not slots or len(slots) > 20:
         raise api_error(422, "INVALID_SLOTS", "A plan needs between 1 and 20 subject slots.")
     _validate_slots(db, plan.provider_id, slots)
@@ -487,17 +488,24 @@ def _exam(db: Session, exam_id: UUID) -> Exam:
 # ------------------------------------------------------------------ exam visibility
 # Ordinary exams are branch-scoped. A whole-institute exam (its plan's audience is INSTITUTE) exists once, in the branch it was
 # planned in, and is visible provider-wide: platform roles and provider admins see all of it; a branch admin of ANY branch of that
-# provider sees the exam, its detail and its results restricted to the students enrolled in their own branches. Teachers keep the
-# branch rule (the exam's branch, their batches).
+# provider sees the exam, its detail and its results restricted to the students enrolled in their own branches. A teacher (who has
+# no admin role for the exam) sees it only when one of its targeted students is in their teaching scope for one of its subjects, and
+# then only those students (services/teacher_scope.py).
+
+
+@dataclass(frozen=True)
+class OnlyStudents:
+    """Exam scope of a teacher: exactly these students."""
+    ids: frozenset[str]
 
 def is_institute_wide(db: Session, e: Exam) -> bool:
     plan = db.get(ExamPlan, e.plan_id)
     return bool(plan and plan.audience_type in ("INSTITUTE", "TARGETED"))   # TARGETED: Create Test, may span the provider's branches
 
 
-def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | None:
-    """Authorise `perm` on exam `e` (403 otherwise). Returns None when the caller may see every assigned student, else the set of
-    branches whose enrolled students they may see."""
+def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | OnlyStudents | None:
+    """Authorise `perm` on exam `e` (403 otherwise). Returns None when the caller may see every assigned student, the set of
+    branches whose enrolled students they may see (branch admins of an institute-wide exam), or OnlyStudents (teachers)."""
     if p.can(perm, exclude_roles=(Role.BRANCH_ADMIN, Role.TEACHER), provider_id=e.provider_id):
         return None                                       # platform roles, provider admins
     if is_institute_wide(db, e):
@@ -505,14 +513,20 @@ def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | No
                     and p.can(perm, provider_id=e.provider_id, branch_id=a.branch_id)}
         if branches:
             return branches
-        p.require(db, perm, provider_id=e.provider_id, branch_id=e.branch_id)
-        return {e.branch_id}
-    p.require(db, perm, provider_id=e.provider_id, branch_id=e.branch_id)
-    return None
+    if p.can(perm, exclude_roles=(Role.TEACHER,), provider_id=e.provider_id, branch_id=e.branch_id):
+        return {e.branch_id} if is_institute_wide(db, e) else None
+    students = teacher_scope.exam_students(db, p, e) if p.has_role(Role.TEACHER) and p.can(perm, provider_id=e.provider_id) else set()
+    if not students:
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
+                     details={"permission": perm, "exam_id": str(e.exam_id)})
+        raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
+    return OnlyStudents(frozenset(students))
 
 
-def _in_branches(branches: set[UUID]):
-    return StudentExamAssignment.enrollment_id.in_(select(Enrollment.enrollment_id).where(Enrollment.branch_id.in_(branches)))
+def _in_branches(scope: set[UUID] | OnlyStudents):
+    if isinstance(scope, OnlyStudents):
+        return StudentExamAssignment.student_id.in_(scope.ids or {""})
+    return StudentExamAssignment.enrollment_id.in_(select(Enrollment.enrollment_id).where(Enrollment.branch_id.in_(scope)))
 
 
 def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> ExamOut:
@@ -544,12 +558,18 @@ def list_exams(branch_id: UUID, status: str | None = None, page: int = 1, page_s
                p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     br = _branch(db, branch_id)
     p.require(db, "exam.read", provider_id=br.provider_id, branch_id=branch_id)
-    in_branch = Exam.branch_id == branch_id
-    if p.can("exam.read", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
-        # + whole-institute exams of the provider planned in another branch (one exam, never copied per branch)
-        institute = select(ExamPlan.plan_id).where(ExamPlan.provider_id == br.provider_id, ExamPlan.audience_type == "INSTITUTE")
-        in_branch = in_branch | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute))
-    stmt = select(Exam).where(in_branch)
+    if not p.can("exam.read", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
+        # teachers: the provider's exams with a targeted student they teach in this branch (wherever the exam was planned)
+        stmt = select(Exam).where(Exam.provider_id == br.provider_id)
+        if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
+            stmt = stmt.where(Exam.status == status)
+        mine = [e for e in db.scalars(stmt.order_by(Exam.created_at.desc())) if teacher_scope.exam_students(db, p, e, branch_id)]
+        page, page_size = max(page, 1), min(max(page_size, 1), 100)
+        return {"items": [_exam_out(db, e, exam_access(db, p, "exam.read", e)) for e in mine[(page - 1) * page_size: page * page_size]],
+                "total": len(mine), "page": page, "page_size": page_size}
+    # + whole-institute exams of the provider planned in another branch (one exam, never copied per branch)
+    institute = select(ExamPlan.plan_id).where(ExamPlan.provider_id == br.provider_id, ExamPlan.audience_type == "INSTITUTE")
+    stmt = select(Exam).where((Exam.branch_id == branch_id) | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute)))
     if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
         stmt = stmt.where(Exam.status == status)
     res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
@@ -612,7 +632,7 @@ def exam_assignments(exam_id: UUID, page: int = 1, page_size: int = 50, p: Princ
 def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
                  rc: ResultClient = Depends(get_result_client), sc: StudentClient = Depends(get_student_client)):
     """Results are evaluated by the Student services; this reads them through the internal API.
-    Teachers see only students of the batches they teach (whole branch if assigned to it)."""
+    Teachers see only the targeted students in their teaching scope (see exam_access)."""
     e = _exam(db, exam_id)
     branches = exam_access(db, p, "result.read", e)
     ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
@@ -625,16 +645,9 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
 
     scoped = select(StudentExamAssignment).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
     if branches is not None:
-        scoped = scoped.where(_in_branches(branches))         # whole-institute exam seen from one branch: its own students only
+        scoped = scoped.where(_in_branches(branches))         # one branch's students, or a teacher's own students only
     assignments = {a.student_id: a for a in db.scalars(scoped)}
     allowed = set(assignments)
-    manager = any(p.can("result.read", exclude_roles=(Role.TEACHER,), provider_id=e.provider_id, branch_id=b)
-                  for b in (branches or {e.branch_id}))
-    if not manager:                                           # teachers: only the batches they teach
-        taught = [t for t in p.teaching if t.branch_id == e.branch_id]
-        if not any(t.batch_id is None for t in taught):
-            batches = {t.batch_id for t in taught}
-            allowed = {sid for sid, a in assignments.items() if a.batch_id in batches}
     rows = [r for r in rows if r["student_id"] in allowed]          # never expose results outside the assignment/scope
     try:
         names = sc.get_many([r["student_id"] for r in rows][:200])

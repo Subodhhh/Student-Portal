@@ -110,11 +110,16 @@ def counts(db_factory, plan_id=None):
 
 # ------------------------------------------------------------------ A. roles and scope
 
-def test_the_four_roles_hold_test_create_and_the_branch_admin_does_not(client, ct, login):
-    for who, expected in (("sa", True), ("admin", True), ("pa", True), ("t_batch", True), ("ba", False)):
+def test_admins_hold_test_create_and_teachers_only_read_scheduled_tests(client, world, ct, login):
+    for who, expected in (("sa", True), ("admin", True), ("pa", True), ("ba", True), ("t_batch", False)):
         perms = client.get(f"{API}/auth/me", headers=login(ct[who])).json()["permissions"]
         assert ("test.create" in perms) is expected, who
-    assert client.get(f"{API}/tests", headers=login(ct["ba"])).status_code == 403
+    h = login(ct["t_batch"])
+    assert client.get(f"{API}/tests", headers=h).status_code == 200                       # exam.read: scheduled tests they teach
+    for path in (f"/tests/scope?provider_id={world['p1']}", f"/tests/students?provider_id={world['p1']}&branch_ids={world['p1b1']}"):
+        assert client.get(f"{API}{path}", headers=h).status_code == 403
+    assert client.post(f"{API}/tests/check", json=draft(world, ct), headers=h).status_code == 403
+    assert publish(client, h, draft(world, ct)).status_code == 403
 
 
 def test_scope_lists_only_what_each_role_may_target(client, world, ct, login):
@@ -122,19 +127,17 @@ def test_scope_lists_only_what_each_role_may_target(client, world, ct, login):
     assert {b["name"] for b in full} == {"p1-b1", "p1-b2"} and all(b["whole_branch_allowed"] for b in full)
     for who in ("sa", "admin"):
         assert len(client.get(f"{API}/tests/scope?provider_id={world['p1']}", headers=login(ct[who])).json()["branches"]) == 2
-    [b] = client.get(f"{API}/tests/scope?provider_id={world['p1']}", headers=login(ct["t_batch"])).json()["branches"]
-    assert b["name"] == "p1-b1" and [x["name"] for x in b["batches"]] == ["A"] and [s["name"] for s in b["subjects"]] == ["Physics"] and not b["whole_branch_allowed"]
-    [b] = client.get(f"{API}/tests/scope?provider_id={world['p1']}", headers=login(ct["t_branch"])).json()["branches"]
-    assert [x["name"] for x in b["batches"]] == ["A", "B"] and b["whole_branch_allowed"]
+    [b] = client.get(f"{API}/tests/scope?provider_id={world['p1']}", headers=login(ct["ba"])).json()["branches"]     # own branch only
+    assert b["name"] == "p1-b1" and [x["name"] for x in b["batches"]] == ["A", "B"] and b["whole_branch_allowed"]
+    assert {s["name"] for s in b["subjects"]} == {"Physics", "Chemistry"}
     assert client.get(f"{API}/tests/scope?provider_id={world['p1']}", headers=login(ct["pa2"])).status_code == 404     # other provider
 
 
 @pytest.mark.parametrize("who,audience,subjects,field", [
-    ("t_batch", dict(batches=("batch_b",)), ("phy",), "batch_ids"),                 # a batch the teacher does not teach
-    ("t_batch", dict(whole=("p1b1",)), ("phy",), "whole_branch_ids"),               # whole branch without a branch-wide assignment
-    ("t_batch", dict(branches=("p1b1", "p1b2"), batches=("batch_a",)), ("phy",), "branch_ids"),
-    ("t_batch", dict(batches=("batch_a",)), ("chem",), "subjects"),                 # subject not taught
-    ("t_batch", dict(batches=("batch_a",), students=("STU000002",)), ("phy",), "student_ids"),   # student outside the taught batch
+    ("ba", dict(branches=("p1b1", "p1b2"), batches=("batch_a",)), ("phy",), "branch_ids"),      # another branch of the provider
+    ("ba", dict(branches=("p1b2",), whole=("p1b2",)), ("phy",), "branch_ids"),
+    ("ba", dict(batches=("batch_c",)), ("phy",), "batch_ids"),                                   # batch of another branch
+    ("ba", dict(batches=("batch_a",), students=("STU000003",)), ("phy",), "student_ids"),        # student enrolled only elsewhere
     ("pa", dict(batches=("batch_c",)), ("phy",), "batch_ids"),                       # batch of a branch that is not selected
     ("pa", dict(students=("STU000006",)), ("phy",), "student_ids"),                  # another provider's student
 ])
@@ -185,8 +188,9 @@ def test_a_student_of_two_providers_is_targeted_by_each_under_one_identity(clien
 def test_student_search_identifies_students_with_similar_names(client, world, ct, login):
     r = client.get(f"{API}/tests/students?provider_id={world['p1']}&branch_ids={world['p1b1']}&q=riya", headers=login(ct["pa"])).json()
     assert [(s["student_id"], s["name"], s["batches"]) for s in r["items"]] == [("STU000001", "Riya Patil", ["A"]), ("STU000002", "Riya Patel", ["B"])]
-    mine = client.get(f"{API}/tests/students?provider_id={world['p1']}&branch_ids={world['p1b1']}", headers=login(ct["t_batch"])).json()
-    assert {s["student_id"] for s in mine["items"]} == {"STU000001", "STU000004"}            # only batch A for that teacher
+    mine = client.get(f"{API}/tests/students?provider_id={world['p1']}&branch_ids={world['p1b1']}&branch_ids={world['p1b2']}",
+                      headers=login(ct["ba"])).json()
+    assert {s["student_id"] for s in mine["items"]} == {"STU000001", "STU000002", "STU000004"}     # the branch admin's branch only
 
 
 @pytest.mark.parametrize("audience", [
@@ -295,7 +299,7 @@ def test_schedule_rules(client, world, ct, login):
 def test_publishing_needs_validated_published_papers_with_an_answer_key(client, world, ct, login, db_factory):
     h = login(ct["pa"])
     r = publish(client, h, draft(world, ct))                                                 # no paper at all
-    assert r.status_code == 422 and "Upload and validate" in r.text
+    assert r.status_code == 422 and "Upload this subject" in r.text
     draft_pv = upload(client, h, world, ct, paper(3), key(3)).json()["paper_version_id"]   # imported, not approved/published
     r = publish(client, h, draft(world, ct, subjects=[("phy", draft_pv)]))
     assert r.status_code == 422 and "approved and published" in r.text
@@ -306,6 +310,22 @@ def test_publishing_needs_validated_published_papers_with_an_answer_key(client, 
     client.post(f"{API}/paper-versions/{pv}/publish", json={"note": None}, headers=h)
     r = publish(client, h, draft(world, ct, subjects=[("phy", pv)]))
     assert r.status_code == 422 and "answer key" in r.text
+
+
+def test_an_approved_bank_paper_can_be_chosen_instead_of_an_upload(client, world, ct, login, db_factory):
+    """A Daily Test may use an approved, published paper already in the bank (built from bank questions, no upload); papers the
+    caller may not use are refused and never listed."""
+    h = login(ct["pa"])
+    listed = client.get(f"{API}/tests/papers?provider_id={world['p1']}&subject_id={ct['phy']}", headers=h).json()["items"]
+    assert [(x["title"], x["source"], x["published_version"]["paper_version_id"]) for x in listed] == [("Physics Set", "Own", str(ct["phy_v1"]))]
+    assert client.get(f"{API}/tests/papers?provider_id={world['p1']}&subject_id={ct['phy']}", headers=login(ct["pa2"])).status_code == 404
+    assert client.get(f"{API}/tests/papers?provider_id={world['p1']}&subject_id={ct['phy']}", headers=login(ct["t_batch"])).status_code == 403
+    r = publish(client, login(ct["pa"]), draft(world, ct, subjects=[("phy", str(ct["phy_v1"]))]))   # (one session per client)
+    assert r.status_code == 201, r.text
+    assert r.json()["test_type"] == "DAILY" and r.json()["question_count"] == 3
+    other = publish(client, login(ct["pa2"]), draft(world, ct, audience=aud(world, ct, provider="p2", branches=("p2b1",), batches=("batch_d",)),
+                                                   subjects=[("phy", str(ct["phy_v1"]))]))
+    assert other.status_code == 422 and "not available" in other.text                    # another provider's paper
 
 
 def test_a_valid_test_is_published_with_exactly_its_audience_and_marking(client, world, ct, login, db_factory):
@@ -339,14 +359,17 @@ def test_repeated_publication_is_idempotent(client, world, ct, login, db_factory
     assert publish(client, login(ct["sa"]), body, "same-request-key-1").status_code == 409                # someone else's key
 
 
-def test_teacher_publishes_within_scope_and_sees_only_their_tests(client, world, ct, login):
-    pv = ready_paper(client, login, world, ct, who="t_batch")
-    r = publish(client, login(ct["t_batch"]), draft(world, ct, subjects=[("phy", pv)]))
+def test_branch_admin_publishes_for_own_branch_and_teachers_see_the_tests_they_teach(client, world, ct, login):
+    pv = ready_paper(client, login, world, ct, who="ba")
+    r = publish(client, login(ct["ba"]), draft(world, ct, subjects=[("phy", pv)]))
     assert r.status_code == 201, r.text
-    assert [x["name"] for x in client.get(f"{API}/tests", headers=login(ct["t_batch"])).json()["items"]] == ["Weekly Physics"]
+    chem = publish(client, login(ct["pa"]), draft(world, ct, name="Chemistry only", subjects=[("chem", str(ct["chem_v1"]))]))
+    assert chem.status_code == 201, chem.text
+    assert {x["name"] for x in client.get(f"{API}/tests", headers=login(ct["ba"])).json()["items"]} == {"Weekly Physics", "Chemistry only"}
+    assert [x["name"] for x in client.get(f"{API}/tests", headers=login(ct["t_batch"])).json()["items"]] == ["Weekly Physics"]   # teaches Physics
     assert client.get(f"{API}/tests", headers=login(ct["pa2"])).json()["items"] == []
-    r = publish(client, login(ct["t_batch"]), draft(world, ct, audience=aud(world, ct, batches=("batch_b",)), subjects=[("phy", pv)]))
-    assert r.status_code == 422                                                              # unauthorized publication
+    r = publish(client, login(ct["ba"]), draft(world, ct, audience=aud(world, ct, branches=("p1b2",), batches=("batch_c",)), subjects=[("phy", pv)]))
+    assert r.status_code == 422                                                              # another branch: unauthorized publication
 
 
 def test_a_reduced_exam_is_never_published(client, world, ct, login, db_factory, monkeypatch):

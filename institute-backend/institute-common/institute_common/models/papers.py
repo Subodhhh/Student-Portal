@@ -117,7 +117,7 @@ class PaperUpload(Base):
 class Paper(Base):
     __tablename__ = "papers"
     __table_args__ = (
-        # GLOBAL papers are platform content built from global questions (used by Global Daily Tests and, read-only, by providers).
+        # GLOBAL papers are platform content built from global questions (used by Global Tests and, read-only, by providers).
         CheckConstraint("(scope = 'GLOBAL' AND provider_id IS NULL AND branch_id IS NULL) OR "
                         "(scope = 'PROVIDER' AND provider_id IS NOT NULL AND branch_id IS NOT NULL)", name="papers_scope_check"),
     )
@@ -194,4 +194,89 @@ class PaperShare(Base):
     shared_with_provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
     granted_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GlobalPaperCopy(Base):
+    """Idempotency record for an authorized provider-to-platform paper copy."""
+
+    __tablename__ = "global_paper_copies"
+    __table_args__ = (
+        UniqueConstraint(
+            "contribution_id",
+            name="uq_global_paper_copy_contribution",
+        ),
+    )
+
+    copy_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    contribution_id: Mapped[UUID] = mapped_column(nullable=False)
+    source_paper_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("paper_versions.paper_version_id"),
+        nullable=False,
+    )
+    global_paper_id: Mapped[UUID] = mapped_column(
+        ForeignKey("papers.paper_id"),
+        nullable=False,
+    )
+    global_paper_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("paper_versions.paper_version_id"),
+        nullable=False,
+    )
+    authorization_reference: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+    copied_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        nullable=False,
+        default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class PhotoDraft(Base):
+    """A paper being built from mobile photos: page photos and answer-key photos (or a key file) are uploaded separately, OCR'd page by
+    page, parsed into an editable preview and accepted only by an explicit confirmation that passes the normal all-or-nothing
+    validator. `extracted` keeps the OCR result exactly as read; `questions` is the corrected version; `corrections` logs every change.
+    Acceptance creates an ordinary VALIDATED paper version (then the usual approval)."""
+
+    __tablename__ = "paper_photo_drafts"
+    __table_args__ = (CheckConstraint("status IN ('DRAFT','ACCEPTED','DISCARDED')", name="paper_photo_drafts_status_check"),)
+
+    draft_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT", server_default="DRAFT")
+    client_request_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    questions: Mapped[list | None] = mapped_column(JSONType)
+    extracted: Mapped[list | None] = mapped_column(JSONType)
+    issues: Mapped[list | None] = mapped_column(JSONType)
+    corrections: Mapped[list | None] = mapped_column(JSONType)
+    extracted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    accepted_paper_version_id: Mapped[UUID | None] = mapped_column(ForeignKey("paper_versions.paper_version_id"))
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class PhotoDraftFile(Base):
+    """One uploaded photo (or answer-key file) of a draft, in page order, with its OCR lines ([text, weakest word confidence, mean])."""
+
+    __tablename__ = "paper_photo_draft_files"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "kind", "position", name="uq_photo_draft_file_position"),
+        CheckConstraint("kind IN ('PAGE','ANSWER_KEY')", name="paper_photo_draft_files_kind_check"),
+    )
+
+    draft_file_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    draft_id: Mapped[UUID] = mapped_column(ForeignKey("paper_photo_drafts.draft_id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_id: Mapped[UUID] = mapped_column(ForeignKey("stored_files.file_id"), nullable=False)
+    ocr_lines: Mapped[list | None] = mapped_column(JSONType)
+    ocr_error: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))

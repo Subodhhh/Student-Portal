@@ -6,7 +6,7 @@ import { fail, me, page, stubApi, type Call } from "../test/stubApi";
 const TEST = { test_id: "gt1", name: "National Mock #3", description: null, exam_type: null, target_class: null, duration_minutes: 60, status: "PUBLISHED",
   derived_from_test_id: null, created_at: "2026-10-10T00:00:00Z", published_at: "2026-10-11T00:00:00Z", publisher: "Platform", question_count: 20, total_marks: "80.00",
   sections: [{ position: 1, subject_id: "phy", subject: "Physics", paper_id: "gp", paper_title: "Platform Physics", paper_version_id: "gpv", version_no: 1,
-    version_status: "PUBLISHED", question_count: 20, total_marks: "80.00" }] };
+    version_status: "PUBLISHED", question_count: 20, total_marks: "80.00" }], kind: "SECTIONS", subjects: [], marking_mode: "PER_QUESTION", marks_correct: null, marks_wrong: null, generate_lead_minutes: 60, occurrences: {}, next_occurrence_at: null };
 const contribution = (over: Record<string, unknown> = {}) => ({ contribution_id: "c1", test_id: "gt1", test_name: "National Mock #3", test_status: "PUBLISHED",
   subject_id: "chem", subject: "Chemistry", provider_name: "Alpha Academy", branch_name: "Pune", paper_title: "Alpha Chemistry", paper_version_id: "pv1", version_no: 2,
   version_status: "PUBLISHED", question_count: 30, total_marks: "120.00", note: null, status: "PENDING", submitted_by_name: "Asha", submitted_at: "2026-10-12T00:00:00Z",
@@ -23,7 +23,7 @@ describe("Global Tests for provider staff", () => {
         version_no: 2, version_status: "PUBLISHED", question_count: 30, total_marks: "120.00" }], total: 1 },
       "POST /api/v1/global-tests/gt1/contributions": contribution({ can_withdraw: true }),
       "/api/v1/global-test-contributions": page([contribution({ can_withdraw: true })]) });
-    renderApp("/tests/global");
+    renderApp("/tests/global?tab=tests");
     fireEvent.click(await screen.findByRole("button", { name: "Offer a paper" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/The published test itself never changes/)).toBeTruthy();
@@ -40,7 +40,7 @@ describe("Global Tests for provider staff", () => {
   it("shows an honest empty state when nothing may be offered", async () => {
     stubApi({ ...common, "/api/v1/auth/me": me("BRANCH_ADMIN", ["paper.read", "paper.publish", "exam.read"]),
       "/api/v1/global-tests/gt1/contribution-options": { items: [], total: 0 } });
-    renderApp("/tests/global");
+    renderApp("/tests/global?tab=tests");
     fireEvent.click(await screen.findByRole("button", { name: "Offer a paper" }));
     expect(await screen.findByText("No paper available to offer")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Offer paper" }) as HTMLButtonElement).disabled).toBe(true);

@@ -62,6 +62,7 @@ function formatDate(date: string | null) {
   }
 
   return new Date(date).toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -74,8 +75,10 @@ function formatTime(date: string | null) {
   }
 
   return new Date(date).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   });
 }
 

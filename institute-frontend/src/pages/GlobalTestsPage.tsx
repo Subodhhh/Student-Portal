@@ -7,10 +7,11 @@ import { Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, Modal
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import type { ScheduledTest } from "../services/createTest";
+import { GlobalScheduleList, GlobalTestDates, GlobalTestDefinition } from "./GlobalSchedulePages";
 
-// Test -> Global Tests. The platform creates, publishes and withdraws Global Tests and reviews contributions; provider staff schedule
-// published tests for their students and offer their own approved papers. A contribution never changes a published test: an approved
-// paper is copied into a platform paper that is approved normally and only then placed into a new test version by the platform.
+// Test -> Global Tests. The platform defines Global Tests (subjects, duration, marking) and schedules and publishes their dates centrally;
+// provider staff see the published dates that concern them and submit their own papers per date, subject and audience
+// (GlobalSchedulePages.tsx). Earlier tests built from platform papers (kind SECTIONS) keep their contribution and scheduling screens.
 
 export type Contribution = {
   contribution_id: string; test_id: string; test_name: string; test_status: string; subject_id: string; subject: string | null; provider_name: string | null;
@@ -23,19 +24,20 @@ type Option = { paper_id: string; paper_title: string; subject: string | null; p
 
 export default function GlobalTestsPage() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "tests";
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
+  const tab = params.get("tab") ?? (platform ? "tests" : "schedule");
   const [contributeTo, setContributeTo] = useState<GlobalTest | null>(null);
   const [notice, setNotice] = useState("");
   return (
     <div className="stack">
-      <PageHeader subtitle={platform ? "Platform-owned tests. Providers schedule published tests and offer papers; you review the offers and decide what goes into a new test version."
-        : "Tests published by the platform. Schedule one for your students, or offer one of your approved papers for the platform to review."} />
+      <PageHeader subtitle={platform ? "Create Global Tests, plan their dates for several months and publish them. Providers submit their own papers for each date."
+        : "Tests scheduled centrally by the platform. Open a date to submit your paper for your students before its deadline."} />
       <Tabs active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })}
-        tabs={[{ id: "tests", label: "Global Tests" }, { id: "contributions", label: platform ? "Contributions to review" : "My contributions" }]} />
+        tabs={platform ? [{ id: "tests", label: "Global Tests" }, { id: "schedule", label: "Published schedule" }, { id: "contributions", label: "Earlier contributions" }]
+          : [{ id: "schedule", label: "Schedule" }, { id: "tests", label: "Global Tests" }]} />
       {notice && <Alert kind="success">{notice}</Alert>}
-      {tab === "contributions" ? <ContributionsPanel platform={platform} />
+      {tab === "contributions" ? <ContributionsPanel platform={platform} /> : tab === "schedule" ? <GlobalScheduleList />
         : <GlobalTestsPanel onContribute={!platform && can("paper.publish") ? setContributeTo : undefined} />}
       {can("examplan.manage") && <p className="muted small">Composite Tests are retired. Earlier composite requests remain available in the <Link to="/composite">composite history</Link>.</p>}
       {contributeTo && <ContributeDialog test={contributeTo} onClose={() => setContributeTo(null)}
@@ -173,6 +175,7 @@ export function GlobalTestDetailPage() {
   if (t.loading && !t.data) return <Spinner />;
   if (t.error || !t.data) return <Alert kind="error">{t.error || "Global Test not found."}</Alert>;
   const g = t.data;
+  if (g.kind === "SCHEDULE") return <ScheduleTestPage g={g} reload={t.reload} />;
   const transition = (change: "publish" | "withdraw") => act.run(async () => {
     await api(`/api/v1/global-tests/${g.test_id}/${change}`, { method: "POST", body: change === "withdraw" ? { reason } : undefined });
     setConfirm(null); setReason("");
@@ -252,6 +255,54 @@ export function GlobalTestDetailPage() {
             : "Providers can no longer schedule it and its schedules stop generating. Exams already generated, attempts and results are unchanged."}>
           {act.error && <Alert kind="error">{act.error}</Alert>}
           {confirm === "withdraw" && <TextAreaField label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />}
+        </ConfirmDialog>
+      )}
+    </div>
+  );
+}
+
+/** A centrally scheduled Global Test: its definition (platform: edit while draft, withdraw, new version) and its dates. */
+function ScheduleTestPage({ g, reload }: { g: GlobalTest; reload: () => void }) {
+  const navigate = useNavigate();
+  const { me, can } = useAuth();
+  const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
+  const act = useAction();
+  const [editing, setEditing] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [reason, setReason] = useState("");
+  const [notice, setNotice] = useState("");
+  return (
+    <div className="stack">
+      <PageHeader crumbs={[<Link key="g" to="/tests/global">Global Tests</Link>, g.name]} title={g.name}
+        subtitle={g.description ?? "Scheduled centrally; every provider submits its own papers."} actions={<StatusBadge status={g.status} />} />
+      {notice && <Alert kind="success">{notice}</Alert>}
+      {act.error && !withdrawing && <Alert kind="error">{act.error}</Alert>}
+      {g.derived_from_test_id && <p className="muted small">A new version of <Link to={`/tests/global/${g.derived_from_test_id}`}>an earlier Global Test</Link>; that test is unchanged.</p>}
+      <Card>
+        <div className="card-head"><h2>1. Test</h2>
+          {platform && <div className="row">
+            {g.status === "DRAFT" && <Button variant="secondary" onClick={() => setEditing(true)}>Edit draft</Button>}
+            {g.status === "PUBLISHED" && <Button variant="danger" onClick={() => setWithdrawing(true)}>Withdraw</Button>}
+            {g.status !== "DRAFT" && <Button variant="secondary" busy={act.busy} onClick={() => void act.run(async () => {
+              const copy = await api<GlobalTest>(`/api/v1/global-tests/${g.test_id}/derive`, { method: "POST" });
+              navigate(`/tests/global/${copy.test_id}`);
+            })}>Create new version</Button>}
+          </div>}
+        </div>
+        <GlobalTestDefinition test={g} />
+        {g.status !== "DRAFT" && <p className="muted small">Published: the subjects, duration and marking no longer change. A change is a new version with its own dates.</p>}
+      </Card>
+      <GlobalTestDates test={g} onChanged={reload} />
+      {editing && <GlobalTestForm test={g} onClose={() => setEditing(false)} onDone={() => { setEditing(false); setNotice("Draft saved."); reload(); }} />}
+      {withdrawing && (
+        <ConfirmDialog title={`Withdraw “${g.name}”`} danger confirmLabel="Withdraw" busy={act.busy} onCancel={() => { setWithdrawing(false); setReason(""); }}
+          message="Dates whose exams were not generated yet are cancelled. Exams already generated, attempts and results are unchanged."
+          onConfirm={() => void act.run(async () => {
+            await api(`/api/v1/global-tests/${g.test_id}/withdraw`, { method: "POST", body: { reason } });
+            setWithdrawing(false); setNotice("Withdrawn."); reload();
+          })}>
+          {act.error && <Alert kind="error">{act.error}</Alert>}
+          <TextAreaField label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
         </ConfirmDialog>
       )}
     </div>

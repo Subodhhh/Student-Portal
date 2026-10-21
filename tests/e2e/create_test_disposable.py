@@ -177,9 +177,7 @@ with TestClient(app, base_url="http://localhost") as c:
     print("roles and scope")
     hp = login(c, PA["staff_code"])
     ht = login(c, T["staff_code"])
-    scope_t = c.get(f"{API}/tests/scope?provider_id={P}", headers=ht).json()["branches"]
-    check("teacher scope: only Pune, batch NEET A, Physics", [(b["name"], [x["name"] for x in b["batches"]], [s["name"] for s in b["subjects"]]) for b in scope_t]
-          == [("Pune", ["NEET A"], ["Physics"])], scope_t)
+    check("teachers do not create tests (no test.create): scope refused", c.get(f"{API}/tests/scope?provider_id={P}", headers=ht).status_code == 403)
     hp = login(c, PA["staff_code"])
     check("provider admin scope: both branches", sorted(b["name"] for b in c.get(f"{API}/tests/scope?provider_id={P}", headers=hp).json()["branches"]) == ["Mumbai", "Pune"])
     check("other provider's data is not targetable", c.get(f"{API}/tests/scope?provider_id={P2}", headers=hp).status_code == 404)
@@ -233,8 +231,10 @@ with TestClient(app, base_url="http://localhost") as c:
     listed = c.get(f"{API}/tests", headers=hp).json()["items"]
     check("staff Scheduled Tests shows it", [x["name"] for x in listed] == ["Weekly Science"])
     ht = login(c, T["staff_code"])
-    check("the teacher cannot publish beyond their batch", c.post(f"{API}/tests", json={**test_body, "name": "Teacher overreach"},
-          headers={**ht, "Idempotency-Key": "e2e-teacher-overreach"}).status_code == 422)
+    check("a teacher cannot publish a test", c.post(f"{API}/tests", json={**test_body, "name": "Teacher overreach"},
+          headers={**ht, "Idempotency-Key": "e2e-teacher-overreach"}).status_code == 403)
+    check("the Physics teacher of batch A sees the Physics + Chemistry test that targets their students (one matching subject is enough)",
+          [x["name"] for x in c.get(f"{API}/tests", headers=ht).json()["items"]] == ["Weekly Science"])
     with factory() as db:
         sent = outbox.deliver_due(db)
     TEST_ID = t["exam_version_id"]

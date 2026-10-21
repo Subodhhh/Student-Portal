@@ -20,6 +20,7 @@ class ExamPlan(Base):
         CheckConstraint(f"audience_type IN ({sql_in(AUDIENCE_TYPES)})", name="exam_plans_audience_check"),
         CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="exam_plans_marking_check"),
         CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="exam_plans_uniform_marks_check"),
+        UniqueConstraint("series_id", "start_at", name="uq_exam_plan_series_start"),
     )
 
     plan_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -47,10 +48,14 @@ class ExamPlan(Base):
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
     exam_type: Mapped[str | None] = mapped_column(String(80))
     target_class: Mapped[str | None] = mapped_column(String(80))
-    # Set when the plan schedules a published Global Daily Test: its papers, duration and marking are locked to the test's.
+    # Set when the plan schedules a published Global Test: its papers, duration and marking are locked to the test's.
     global_test_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_tests.test_id"), index=True)
+    # Set on the plans generated for one occurrence of a SCHEDULE Global Test (one plan per provider and set of submitted papers).
+    global_occurrence_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_test_occurrences.occurrence_id"), index=True)
     # Idempotency key of the Create Test request that made this plan: a retried publication finds it instead of duplicating it.
     client_request_id: Mapped[str | None] = mapped_column(String(100), unique=True)
+    # Set on the plans a Weekly Test (test_series) generated: one plan per occurrence, unique per start time.
+    series_id: Mapped[UUID | None] = mapped_column(ForeignKey("test_series.series_id"), index=True)
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
@@ -173,7 +178,7 @@ class ExamVersion(Base):
     total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     missing_subjects: Mapped[list | None] = mapped_column(JSONType)
     generation_job_id: Mapped[UUID | None] = mapped_column()
-    # Frozen configuration used for this exam (marking, policies, audience, source Global Daily Test); immutable like the manifest.
+    # Frozen configuration used for this exam (marking, policies, audience, source Global Test); immutable like the manifest.
     settings: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -378,7 +383,7 @@ class CompositeRequestSlot(Base):
 
 
 class GlobalTest(Base):
-    """A platform-published test (Global Daily Test) that providers schedule for their own students.
+    """A platform-published test (Global Test) that providers schedule for their own students.
 
     DRAFT -> PUBLISHED -> WITHDRAWN. Once PUBLISHED its sections (exact GLOBAL paper versions), duration and marking never change:
     providers schedule it through an exam plan locked to those versions, and a different test is always a new record
@@ -388,6 +393,10 @@ class GlobalTest(Base):
     __table_args__ = (
         CheckConstraint("status IN ('DRAFT','PUBLISHED','WITHDRAWN')", name="global_tests_status_check"),
         CheckConstraint("duration_minutes > 0 AND duration_minutes <= 720", name="global_tests_duration_check"),
+        CheckConstraint("kind IN ('SCHEDULE','SECTIONS')", name="global_tests_kind_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="global_tests_marking_check"),
+        CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="global_tests_uniform_marks_check"),
+        CheckConstraint("generate_lead_minutes >= 0 AND generate_lead_minutes <= 10080", name="global_tests_lead_check"),
     )
 
     test_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -398,6 +407,15 @@ class GlobalTest(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT", server_default="DRAFT")
     derived_from_test_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_tests.test_id"))
+    # SCHEDULE: the platform defines subjects, marking and a central schedule (global_test_occurrences); every provider submits its own
+    # papers per occurrence and audience (global_paper_submissions). SECTIONS: the earlier model (one set of platform papers, providers
+    # schedule it themselves), kept for existing tests.
+    kind: Mapped[str] = mapped_column(String(10), nullable=False, default="SCHEDULE", server_default="SECTIONS")
+    marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
+    marks_correct: Mapped[int | None] = mapped_column(Integer)
+    marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # Papers are accepted until `generate_lead_minutes` before an occurrence opens; then its exams are generated and never change.
+    generate_lead_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     published_by: Mapped[UUID | None] = mapped_column()
@@ -419,3 +437,161 @@ class GlobalTestSection(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)
+
+class GlobalTestContribution(Base):
+    """A provider's exact paper-version submission for a Global Test.
+
+    PENDING -> APPROVED | REJECTED | WITHDRAWN (withdrawn by the provider while still pending). Recording or approving a contribution
+    never mutates a GlobalTest or its sections: an approved contribution is copied into an independent GLOBAL paper (paper service),
+    which goes through the normal paper approval, and only a platform administrator places it in a DRAFT test.
+
+    Database rules (partial unique indexes, enforced under concurrency):
+      * one active (PENDING/APPROVED) contribution per test, provider and subject - a retry finds it instead of duplicating it;
+      * at most one APPROVED contribution per test and subject - competing providers are a conflict the platform resolves explicitly."""
+
+    __tablename__ = "global_test_contributions"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING','APPROVED','REJECTED','WITHDRAWN')", name="global_test_contributions_status_check"),
+        CheckConstraint("copy_status IS NULL OR copy_status IN ('PENDING','COPIED','FAILED')", name="global_test_contributions_copy_check"),
+        Index("uq_global_test_contribution_active", "test_id", "provider_id", "subject_id", unique=True,
+              postgresql_where=text("status IN ('PENDING','APPROVED')"), sqlite_where=text("status IN ('PENDING','APPROVED')")),
+        Index("uq_global_test_contribution_approved", "test_id", "subject_id", unique=True,
+              postgresql_where=text("status = 'APPROVED'"), sqlite_where=text("status = 'APPROVED'")),
+    )
+
+    contribution_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    test_id: Mapped[UUID] = mapped_column(ForeignKey("global_tests.test_id"), nullable=False, index=True)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False, index=True)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(1000))
+    submitted_by: Mapped[UUID] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING", server_default="PENDING")
+    reviewed_by: Mapped[UUID | None] = mapped_column()
+    review_note: Mapped[str | None] = mapped_column(String(1000))
+    submitted_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The independent GLOBAL copy made after approval (NULL until the paper service confirmed it).
+    copy_status: Mapped[str | None] = mapped_column(String(20))
+    copy_error: Mapped[str | None] = mapped_column(String(500))
+    global_paper_id: Mapped[UUID | None] = mapped_column(ForeignKey("papers.paper_id"))
+    global_paper_version_id: Mapped[UUID | None] = mapped_column(ForeignKey("paper_versions.paper_version_id"))
+
+
+class TestSeries(Base):
+    """A Weekly Test: one month of recurring tests planned at once.
+
+    It holds the same configuration as a Daily Test (audience, subjects with their papers, duration, marking, window) plus the
+    recurrence (weekdays of one month at a local time in an IANA time zone). Generating the series creates one ordinary exam plan per
+    occurrence (`exam_plans.series_id`); the unique (series_id, start_at) constraint makes generation safe to retry. Each plan then
+    generates its exam at `generate_at` through the normal generator, so missing papers, notifications and results behave exactly as
+    for every other plan. Plans already created are never changed by a later edit or a new generation."""
+
+    __tablename__ = "test_series"
+    __table_args__ = (
+        CheckConstraint("status IN ('ACTIVE','CANCELLED')", name="test_series_status_check"),
+        CheckConstraint("duration_minutes > 0 AND duration_minutes <= window_minutes AND window_minutes <= 1440", name="test_series_window_check"),
+        CheckConstraint("generate_lead_minutes >= 0 AND generate_lead_minutes <= 10080", name="test_series_lead_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="test_series_marking_check"),
+        CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="test_series_uniform_marks_check"),
+    )
+
+    series_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    month: Mapped[str] = mapped_column(String(7), nullable=False)            # YYYY-MM
+    weekdays: Mapped[list] = mapped_column(JSONType, nullable=False)          # 0 = Monday ... 6 = Sunday
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)       # HH:MM local time
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    generate_lead_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
+    marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="UNIFORM", server_default="UNIFORM")
+    marks_correct: Mapped[int | None] = mapped_column(Integer)
+    marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    exam_type: Mapped[str | None] = mapped_column(String(80))
+    target_class: Mapped[str | None] = mapped_column(String(80))
+    audience: Mapped[dict] = mapped_column(JSONType, nullable=False)          # TestAudienceIn as validated at creation
+    subjects: Mapped[list] = mapped_column(JSONType, nullable=False)          # [{subject_id, paper_id}] in order
+    client_request_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    created_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    last_generated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_generation_error: Mapped[str | None] = mapped_column(String(1000))
+    generation_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    cancel_reason: Mapped[str | None] = mapped_column(String(1000))
+
+
+class GlobalTestSubject(Base):
+    """A subject of a SCHEDULE Global Test. Each provider supplies its own paper for it, per occurrence and audience."""
+
+    __tablename__ = "global_test_subjects"
+    __table_args__ = (
+        UniqueConstraint("test_id", "subject_id", name="uq_global_test_subject"),
+        UniqueConstraint("test_id", "position", name="uq_global_test_subject_position"),
+    )
+
+    gts_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    test_id: Mapped[UUID] = mapped_column(ForeignKey("global_tests.test_id"), nullable=False, index=True)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class GlobalTestOccurrence(Base):
+    """One centrally scheduled sitting of a Global Test (date, window). DRAFT occurrences may be edited or deleted; publishing makes
+    them visible to providers, who then submit papers until the submission deadline (start - generate_lead_minutes). At the deadline
+    the exams are generated (once: generated_at) and never change; a published occurrence that was not generated may be cancelled."""
+
+    __tablename__ = "global_test_occurrences"
+    __table_args__ = (
+        UniqueConstraint("test_id", "start_at", name="uq_global_test_occurrence_start"),
+        CheckConstraint("status IN ('DRAFT','PUBLISHED','CANCELLED')", name="global_test_occurrences_status_check"),
+        CheckConstraint("end_at > start_at", name="global_test_occurrences_window_check"),
+    )
+
+    occurrence_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    test_id: Mapped[UUID] = mapped_column(ForeignKey("global_tests.test_id"), nullable=False, index=True)
+    start_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT", server_default="DRAFT")
+    created_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    published_by: Mapped[UUID | None] = mapped_column()
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    generated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    generation_error: Mapped[str | None] = mapped_column(String(1000))
+    cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    cancel_reason: Mapped[str | None] = mapped_column(String(1000))
+
+
+class GlobalPaperSubmission(Base):
+    """A provider's paper for one subject of one occurrence, for an explicit audience it is authorized for (the Create Test audience:
+    whole branches, batches, individual students). Each student receives the paper of the submission that covers them; two ACTIVE
+    submissions of one provider for the same occurrence and subject may never cover the same student (checked at submission and again
+    at generation, where an ambiguous student gets neither paper and is reported)."""
+
+    __tablename__ = "global_paper_submissions"
+    __table_args__ = (
+        CheckConstraint("status IN ('ACTIVE','WITHDRAWN')", name="global_paper_submissions_status_check"),
+        Index("ix_global_paper_submissions_occurrence", "occurrence_id", "provider_id", "subject_id"),
+    )
+
+    submission_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    occurrence_id: Mapped[UUID] = mapped_column(ForeignKey("global_test_occurrences.occurrence_id"), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)      # home branch of the audience
+    paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)
+    audience: Mapped[dict] = mapped_column(JSONType, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    client_request_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    submitted_by: Mapped[UUID] = mapped_column(nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    withdrawn_by: Mapped[UUID | None] = mapped_column()
+    withdrawn_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    withdraw_reason: Mapped[str | None] = mapped_column(String(1000))

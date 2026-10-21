@@ -23,7 +23,7 @@ const item = (to: string, rest: Omit<NavItem, "label" | "to"> = {}, role?: Role)
 const TEST_SECTION: NavItem[] = [
   item("/tests/new", { perm: "test.create", section: "Test" }),
   item("/tests/weekly", { perm: "test.create", section: "Test" }),
-  item("/tests/global", { anyPerm: ["examplan.manage", "paper.publish"], section: "Test" }),
+  item("/tests/global", { anyPerm: ["examplan.manage", "paper.publish", "paper.upload"], section: "Test" }),
   item("/tests", { anyPerm: ["test.create", "exam.read"], section: "Test" }),
 ];
 
