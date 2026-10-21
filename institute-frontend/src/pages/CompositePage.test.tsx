@@ -36,7 +36,8 @@ describe("composite tests page", () => {
     expect(await screen.findByText("Joint NEET Mock")).toBeTruthy();
     expect(await screen.findByText(/Physics · Alpha Institute/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "New request" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New request" })).toBeNull();                 // retired: history only
+    expect(screen.getByText(/Composite Tests are retired/)).toBeTruthy();
   });
 
   it("shows an honest empty state instead of invented requests", async () => {

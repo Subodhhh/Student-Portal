@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
 import { isGlobalRole } from "../auth/roles";
@@ -37,24 +37,42 @@ const AUDIENCE_LABEL = { STUDENTS: "Individual students", BATCHES: "One or more 
 
 /** Create a test: Choose test -> Assign audience -> Choose question source -> Configure -> Review -> Schedule/Publish.
  * Every step is backed by the real API: papers are built from bank questions (referenced, never copied), the exam plan pins exact
- * paper versions, audiences are resolved and checked by the server, and a Global Daily Test is scheduled without being modified. */
+ * paper versions, audiences are resolved and checked by the server, and a Global Test is scheduled without being modified. */
 export default function TestWizardPage() {
+  const [params] = useSearchParams();
+  // Global Tests are scheduled from their own page (Test -> Global Tests); older links to this wizard go there.
+  if (params.get("global")) return <Navigate to={`/tests/global/${params.get("global")}/schedule`} replace />;
   return (
     <>
       <PageHeader crumbs={[<Link key="plans" to="/exam-plans">Exam Plans</Link>, "Create a test"]} title="Create a test"
-        subtitle="Choose the test, who takes it, where its questions come from, its rules, then review and schedule it." />
+        subtitle="Choose who takes it, where its questions come from, its rules, then review and schedule it." />
       <NeedBranch>{({ providerId, branchId }) => <Wizard key={branchId} providerId={providerId} branchId={branchId} />}</NeedBranch>
     </>
   );
 }
 
-function Wizard({ providerId, branchId }: { providerId: string; branchId: string }) {
+/** Test -> Global Tests -> Schedule: the same scheduling steps (audience, window, generation) for one published Global Test, whose
+ * papers, duration and marking stay exactly as published. The plan is created by POST /global-tests/{id}/schedule. */
+export function ScheduleGlobalTestPage() {
+  const { testId = "" } = useParams();
+  const test = useApi<GlobalTest>(`/api/v1/global-tests/${testId}`);
+  return (
+    <>
+      <PageHeader crumbs={[<Link key="g" to="/tests/global">Global Tests</Link>, <Link key="t" to={`/tests/global/${testId}`}>{test.data?.name ?? "Global Test"}</Link>, "Schedule"]}
+        title="Schedule Global Test" subtitle="Choose the branch, who takes it and when. Its papers, duration and marking cannot be changed." />
+      {test.error && <Alert kind="error">{test.error}</Alert>}
+      {test.data && test.data.status !== "PUBLISHED" ? <Alert kind="warn">Only a published Global Test can be scheduled; this one is {test.data.status.toLowerCase()}.</Alert>
+        : <NeedBranch>{({ providerId, branchId }) => <Wizard key={branchId} providerId={providerId} branchId={branchId} globalTestId={testId} />}</NeedBranch>}
+    </>
+  );
+}
+
+function Wizard({ providerId, branchId, globalTestId }: { providerId: string; branchId: string; globalTestId?: string }) {
   const { me, can } = useAuth();
   const scope = useScope();
-  const [params] = useSearchParams();
-  const [step, setStep] = useState<Step>(params.get("global") ? "audience" : "test");
-  const [kind, setKind] = useState<"new" | "global">(params.get("global") ? "global" : "new");
-  const [globalId, setGlobalId] = useState(params.get("global") ?? "");
+  const [step, setStep] = useState<Step>(globalTestId ? "audience" : "test");
+  const kind: "new" | "global" = globalTestId ? "global" : "new";
+  const globalId = globalTestId ?? "";
   const [audience, setAudience] = useState<Audience>({ audience_type: "BATCHES", batch_ids: [], student_ids: [] });
   const [sourceMode, setSourceMode] = useState<"bank" | "papers">("bank");
   const [selected, setSelected] = useState<Map<string, BankQuestion>>(new Map());
@@ -76,11 +94,11 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
   const canPublishPapers = can("paper.approve") && can("paper.publish");
   const providerLevel = isGlobalRole(me?.primary_role) || me?.primary_role === "PROVIDER_ADMIN";
 
-  // A Global Daily Test fixes duration, exam type, class and marking; its name is the default test name.
+  // A Global Test fixes duration, exam type, class and marking; its name is the default test name.
   const locked = kind === "global" && gt ? { duration: String(gt.duration_minutes), exam_type: gt.exam_type ?? "", target_class: gt.target_class ?? "", marking: "PER_QUESTION" as const } : null;
   const eff = { ...cfg, ...(locked ?? {}), name: cfg.name || (kind === "global" ? gt?.name ?? "" : "") };
 
-  const steps = STEPS.filter((s) => kind === "new" || s.id !== "source");
+  const steps = STEPS.filter((s) => kind === "new" || (s.id !== "source" && s.id !== "test"));
   const index = steps.findIndex((s) => s.id === step);
   const go = (delta: number) => setStep(steps[Math.min(Math.max(index + delta, 0), steps.length - 1)].id);
 
@@ -97,7 +115,7 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
 
   const preview = useAudiencePreview(branchId, audience);
   const valid: Record<Step, string | null> = {
-    test: kind === "global" && !gt ? "Choose a published Global Daily Test." : null,
+    test: kind === "global" && !gt ? "Choose a published Global Test." : null,
     audience: audience.audience_type === "BATCHES" && audience.batch_ids.length === 0 ? "Choose at least one batch."
       : audience.audience_type === "STUDENTS" && audience.student_ids.length === 0 ? "Choose at least one student."
         : preview.data?.not_eligible_student_ids.length ? "Remove the students who are not actively enrolled with this provider." : null,
@@ -165,7 +183,8 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
       <Card>
         <h2>{result.plan.status === "DRAFT" ? "Draft saved" : result.job ? "Test generated" : "Test scheduled"}</h2>
         {result.plan.status === "DRAFT" && <p>The plan “{result.plan.name}” is saved as a draft. It generates nothing until you activate it on the Exam Plans page.</p>}
-        {result.plan.status !== "DRAFT" && !result.job && <p>“{result.plan.name}” is scheduled.{eff.generateAt ? ` It is generated automatically at ${fmt(eff.generateAt)}.` : " Generate it from the Exam Plans page when you are ready."}</p>}
+        {result.plan.status !== "DRAFT" && !result.job && <p>“{result.plan.name}” is scheduled.{eff.generateAt ? ` It is generated automatically at ${fmt(eff.generateAt)}.`
+          : kind === "global" ? " Generate it from the Global Test's page when you are ready." : " Generate it from the Exam Plans page when you are ready."}</p>}
         {result.job && (
           <Alert kind={result.job.status === "FAILED" ? "error" : result.job.status === "PARTIAL" ? "warn" : "success"}>
             Generation {result.job.status.toLowerCase()}{result.job.error ? `: ${result.job.error}` : ""}.
@@ -173,7 +192,8 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
             {result.job.exam_id && <> <Link to={`/exams/${result.job.exam_id}`}>Open the exam</Link></>}
           </Alert>
         )}
-        <div className="row"><Link className="btn secondary" to="/exam-plans">Back to Exam Plans</Link></div>
+        <div className="row">{kind === "global" ? <Link className="btn secondary" to={`/tests/global/${globalId}`}>Back to the Global Test</Link>
+          : <Link className="btn secondary" to="/exam-plans">Back to Exam Plans</Link>}</div>
       </Card>
     );
   }
@@ -193,17 +213,12 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
           <h2>What do you want to conduct?</h2>
           <div className="choice-grid" role="radiogroup" aria-label="Test type">
             <label className={`choice ${kind === "new" ? "selected" : ""}`}>
-              <input type="radio" name="kind" checked={kind === "new"} onChange={() => setKind("new")} />
+              <input type="radio" name="kind" checked={kind === "new"} readOnly />
               <strong>Create a new test</strong>
               <span className="muted small">One subject, several subjects or a complete exam, from the question bank or from papers.</span>
             </label>
-            <label className={`choice ${kind === "global" ? "selected" : ""}`}>
-              <input type="radio" name="kind" checked={kind === "global"} onChange={() => setKind("global")} />
-              <strong>Global Daily Test</strong>
-              <span className="muted small">A test published by the platform, assigned exactly as published.</span>
-            </label>
           </div>
-          {kind === "global" && <GlobalPicker value={globalId} onChange={setGlobalId} />}
+          <p className="muted small">To assign a test published by the platform, open <Link to="/tests/global">Test → Global Tests</Link> and choose “Schedule”.</p>
         </Card>
       )}
 
@@ -244,7 +259,7 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
       {step === "configure" && (
         <Card>
           <h2>Configure the examination</h2>
-          {kind === "global" && <Alert kind="info">A Global Daily Test keeps its own papers, duration ({gt?.duration_minutes} min) and per-question marking. You choose its name, audience and dates.</Alert>}
+          {kind === "global" && <Alert kind="info">A Global Test keeps its own papers, duration ({gt?.duration_minutes} min) and per-question marking. You choose its name, audience and dates.</Alert>}
           <div className="grid cols-3">
             <Field label="Test name" value={eff.name} onChange={(e) => setCfg({ ...cfg, name: e.target.value })} />
             <Field label="Exam type" value={eff.exam_type} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, exam_type: e.target.value })} placeholder="NEET" />
@@ -275,7 +290,7 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
         <Card>
           <h2>Review</h2>
           <dl className="facts">
-            <dt>Test</dt><dd>{kind === "global" ? <>Global Daily Test “{gt?.name}” <StatusBadge status="PUBLISHED" /></> : eff.name}</dd>
+            <dt>Test</dt><dd>{kind === "global" ? <>Global Test “{gt?.name}” <StatusBadge status="PUBLISHED" /></> : eff.name}</dd>
             <dt>Name students see</dt><dd>{eff.name}</dd>
             <dt>Question source</dt><dd>{kind === "global" ? "The published test's platform papers (unchanged)" : sourceMode === "bank" ? `Question bank: ${selected.size} selected questions` : "Existing / uploaded papers"}</dd>
             <dt>Questions</dt><dd>{questionCount} in {sections.length} subject(s)</dd>
@@ -301,7 +316,7 @@ function Wizard({ providerId, branchId }: { providerId: string; branchId: string
           )}
           {submit.error && <Alert kind="error">{submit.error}</Alert>}
           <div className="row wizard-submit">
-            <Button variant="secondary" busy={submit.busy} onClick={() => void save("draft")}>Save as draft</Button>
+            {kind === "new" && <Button variant="secondary" busy={submit.busy} onClick={() => void save("draft")}>Save as draft</Button>}
             <Button busy={submit.busy} onClick={() => void save("schedule")}>Schedule</Button>
             {can("exam.generate") && <Button busy={submit.busy} onClick={() => void save("now")}>Schedule & generate now</Button>}
           </div>
@@ -333,27 +348,6 @@ function FixedPolicies() {
         <li>Questions appear in paper order (shuffling is not available).</li>
       </ul>
     </details>
-  );
-}
-
-function GlobalPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const list = useApi<Page<GlobalTest>>("/api/v1/global-tests?status=PUBLISHED&page_size=50");
-  if (list.loading && !list.data) return <Spinner />;
-  if (list.error) return <Alert kind="error">{list.error}</Alert>;
-  const items = (list.data?.items ?? []).filter((t) => t.status === "PUBLISHED");
-  if (items.length === 0) return <EmptyState title="No published Global Daily Tests" />;
-  return (
-    <div className="choice-grid" role="radiogroup" aria-label="Global Daily Test">
-      {items.map((t) => (
-        <label key={t.test_id} className={`choice ${value === t.test_id ? "selected" : ""}`}>
-          <input type="radio" name="global" checked={value === t.test_id} onChange={() => onChange(t.test_id)} />
-          <strong>{t.name}</strong>
-          <span className="small">{[t.exam_type, t.target_class].filter(Boolean).join(" · ")}</span>
-          <span className="muted small">{t.sections.map((s) => s.subject).join(", ")} · {t.question_count} questions · {Number(t.total_marks)} marks · {t.duration_minutes} min</span>
-          {t.published_at && <span className="muted small">Published {new Date(t.published_at).toLocaleDateString()}{t.publisher ? ` by ${t.publisher}` : ""}</span>}
-        </label>
-      ))}
-    </div>
   );
 }
 

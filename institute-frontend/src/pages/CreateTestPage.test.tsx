@@ -13,7 +13,7 @@ const SCOPE = {
     { branch_id: "b2", name: "Mumbai", whole_branch_allowed: true, batches: [{ batch_id: "bc", name: "JEE C" }], subjects: [{ subject_id: "phy", name: "Physics" }] },
   ],
 };
-const PUBLISHED = { plan_id: "plan1", exam_id: "ex1", exam_version_id: "ev1", name: "Weekly Physics", state: "PUBLISHED_DELIVERY_PENDING", exam_status: "PUBLISHED",
+const PUBLISHED = { plan_id: "plan1", test_type: "DAILY", series_id: null, global_test_id: null, exam_id: "ex1", exam_version_id: "ev1", name: "Weekly Physics", state: "PUBLISHED_DELIVERY_PENDING", exam_status: "PUBLISHED",
   delivery_status: "PENDING", error: null, provider_name: "Alpha Academy", home_branch: "Pune", start_at: "2030-01-01T09:00:00Z", end_at: "2030-01-01T12:00:00Z",
   duration_minutes: 60, subjects: ["Physics"], audience: { type: "TARGETED", branches: [], batches: ["NEET A"], students: 0 }, assigned_students: 2,
   question_count: 3, total_marks: "12.00", marking: { mode: "UNIFORM", correct: 4, wrong: 1 }, created_at: "2029-12-31T00:00:00Z" };
@@ -44,7 +44,7 @@ afterEach(() => { vi.unstubAllGlobals(); pvStatus = "VALIDATED"; });
 async function throughFiles() {
   renderApp("/tests/new");
   const steps = within(await screen.findByRole("list", { name: "Steps" })).getAllByRole("listitem").map((li) => li.textContent);
-  expect(steps).toEqual(["1. Audience", "2. Test name", "3. Subjects", "4. Details & schedule", "5. Question paper & answer key", "6. Import & validate", "7. Review & publish"]);
+  expect(steps).toEqual(["1. Audience", "2. Test name", "3. Subjects", "4. Details & schedule", "5. Question papers", "6. Import & validate", "7. Review & publish"]);
   expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);    // audience first
   fireEvent.click(screen.getByLabelText("Pune"));
   fireEvent.click(await screen.findByLabelText("NEET A"));
@@ -66,12 +66,13 @@ async function throughFiles() {
 }
 
 describe("Test sidebar", () => {
-  it("shows a Test section with Create Test and Scheduled Tests to every role holding test.create, and to nobody else", () => {
-    for (const role of ["SUPER_ADMIN", "ADMIN", "PROVIDER_ADMIN", "TEACHER"] as const) {
+  it("offers Daily and Weekly Tests to every role holding test.create, and only the scheduled tests to teachers", () => {
+    for (const role of ["SUPER_ADMIN", "ADMIN", "PROVIDER_ADMIN", "BRANCH_ADMIN"] as const) {
       const items = visibleNav(["test.create"], role).filter((i) => i.section === "Test").map((i) => i.label);
-      expect(items).toEqual(["Create Test", "Scheduled Tests"]);
+      expect(items).toEqual(["Daily Test", "Weekly Test", "Scheduled Tests"]);
     }
-    expect(visibleNav(["exam.read", "paper.read"], "BRANCH_ADMIN").some((i) => i.section === "Test")).toBe(false);
+    expect(visibleNav(["exam.read", "paper.read"], "TEACHER").filter((i) => i.section === "Test").map((i) => i.label)).toEqual(["Scheduled Tests"]);
+    expect(visibleNav(["paper.read"], "TEACHER").some((i) => i.section === "Test")).toBe(false);
   });
 });
 
@@ -91,7 +92,7 @@ describe("Create Test wizard", () => {
     expect(screen.getByText("12")).toBeTruthy();                                                       // 3 questions x 4
     fireEvent.click(screen.getByRole("button", { name: "Publish test" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }));
-    expect(await screen.findByText("Test published")).toBeTruthy();
+    expect(await screen.findByText("Daily Test published")).toBeTruthy();
     const order = calls.filter((c) => c.method === "POST").map((c) => c.path);
     expect(order.indexOf("/api/v1/paper-versions/pv1/approve")).toBeLessThan(order.indexOf("/api/v1/paper-versions/pv1/publish"));
     expect(order.indexOf("/api/v1/paper-versions/pv1/publish")).toBeLessThan(order.indexOf("/api/v1/tests"));
@@ -165,6 +166,37 @@ describe("Create Test wizard", () => {
     expect(post(calls, "/api/v1/tests/audience")[0].body).toEqual({ provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["bb"], student_ids: ["STU000003"] });
   });
 
+  it("uses an approved paper from the bank instead of an upload", async () => {
+    const calls = stubApi(routes({
+      "/api/v1/tests/papers": { items: [{ paper_id: "pp1", title: "Physics Set 4", scope: "PROVIDER", source: "Own",
+        published_version: { paper_version_id: "pvbank", version_no: 2, question_count: 5, total_marks: "20.00" } }], total: 1 },
+      "/api/v1/paper-versions/pvbank": { latest_version: { status: "PUBLISHED", question_count: 5, total_marks: "20.00" } },
+    }));
+    renderApp("/tests/new");
+    fireEvent.click(await screen.findByLabelText("Pune"));
+    fireEvent.click(await screen.findByLabelText("NEET A"));
+    next();
+    fireEvent.change(await screen.findByLabelText("Test name"), { target: { value: "Bank Physics" } });
+    next();
+    fireEvent.click(await screen.findByLabelText("Physics"));
+    next();
+    await screen.findByLabelText("Duration (minutes)");
+    next();
+    fireEvent.click(await screen.findByLabelText("Use an approved paper"));
+    fireEvent.change(await screen.findByLabelText("Approved paper"), { target: { value: "pp1" } });
+    expect(await screen.findByText(/approved paper chosen/)).toBeTruthy();
+    next();
+    fireEvent.click(await screen.findByRole("button", { name: "Import & Validate" }));                 // nothing to import for a bank paper
+    expect(await screen.findByText(/in the approved paper chosen from the bank/)).toBeTruthy();
+    next();
+    fireEvent.click(await screen.findByRole("button", { name: "Publish test" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }));
+    expect(await screen.findByText("Daily Test published")).toBeTruthy();
+    expect(calls.some((c) => c.path.includes("/papers/upload"))).toBe(false);
+    expect(calls.some((c) => c.path.includes("/paper-versions/pvbank/approve") || c.path.includes("/paper-versions/pvbank/publish"))).toBe(false);
+    expect(post(calls, "/api/v1/tests")[0].body).toMatchObject({ subjects: [{ subject_id: "phy", paper_version_id: "pvbank" }] });
+  });
+
   it("reports a failed publication honestly", async () => {
     stubApi(routes({ "POST /api/v1/tests": fail(409, { code: "PUBLICATION_FAILED", message: "Publication refused: not every subject's paper was available." }) }));
     await throughFiles();
@@ -174,7 +206,7 @@ describe("Create Test wizard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Publish test" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }));
     expect(await screen.findByText(/The test was NOT published/)).toBeTruthy();
-    expect(screen.queryByText("Test published")).toBeNull();
+    expect(screen.queryByText("Daily Test published")).toBeNull();
   });
 });
 
@@ -186,5 +218,14 @@ describe("Scheduled Tests", () => {
     expect(screen.getByText("Published, delivery in progress")).toBeTruthy();
     expect(screen.getByText("Not published (failed)")).toBeTruthy();
     expect(screen.getAllByText("batches: NEET A")).toHaveLength(2);
+    expect(within(screen.getByRole("table")).getAllByText("Daily")).toHaveLength(2);
+  });
+
+  it("filters by test type through the API", async () => {
+    const calls = stubApi(routes({ "/api/v1/tests": page([{ ...PUBLISHED, test_type: "WEEKLY", series_id: "s1", name: "Saturday Physics" }]) }));
+    renderApp("/tests");
+    expect(await screen.findByRole("link", { name: "Weekly Test plan" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "WEEKLY" } });
+    await waitFor(() => expect(calls.some((c) => c.path === "/api/v1/tests" && c.search.get("test_type") === "WEEKLY")).toBe(true));
   });
 });

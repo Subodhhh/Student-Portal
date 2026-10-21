@@ -1,5 +1,7 @@
 import CreateTestPage from "./pages/CreateTestPage";
+import GlobalTestsPage, { GlobalTestDetailPage } from "./pages/GlobalTestsPage";
 import ScheduledTestsPage from "./pages/ScheduledTestsPage";
+import WeeklyTestPage, { NewWeeklyTestPage, WeeklyTestDetailPage } from "./pages/WeeklyTestPage";
 import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
 import "./styles/base.css";
 import { AuthProvider } from "./auth/AuthContext";
@@ -21,7 +23,7 @@ import RoleManagementPage, { RoleCategoryPage } from "./pages/StaffPage";
 import StudentsPage from "./pages/StudentsPage";
 import SubjectsPage from "./pages/SubjectsPage";
 import SystemHealthPage from "./pages/SystemHealthPage";
-import TestWizardPage from "./pages/TestWizardPage";
+import TestWizardPage, { ScheduleGlobalTestPage } from "./pages/TestWizardPage";
 
 function Forbidden() {
   return <div className="auth-wrap"><Card className="auth-card"><h1>Access denied</h1><p>Your role cannot open this page.</p><Link to="/">Back to dashboard</Link></Card></div>;
@@ -67,9 +69,19 @@ export function AppRoutes() {
         </Route>
           <Route element={<ProtectedRoute perm="examplan.manage" />}><Route path="composite" element={<CompositePage />} /></Route>
           <Route element={<ProtectedRoute perm="test.create" />}>
-            <Route path="tests" element={<ScheduledTestsPage />} />
             <Route path="tests/new" element={<CreateTestPage />} />
+            <Route path="tests/weekly/new" element={<NewWeeklyTestPage />} />
           </Route>
+          <Route element={<ProtectedRoute anyPerm={["test.create", "exam.read"]} />}>
+            <Route path="tests" element={<ScheduledTestsPage />} />
+            <Route path="tests/weekly" element={<WeeklyTestPage />} />
+            <Route path="tests/weekly/:seriesId" element={<WeeklyTestDetailPage />} />
+          </Route>
+          <Route element={<ProtectedRoute anyPerm={["examplan.manage", "paper.publish"]} />}>
+            <Route path="tests/global" element={<GlobalTestsPage />} />
+            <Route path="tests/global/:testId" element={<GlobalTestDetailPage />} />
+          </Route>
+          <Route element={<ProtectedRoute perm="examplan.manage" />}><Route path="tests/global/:testId/schedule" element={<ScheduleGlobalTestPage />} /></Route>
           {/* Internal diagnostics: not in any menu, still available to the platform owner at this address. */}
           <Route element={<ProtectedRoute perm="settings.platform" />}><Route path="system-health" element={<SystemHealthPage />} /></Route>
           <Route element={<ProtectedRoute perm="exam.read" />}>

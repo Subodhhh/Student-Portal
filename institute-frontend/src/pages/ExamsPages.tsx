@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { GlobalTestsPanel } from "../components/globalTests";
 import NeedBranch from "../components/NeedBranch";
-import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge, Tabs, TextAreaField } from "../components/ui";
+import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 
@@ -21,14 +20,10 @@ const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
 const AUDIENCE: Record<string, string> = { BATCHES: "Batches", BRANCH: "Whole branch", INSTITUTE: "Whole institute", STUDENTS: "Selected students" };
 
 export function ExamPlansPage() {
-  const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "plans";
-  return (
-    <>
-      <Tabs active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })} tabs={[{ id: "plans", label: "Exam plans" }, { id: "global", label: "Global Daily Tests" }]} />
-      {tab === "global" ? <GlobalTestsPanel /> : <NeedBranch>{({ branchId }) => <Plans branchId={branchId} />}</NeedBranch>}
-    </>
-  );
+  const [params] = useSearchParams();
+  // Global Tests moved to Test -> Global Tests; old links (?tab=global) go there.
+  if (params.get("tab") === "global") return <Navigate to="/tests/global" replace />;
+  return <NeedBranch>{({ branchId }) => <Plans branchId={branchId} />}</NeedBranch>;
 }
 
 function Plans({ branchId }: { branchId: string }) {
@@ -51,7 +46,7 @@ function Plans({ branchId }: { branchId: string }) {
           <>
             <DataTable rows={list.data?.items ?? []} rowKey={(p) => p.plan_id} empty={<EmptyState title="No exam plans" hint="Create a test to generate exams automatically." />}
               columns={[
-                { header: "Plan", render: (p) => <><strong>{p.name}</strong>{p.global_test_name && <div className="muted small">Global Daily Test: {p.global_test_name}</div>}</> },
+                { header: "Plan", render: (p) => <><strong>{p.name}</strong>{p.global_test_name && <div className="muted small">Global Test: {p.global_test_name}</div>}</> },
                 { header: "Audience", render: (p) => `${AUDIENCE[p.audience_type] ?? p.audience_type}${p.audience_type === "BATCHES" ? ` (${p.batch_ids.length})` : p.audience_type === "STUDENTS" ? ` (${p.student_ids.length})` : ""}` },
                 { header: "Window", render: (p) => `${fmt(p.start_at)} → ${fmt(p.end_at)}` },
                 { header: "Duration", render: (p) => `${p.duration_minutes} min` },
@@ -201,7 +196,7 @@ export function ExamDetailPage() {
             <dt>Timer</dt><dd>One shared timer of {e.duration_minutes} minutes; starting inside the window gives the full duration</dd>
             <dt>Attempts</dt><dd>One attempt per student, resumable; students who never start are marked missed</dd>
             <dt>Results</dt><dd>After evaluation; answers reviewable once the window has closed</dd>
-            {e.settings?.global_test_id && <><dt>Source</dt><dd>Global Daily Test (platform papers, unchanged)</dd></>}
+            {e.settings?.global_test_id && <><dt>Source</dt><dd>Global Test (platform papers, unchanged)</dd></>}
             {!!e.settings?.skipped_duplicates && <><dt>Duplicates</dt><dd>{e.settings.skipped_duplicates} student(s) not assigned: they already have this test for the same time</dd></>}
           </dl>
         </Card>
