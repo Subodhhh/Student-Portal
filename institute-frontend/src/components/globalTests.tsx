@@ -16,9 +16,9 @@ type Subject = { subject_id: string; name: string };
 
 const subjectsOf = (t: GlobalTest) => t.sections.map((s) => s.subject ?? "Subject").join(", ");
 
-/** Global Daily Tests: platform administrators create, publish, withdraw and derive them; providers see published tests and schedule
- * them for their own students (the published test itself never changes). */
-export function GlobalTestsPanel() {
+/** Global Tests: platform administrators create, publish, withdraw and derive them; providers see published tests, schedule
+ * them for their own students and (with `onContribute`) offer papers for them. The published test itself never changes. */
+export function GlobalTestsPanel({ onContribute }: { onContribute?: (t: GlobalTest) => void } = {}) {
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
   const [page, setPage] = useState(1);
@@ -33,7 +33,7 @@ export function GlobalTestsPanel() {
   return (
     <div className="stack">
       <p className="muted">
-        {platform ? "Tests published by the platform. Providers schedule a published test for their own students; once published, a test never changes (derive a copy to make a new one)."
+        {platform ? "Tests published by the platform. Providers schedule a published test for their own students; once published, a test never changes (create a new version to change it)."
           : "Published by the platform. Scheduling one assigns it to your students exactly as published: its papers, duration and marking cannot be changed."}
       </p>
       <div className="toolbar">
@@ -42,7 +42,7 @@ export function GlobalTestsPanel() {
             <option value="">All</option><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option><option value="WITHDRAWN">Withdrawn</option>
           </SelectField>
         )}
-        {platform && <Button onClick={() => { setNotice(""); setEditing("new"); }}>New Global Daily Test</Button>}
+        {platform && <Button onClick={() => { setNotice(""); setEditing("new"); }}>New Global Test</Button>}
       </div>
       {notice && <Alert kind="success">{notice}</Alert>}
       {act.error && !confirm && <Alert kind="error">{act.error}</Alert>}
@@ -50,9 +50,9 @@ export function GlobalTestsPanel() {
       {list.loading && !list.data ? <Spinner /> : (
         <>
           <DataTable rows={list.data?.items ?? []} rowKey={(t) => t.test_id}
-            empty={<EmptyState title={platform ? "No Global Daily Tests yet" : "No published Global Daily Tests"} hint={platform ? "Build platform papers in Question Bank & Papers, then create a test from them." : undefined} />}
+            empty={<EmptyState title={platform ? "No Global Tests yet" : "No published Global Tests"} hint={platform ? "Build platform papers in Question Bank & Papers, then create a test from them." : undefined} />}
             columns={[
-              { header: "Test", render: (t) => <><strong>{t.name}</strong>{t.description && <div className="muted small">{t.description}</div>}</> },
+              { header: "Test", render: (t) => <><Link to={`/tests/global/${t.test_id}`}><strong>{t.name}</strong></Link>{t.description && <div className="muted small">{t.description}</div>}</> },
               { header: "Exam / class", render: (t) => [t.exam_type, t.target_class].filter(Boolean).join(" · ") || "—" },
               { header: "Subjects", render: subjectsOf },
               { header: "Questions", render: (t) => t.question_count },
@@ -61,14 +61,15 @@ export function GlobalTestsPanel() {
               { header: "Status", render: (t) => <><StatusBadge status={t.status} />{t.published_at && <div className="muted small">{new Date(t.published_at).toLocaleDateString()}{t.publisher ? ` · ${t.publisher}` : ""}</div>}</> },
               { header: "Actions", render: (t) => (
                 <div className="row">
-                  {!platform && t.status === "PUBLISHED" && can("examplan.manage") && <Link className="btn small" to={`/exam-plans/new?global=${t.test_id}`}>Schedule</Link>}
+                  {t.status === "PUBLISHED" && can("examplan.manage") && <Link className="btn small" to={`/tests/global/${t.test_id}/schedule`}>Schedule</Link>}
+                  {onContribute && t.status === "PUBLISHED" && <Button small variant="secondary" onClick={() => onContribute(t)}>Offer a paper</Button>}
                   {platform && t.status === "DRAFT" && <Button small variant="secondary" onClick={() => setEditing(t)}>Edit</Button>}
                   {platform && t.status === "DRAFT" && <Button small onClick={() => setConfirm({ kind: "publish", test: t })}>Publish</Button>}
                   {platform && t.status === "PUBLISHED" && <Button small variant="danger" onClick={() => setConfirm({ kind: "withdraw", test: t })}>Withdraw</Button>}
                   {platform && t.status !== "DRAFT" && <Button small variant="secondary" busy={act.busy} onClick={() => void act.run(async () => {
                     const copy = await api<GlobalTest>(`/api/v1/global-tests/${t.test_id}/derive`, { method: "POST" });
                     done(`Created the draft “${copy.name}”. The original is unchanged.`);
-                  })}>Derive copy</Button>}
+                  })}>Create new version</Button>}
                 </div>
               ) },
             ]} />
@@ -94,9 +95,12 @@ export function GlobalTestsPanel() {
   );
 }
 
-function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; onClose: () => void; onDone: (t: GlobalTest) => void }) {
+export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; onClose: () => void; onDone: (t: GlobalTest) => void }) {
   const papers = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100");
   const subjects = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
+  // Platform copies of approved provider contributions, labelled so the administrator knows where a paper came from.
+  const contributed = useApi<Page<{ global_paper_id: string | null; provider_name: string | null; test_name: string }>>("/api/v1/global-test-contributions?status=APPROVED&page_size=100");
+  const origin = (paperId: string) => contributed.data?.items.find((c) => c.global_paper_id === paperId);
   const [f, setF] = useState({ name: test?.name ?? "", description: test?.description ?? "", exam_type: test?.exam_type ?? "", target_class: test?.target_class ?? "",
     duration: String(test?.duration_minutes ?? 60) });
   const [picked, setPicked] = useState<string[]>(test?.sections.map((s) => s.paper_version_id) ?? []);
@@ -106,7 +110,7 @@ function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; on
   const toggle = (vid: string) => setPicked((c) => (c.includes(vid) ? c.filter((x) => x !== vid) : [...c, vid]));
   const ready = f.name.trim().length >= 3 && Number(f.duration) > 0 && Number(f.duration) <= 720 && picked.length > 0;
   return (
-    <Modal title={test ? `Edit draft: ${test.name}` : "New Global Daily Test"} onClose={onClose}>
+    <Modal title={test ? `Edit draft: ${test.name}` : "New Global Test"} onClose={onClose}>
       {error && <Alert kind="error">{error}</Alert>}
       <Field label="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
       <TextAreaField label="Description (optional)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
@@ -116,6 +120,7 @@ function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; on
         <Field label="Duration (minutes)" type="number" min={1} max={720} value={f.duration} onChange={(e) => setF({ ...f, duration: e.target.value })} />
       </div>
       <h3>Sections: approved platform papers (one per subject)</h3>
+      <p className="muted small">Approved provider contributions appear here once their platform copy has passed the normal paper approval. Choose one paper per subject.</p>
       {papers.loading && !papers.data ? <Spinner /> : usable.length === 0 ? (
         <EmptyState title="No approved platform papers" hint="Build platform papers in Question Bank & Papers and approve them first." />
       ) : (
@@ -126,6 +131,7 @@ function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; on
               <input type="checkbox" checked={picked.includes(p.latest_version!.paper_version_id)} onChange={() => toggle(p.latest_version!.paper_version_id)} />
               {sName(p.subject_id)}: {p.title} v{p.latest_version!.version_no} · {p.latest_version!.question_count} questions · {Number(p.latest_version!.total_marks)} marks
               <StatusBadge status={p.latest_version!.status} />
+              {origin(p.paper_id) && <span className="muted small">contributed by {origin(p.paper_id)!.provider_name} for {origin(p.paper_id)!.test_name}</span>}
             </label>
           ))}
         </fieldset>

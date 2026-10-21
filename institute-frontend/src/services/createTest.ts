@@ -1,11 +1,11 @@
 import { api } from "./api";
 
-// Types and pure helpers of the Create Test wizard (kept out of the page module for fast refresh).
+// Types and pure helpers of the Daily Test wizard and the Weekly Test form (kept out of the page modules for fast refresh).
 
 export type StepId = "audience" | "name" | "subjects" | "details" | "files" | "validate" | "review";
 export const STEPS: { id: StepId; label: string }[] = [
   { id: "audience", label: "Audience" }, { id: "name", label: "Test name" }, { id: "subjects", label: "Subjects" },
-  { id: "details", label: "Details & schedule" }, { id: "files", label: "Question paper & answer key" },
+  { id: "details", label: "Details & schedule" }, { id: "files", label: "Question papers" },
   { id: "validate", label: "Import & validate" }, { id: "review", label: "Review & publish" },
 ];
 
@@ -16,16 +16,37 @@ export type ScopeResponse = {
 export type CheckError = { field: string; value: string | null; message: string };
 export type UploadError = { row: number | null; field: string | null; message: string; question?: string };
 export type SubjectReport = {
-  ok: boolean; subject_id: string; message?: string; errors: UploadError[]; reused?: boolean;
+  ok: boolean; subject_id: string; message?: string; errors: UploadError[]; reused?: boolean; fromBank?: boolean;
   paper_version_id?: string; question_count?: number; total_marks?: string;
   summary: { questions_detected: number; questions_valid: number; questions_failed: number; threshold_exceeded: boolean; critical: boolean } | null;
 };
+export type TestType = "DAILY" | "WEEKLY" | "GLOBAL";
+export const TEST_TYPE_LABEL: Record<TestType, string> = { DAILY: "Daily", WEEKLY: "Weekly", GLOBAL: "Global" };
+export type TestPaper = {
+  paper_id: string; title: string; scope: string; source: "Own" | "Shared" | "Platform";
+  published_version: { paper_version_id: string; version_no: number; question_count: number; total_marks: string } | null;
+};
 export type ScheduledTest = {
-  plan_id: string; exam_id: string | null; exam_version_id: string | null; name: string; state: string; exam_status: string | null; delivery_status: string | null;
+  plan_id: string; test_type: TestType; series_id: string | null; global_test_id: string | null; exam_id: string | null; exam_version_id: string | null; name: string; state: string; exam_status: string | null; delivery_status: string | null;
   error: string | null; provider_name: string | null; home_branch: string | null; start_at: string; end_at: string; duration_minutes: number; subjects: string[];
   audience: { type: string; branches: string[]; batches: string[]; students: number }; assigned_students: number; question_count: number | null; total_marks: string | null;
   marking: { mode: string; correct?: number; wrong?: number } | null; created_at: string;
 };
+
+// ---- audience selection shared by the Daily and Weekly Test pages (components/testAudience.tsx renders it)
+export type AudienceState = { branchIds: string[]; wholeIds: string[]; batchIds: string[]; students: Map<string, string> };
+export const emptyAudience = (): AudienceState => ({ branchIds: [], wholeIds: [], batchIds: [], students: new Map() });
+
+/** Subjects available in EVERY selected branch. */
+export function subjectsInAll(scope: ScopeResponse, branchIds: string[]) {
+  const chosen = scope.branches.filter((b) => branchIds.includes(b.branch_id));
+  return chosen.length === 0 ? [] : chosen[0].subjects.filter((s) => chosen.every((b) => b.subjects.some((x) => x.subject_id === s.subject_id)));
+}
+
+export function audienceReady(a: AudienceState): string | null {
+  if (a.branchIds.length === 0) return "Select at least one branch.";
+  return a.wholeIds.length || a.batchIds.length || a.students.size ? null : "Select an entire branch, a batch or a student.";
+}
 
 export function audienceBody(providerId: string, branchIds: string[], wholeIds: string[], batchIds: string[], studentIds: string[]) {
   return { provider_id: providerId, branch_ids: branchIds, whole_branch_ids: wholeIds.filter((b) => branchIds.includes(b)), batch_ids: batchIds, student_ids: studentIds };

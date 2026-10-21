@@ -120,7 +120,7 @@ function PlatformDashboard({ d }: { d: Platform & Dash }) {
             <StatCard label="Platform subjects" value={d.subjects} to="/subjects" hint={`${d.subjects_offered} offered by providers`} />
             <StatCard label="Bank questions" value={d.questions} to="/papers" hint={`${published} published papers`} />
             <StatCard label="Upcoming exams" value={n(d.upcoming_exams)} to="/exams" hint={`${d.recent_exams_30d} completed in 30 days`} />
-            <StatCard label="Global Daily Tests" value={n(d.global_tests_published)} to="/exam-plans?tab=global" hint="published" />
+            <StatCard label="Global Tests" value={n(d.global_tests_published)} to="/exam-plans?tab=global" hint="published" />
             <StatCard label="Open support requests" value={d.open_tickets} to="/support" tone={d.open_tickets ? "warn" : undefined} />
             {d.unpaid_invoices > 0 && <StatCard label="Unpaid invoices" value={d.unpaid_invoices} to="/billing" tone="warn" />}
             <StatCard label="Unread notifications" value={n(d.unread_notifications)} to="/notifications" />

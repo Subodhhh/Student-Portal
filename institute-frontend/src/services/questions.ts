@@ -5,7 +5,7 @@ import { api } from "./api";
 export type QuestionVersion = {
   question_version_id: string; question_id: string; version_no: number; stem: string; option_a: string; option_b: string; option_c: string; option_d: string;
   correct_option: string | null; explanation: string | null; topic: string | null; marks_positive: string; marks_negative: string;
-  answers_hidden?: boolean;   // a Global Daily Test question before the provider's review point
+  answers_hidden?: boolean;   // a Global Test question before the provider's review point
 };
 export type BankQuestion = {
   question_id: string; scope: "PROVIDER" | "GLOBAL"; provider_id: string | null; branch_id: string | null; subject_id: string; status: string;

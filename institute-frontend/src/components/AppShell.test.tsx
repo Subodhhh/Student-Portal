@@ -59,7 +59,7 @@ describe("shared header", () => {
     const nav = await screen.findByRole("complementary", { name: "Primary" });
     const links = within(nav).getAllByRole("link").map((a) => a.textContent);
     expect(links).toEqual(["Dashboard", "Providers & Branches", "Role Management", "Students & Enrollments", "Subjects", "Question Bank & Papers",
-      "Exam Plans", "Composite Tests", "Exams & Results", "Audit Log", "Platform Settings", "Support", "Billing", "My Account"]);
+      "Global Tests", "Scheduled Tests", "Exam Plans", "Exams & Results", "Audit Log", "Platform Settings", "Support", "Billing", "My Account"]);
   });
 });
 

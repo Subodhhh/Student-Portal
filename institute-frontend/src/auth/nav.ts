@@ -17,6 +17,16 @@ const item = (to: string, rest: Omit<NavItem, "label" | "to"> = {}, role?: Role)
   ...rest,
 });
 
+// Test: the three test types and the scheduled tests (Composite Tests are retired; their history stays at /composite).
+// Daily and Weekly Tests: admins with test.create. Global Tests: the platform manages them, provider staff who can publish papers
+// contribute to them, provider admins schedule them. Scheduled Tests: also teachers (exam.read, the subjects they teach).
+const TEST_SECTION: NavItem[] = [
+  item("/tests/new", { perm: "test.create", section: "Test" }),
+  item("/tests/weekly", { perm: "test.create", section: "Test" }),
+  item("/tests/global", { anyPerm: ["examplan.manage", "paper.publish"], section: "Test" }),
+  item("/tests", { anyPerm: ["test.create", "exam.read"], section: "Test" }),
+];
+
 // Super Admin: the platform-wide menu. Batches (a provider's student grouping) and Service Health (internal diagnostics,
 // still reachable at /system-health) are deliberately not listed; Notifications are reached from the dashboard.
 const SUPER_ADMIN_NAV: NavItem[] = [
@@ -26,10 +36,8 @@ const SUPER_ADMIN_NAV: NavItem[] = [
   item("/students", { perm: "enrollment.manage" }),
   item("/subjects", { perm: "subject.manage" }),
   item("/papers", { perm: "paper.read" }),
-  item("/tests/new", { perm: "test.create", section: "Test" }),
-  item("/tests", { perm: "test.create", section: "Test" }),
+  ...TEST_SECTION,
   item("/exam-plans", { perm: "examplan.manage" }),
-  item("/composite", { perm: "examplan.manage" }),
   item("/exams", { perm: "exam.read" }),
   item("/audit", { perm: "audit.read" }),
   item("/settings", { perm: "settings.platform" }, "SUPER_ADMIN"),
@@ -48,10 +56,8 @@ const NAV: NavItem[] = [
   item("/subjects", { anyPerm: ["subject.manage", "teaching.assign"] }),
   item("/batches", { perm: "batch.manage" }),
   item("/papers", { perm: "paper.read" }),
-  item("/tests/new", { perm: "test.create", section: "Test" }),
-  item("/tests", { perm: "test.create", section: "Test" }),
+  ...TEST_SECTION,
   item("/exam-plans", { perm: "examplan.manage" }),
-  item("/composite", { perm: "examplan.manage" }),
   item("/exams", { perm: "exam.read" }),
   item("/notifications"),
   item("/support"),

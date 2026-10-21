@@ -2,23 +2,25 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useScope } from "../auth/ScopeContext";
 import ScopeBar from "../components/ScopeBar";
-import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, PageHeader, SearchField, SelectField, Spinner, StatusBadge, TextAreaField } from "../components/ui";
+import { AudienceFields, PaperPicker } from "../components/testAudience";
+import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, PageHeader, SelectField, Spinner, StatusBadge, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api } from "../services/api";
 import {
-  STEPS, type CheckError, type ScopeResponse, type ScheduledTest, type StepId, type SubjectReport, type UploadError,
-  audienceBody, draftBody, localToIso, newRequestKey, reportCsv, summarize,
+  STEPS, type AudienceState, type CheckError, type ScopeResponse, type ScheduledTest, type StepId, type SubjectReport, type UploadError,
+  audienceBody, audienceReady, draftBody, emptyAudience, localToIso, newRequestKey, reportCsv, subjectsInAll, summarize,
 } from "../services/createTest";
 
-// Test -> Create Test. The order is mandatory: audience, name, subjects, details & schedule, files, import & validate, review & publish.
-// Every gate is decided by the server (scope, audience, metadata, the import itself, publication); the page only collects input.
+// Test -> Daily Test (formerly Create Test). The order is mandatory: audience, name, subjects, details & schedule, question papers (a new
+// paper + answer key, or an approved paper from the bank), import & validate, review & publish. Every gate is decided by the server
+// (scope, audience, metadata, the import itself, paper availability, publication); the page only collects input.
 
 export default function CreateTestPage() {
   const scope = useScope();
   if (scope.loading) return <Spinner />;
   return (
     <>
-      <PageHeader subtitle="Choose who takes the test first, then describe it, upload each subject's question paper and answer key, validate them and publish." />
+      <PageHeader subtitle="A one-off test: choose who takes it, describe it, give each subject a new question paper and answer key or an approved paper from the bank, validate and publish." />
       <ScopeBar branch={false} />
       {!scope.providerId ? <EmptyState title="No provider available" hint="There is no provider you can create tests for." />
         : <Wizard key={scope.providerId} providerId={scope.providerId} />}
@@ -34,10 +36,7 @@ function Errors({ errors }: { errors: CheckError[] }) {
 function Wizard({ providerId }: { providerId: string }) {
   const sc = useApi<ScopeResponse>(`/api/v1/tests/scope?provider_id=${providerId}`);
   const [step, setStep] = useState<StepId>("audience");
-  const [branchIds, setBranchIds] = useState<string[]>([]);
-  const [wholeIds, setWholeIds] = useState<string[]>([]);
-  const [batchIds, setBatchIds] = useState<string[]>([]);
-  const [students, setStudents] = useState<Map<string, string>>(new Map());   // id -> label
+  const [aud, setAud] = useState<AudienceState>(emptyAudience);
   const [eligible, setEligible] = useState<{ count: number; sample: { student_id: string; name: string | null }[]; key: string } | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -49,6 +48,8 @@ function Wizard({ providerId }: { providerId: string }) {
       marking: "UNIFORM" as "UNIFORM" | "PER_QUESTION", correct: "4", wrong: "1", exam_type: "", target_class: "" };
   });
   const [files, setFiles] = useState<Record<string, { paper?: File; key?: File }>>({});
+  const [source, setSource] = useState<Record<string, "upload" | "bank">>({});      // per subject; upload by default
+  const [bankPaper, setBankPaper] = useState<Record<string, string>>({});            // subject -> chosen paper_id
   const [reports, setReports] = useState<Record<string, SubjectReport>>({});
   const [errors, setErrors] = useState<CheckError[]>([]);
   const [confirm, setConfirm] = useState(false);
@@ -58,14 +59,15 @@ function Wizard({ providerId }: { providerId: string }) {
 
   if (sc.loading && !sc.data) return <Spinner />;
   if (sc.error || !sc.data) return <Alert kind="error">{sc.error || "Could not load what you may target."}</Alert>;
-  if (sc.data.branches.length === 0) return <EmptyState title="Nothing to target" hint="You have no branch (or teaching assignment) in this provider where you may create tests." />;
+  if (sc.data.branches.length === 0) return <EmptyState title="Nothing to target" hint="You have no branch in this provider where you may create tests." />;
   const scopeData = sc.data;
+  const { branchIds, wholeIds, batchIds, students } = aud;
   const homeBranch = branchIds[0] ?? "";
   const chosenBranches = scopeData.branches.filter((b) => branchIds.includes(b.branch_id));
-  // subjects allowed in EVERY selected branch (a teacher must teach the subject wherever the test goes)
-  const subjectsAllowed = chosenBranches.length === 0 ? [] : chosenBranches[0].subjects.filter((s) => chosenBranches.every((b) => b.subjects.some((x) => x.subject_id === s.subject_id)));
+  const subjectsAllowed = subjectsInAll(scopeData, branchIds);
   const subjectName = (id: string) => subjectsAllowed.find((s) => s.subject_id === id)?.name ?? scopeData.branches.flatMap((b) => b.subjects).find((s) => s.subject_id === id)?.name ?? "Subject";
   const audience = audienceBody(providerId, branchIds, wholeIds, batchIds, [...students.keys()]);
+  const fromBank = (sid: string) => source[sid] === "bank";
   const audienceKey = JSON.stringify(audience);
   const reportKey = (sid: string) => `${homeBranch}:${sid}`;
   const validated = subjectIds.length > 0 && subjectIds.every((sid) => reports[reportKey(sid)]?.ok);
@@ -74,12 +76,13 @@ function Wizard({ providerId }: { providerId: string }) {
 
   // ---- local completeness of each step (the server then decides)
   const ready: Record<StepId, string | null> = {
-    audience: branchIds.length === 0 ? "Select at least one branch." : !(wholeIds.length || batchIds.length || students.size) ? "Select an entire branch, a batch or a student." : null,
+    audience: audienceReady(aud),
     name: name.trim().length < 3 ? "Enter a test name (at least 3 characters)." : null,
     subjects: subjectIds.length === 0 ? "Select at least one subject." : null,
     details: !(Number(meta.duration) > 0) ? "Duration must be positive." : !meta.start || !meta.end ? "Choose when the window opens and closes."
       : new Date(meta.end) <= new Date(meta.start) ? "The window must close after it opens." : meta.marking === "UNIFORM" && !(Number(meta.correct) >= 1 && Number(meta.wrong) >= 0) ? "Enter the marks for correct and wrong answers." : null,
-    files: subjectIds.some((sid) => !files[sid]?.paper || !files[sid]?.key) && !validated ? "Choose a question paper AND an answer key for every subject." : null,
+    files: validated ? null : subjectIds.some((sid) => (fromBank(sid) ? !reports[reportKey(sid)]?.ok : !files[sid]?.paper || !files[sid]?.key))
+      ? "For every subject choose a question paper AND an answer key, or an approved paper from the bank." : null,
     validate: validated ? null : "Run Import & Validate until every subject passes.",
     review: null,
   };
@@ -104,20 +107,20 @@ function Wizard({ providerId }: { providerId: string }) {
     go(STEPS[idx + 1].id);
   });
 
-  // ---- branch / batch / student selection with dependent invalidation
-  const toggleBranch = (id: string) => {
-    const on = !branchIds.includes(id);
-    const nextBranches = on ? [...branchIds, id] : branchIds.filter((b) => b !== id);
-    setBranchIds(nextBranches);
-    if (!on) {
-      const gone = scopeData.branches.find((b) => b.branch_id === id);
-      setWholeIds((w) => w.filter((b) => b !== id));
-      setBatchIds((bs) => bs.filter((b) => !gone?.batches.some((x) => x.batch_id === b)));
-      setStudents(new Map());                  // students were chosen for the previous branch set: choose again
-    }
-    setSubjectIds((ss) => ss.filter((s) => nextBranches.every((bid) => scopeData.branches.find((b) => b.branch_id === bid)?.subjects.some((x) => x.subject_id === s))));
+  // ---- audience changes drop subjects that are no longer available in every selected branch
+  const changeAudience = (next: AudienceState) => {
+    setAud(next);
+    const allowed = new Set(subjectsInAll(scopeData, next.branchIds).map((x) => x.subject_id));
+    setSubjectIds((ss) => ss.filter((x) => allowed.has(x)));
   };
   const toggle = (list: string[], set: (v: string[]) => void, id: string) => set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const dropReport = (sid: string) => setReports((r) => { const n = { ...r }; delete n[reportKey(sid)]; return n; });
+  const chooseBankPaper = (sid: string, paperId: string, versionId: string | null) => act.run(async () => {
+    setBankPaper((b) => ({ ...b, [sid]: paperId }));
+    if (!versionId) { dropReport(sid); return; }
+    const rep = await summarize(sid, versionId, false);
+    setReports((r) => ({ ...r, [reportKey(sid)]: { ...rep, fromBank: true } }));
+  });
 
   // ---- import & validate (the paper service import: all or nothing; identical re-imports return the existing version)
   const importAll = () => act.run(async () => {
@@ -125,6 +128,7 @@ function Wizard({ providerId }: { providerId: string }) {
     const out: Record<string, SubjectReport> = { ...reports };
     for (const sid of subjectIds) {
       const f = files[sid];
+      if (fromBank(sid)) continue;                                                       // an approved bank paper needs no import
       if (out[reportKey(sid)]?.ok && !f?.paper) continue;
       if (!f?.paper || !f?.key) { out[reportKey(sid)] = { ok: false, subject_id: sid, message: "Both the question paper and the answer key are required.", errors: [], summary: null }; continue; }
       const form = new FormData();
@@ -187,22 +191,7 @@ function Wizard({ providerId }: { providerId: string }) {
           <h2>Who takes this test?</h2>
           <p className="muted small">Choose the branches first, then entire branches, batches and/or individual students. <strong>Individual students are added to the
             batches</strong> (they never narrow them); a student reached several ways is assigned once. The server decides who is eligible.</p>
-          <fieldset><legend>Branches</legend>
-            <div className="check-grid">{scopeData.branches.map((b) => (
-              <label key={b.branch_id}><input type="checkbox" checked={branchIds.includes(b.branch_id)} onChange={() => toggleBranch(b.branch_id)} /> {b.name}</label>
-            ))}</div>
-          </fieldset>
-          {chosenBranches.map((b) => (
-            <fieldset key={b.branch_id}><legend>{b.name}</legend>
-              {b.whole_branch_allowed && <label className="row checkbox-field"><input type="checkbox" checked={wholeIds.includes(b.branch_id)} onChange={() => toggle(wholeIds, setWholeIds, b.branch_id)} /> Every student of {b.name}</label>}
-              {!wholeIds.includes(b.branch_id) && (b.batches.length === 0 ? <p className="muted small">No batches available to you here.</p> : (
-                <div className="check-grid">{b.batches.map((x) => (
-                  <label key={x.batch_id}><input type="checkbox" checked={batchIds.includes(x.batch_id)} onChange={() => toggle(batchIds, setBatchIds, x.batch_id)} /> {x.name}</label>
-                ))}</div>
-              ))}
-            </fieldset>
-          ))}
-          {branchIds.length > 0 && <StudentPicker providerId={providerId} branchIds={branchIds} selected={students} onChange={setStudents} />}
+          <AudienceFields providerId={providerId} scope={scopeData} value={aud} onChange={changeAudience} />
           {eligible && !audienceStale && <p><strong>{eligible.count}</strong> eligible student(s).</p>}
         </Card>
       )}
@@ -251,18 +240,28 @@ function Wizard({ providerId }: { providerId: string }) {
 
       {step === "files" && (
         <Card>
-          <h2>Question paper and answer key</h2>
-          <p className="muted small">Both files are required for every subject. Question paper: CSV or one-sheet .xlsx (columns question, option_a–option_d, marks, negative_marks; optional
-            question_id, explanation, topic), Word (.docx) or a text PDF; max 2 MB. Answer key: .csv/.txt, either <code>question_id,correct_option,explanation</code> (matched to the
-            paper's question_id column) or <code>number,answer</code> lines such as <code>1,B</code> (matched by position). Quote explanations that contain commas.</p>
+          <h2>Question papers</h2>
+          <p className="muted small">For each subject either upload a new question paper with its answer key (both required), or choose an approved, published paper
+            from the question bank. Question paper: CSV or one-sheet .xlsx (columns question, option_a–option_d, marks, negative_marks; optional question_id,
+            explanation, topic), Word (.docx) or a text PDF; max 2 MB. Answer key: .csv/.txt, either <code>question_id,correct_option,explanation</code> (matched to
+            the paper's question_id column) or <code>number,answer</code> lines such as <code>1,B</code> (matched by position). Quote explanations that contain commas.</p>
           {subjectIds.map((sid) => (
-            <fieldset key={sid}><legend>{subjectName(sid)}{reports[reportKey(sid)]?.ok ? " — validated" : ""}</legend>
-              <div className="grid cols-2">
-                <div className="field"><label htmlFor={`paper-${sid}`}>Question paper</label>
-                  <input id={`paper-${sid}`} type="file" accept=".csv,.xlsx,.docx,.pdf" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], paper: file } })); setReports((r) => { const n = { ...r }; delete n[reportKey(sid)]; return n; }); }} /></div>
-                <div className="field"><label htmlFor={`key-${sid}`}>Answer key</label>
-                  <input id={`key-${sid}`} type="file" accept=".csv,.txt" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], key: file } })); setReports((r) => { const n = { ...r }; delete n[reportKey(sid)]; return n; }); }} /></div>
+            <fieldset key={sid}><legend>{subjectName(sid)}{reports[reportKey(sid)]?.ok ? (fromBank(sid) ? " — approved paper chosen" : " — validated") : ""}</legend>
+              <div className="row" role="radiogroup" aria-label={`Paper source for ${subjectName(sid)}`}>
+                <label className="row"><input type="radio" name={`src-${sid}`} checked={!fromBank(sid)} onChange={() => { setSource((x) => ({ ...x, [sid]: "upload" })); dropReport(sid); }} /> Upload a new paper</label>
+                <label className="row"><input type="radio" name={`src-${sid}`} checked={fromBank(sid)} onChange={() => { setSource((x) => ({ ...x, [sid]: "bank" })); dropReport(sid); setBankPaper((b) => ({ ...b, [sid]: "" })); }} /> Use an approved paper</label>
               </div>
+              {fromBank(sid) ? (
+                <PaperPicker providerId={providerId} subjectId={sid} label="Approved paper" value={bankPaper[sid] ?? ""} needPublished
+                  onChange={(paper) => void chooseBankPaper(sid, paper?.paper_id ?? "", paper?.published_version?.paper_version_id ?? null)} />
+              ) : (
+                <div className="grid cols-2">
+                  <div className="field"><label htmlFor={`paper-${sid}`}>Question paper</label>
+                    <input id={`paper-${sid}`} type="file" accept=".csv,.xlsx,.docx,.pdf" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], paper: file } })); dropReport(sid); }} /></div>
+                  <div className="field"><label htmlFor={`key-${sid}`}>Answer key</label>
+                    <input id={`key-${sid}`} type="file" accept=".csv,.txt" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], key: file } })); dropReport(sid); }} /></div>
+                </div>
+              )}
             </fieldset>
           ))}
         </Card>
@@ -273,7 +272,8 @@ function Wizard({ providerId }: { providerId: string }) {
           <div className="card-head"><h2>Import & validate</h2>
             <Button busy={act.busy} onClick={() => void importAll()}>Import & Validate</Button></div>
           <p className="muted small">Every question, option, answer and mark is checked. One problem rejects that subject's files completely (nothing is imported); more than five
-            failed questions is reported as a rejection of the whole upload. Fix the files under “Question paper and answer key” and validate again.</p>
+            failed questions is reported as a rejection of the whole upload. Fix the files under “Question papers” and validate again. Approved papers chosen
+            from the bank were validated when they were approved.</p>
           {subjectIds.map((sid) => <SubjectResult key={sid} name={subjectName(sid)} report={reports[reportKey(sid)]} />)}
           {Object.keys(reports).length > 0 && (
             <a className="btn secondary" download="validation-report.csv" href={`data:text/csv;charset=utf-8,${encodeURIComponent(reportCsv(subjectIds.map((sid) => ({ name: subjectName(sid), report: reports[reportKey(sid)] }))))}`}>Download the validation report</a>
@@ -318,31 +318,6 @@ function Wizard({ providerId }: { providerId: string }) {
   );
 }
 
-function StudentPicker({ providerId, branchIds, selected, onChange }: { providerId: string; branchIds: string[]; selected: Map<string, string>; onChange: (m: Map<string, string>) => void }) {
-  const [q, setQ] = useState("");
-  const qs = new URLSearchParams({ provider_id: providerId });
-  branchIds.forEach((b) => qs.append("branch_ids", b));
-  if (q.trim()) qs.set("q", q.trim());
-  const list = useApi<{ items: { student_id: string; name: string | null; branches: string[]; batches: string[] }[]; total: number }>(`/api/v1/tests/students?${qs.toString()}`);
-  const label = (s: { student_id: string; name: string | null; branches: string[]; batches: string[] }) =>
-    `${s.name ?? "Name unavailable"} · ${s.student_id} · ${s.branches.join(", ")}${s.batches.length ? ` (${s.batches.join(", ")})` : ""}`;
-  return (
-    <fieldset><legend>Individual students (optional)</legend>
-      <SearchField label="Find students by name or Student ID" value={q} onChange={setQ} />
-      {list.loading && !list.data ? <Spinner /> : (
-        <div className="check-grid">{(list.data?.items ?? []).slice(0, 50).map((s) => (
-          <label key={s.student_id}><input type="checkbox" aria-label={`Select ${s.student_id}`} checked={selected.has(s.student_id)} onChange={() => {
-            const m = new Map(selected);
-            if (m.has(s.student_id)) m.delete(s.student_id); else m.set(s.student_id, `${s.name ?? s.student_id} (${s.student_id})`);
-            onChange(m);
-          }} /> {label(s)}</label>
-        ))}</div>
-      )}
-      {selected.size > 0 && <p className="small">{selected.size} student(s) selected individually.</p>}
-    </fieldset>
-  );
-}
-
 function SubjectResult({ name, report }: { name: string; report?: SubjectReport }) {
   if (!report) return <p className="muted">{name}: not validated yet.</p>;
   const s = report.summary;
@@ -350,7 +325,7 @@ function SubjectResult({ name, report }: { name: string; report?: SubjectReport 
     <section className="stack" aria-label={`Validation of ${name}`}>
       <h3>{name}: <span className={report.ok ? "report-ok" : "report-bad"}>{report.ok ? "Passed" : "Rejected"}</span></h3>
       {report.ok ? (
-        <p className="small">{report.question_count} questions extracted and valid · total marks {report.total_marks}{report.reused ? " · identical paper already imported, reused (no duplicate)" : ""}.</p>
+        <p className="small">{report.question_count} questions{report.fromBank ? " in the approved paper chosen from the bank" : " extracted and valid"} · total marks {report.total_marks}{report.reused ? " · identical paper already imported, reused (no duplicate)" : ""}.</p>
       ) : (
         <>
           <p className="small">{report.message}</p>
@@ -369,7 +344,7 @@ function SubjectResult({ name, report }: { name: string; report?: SubjectReport 
 function Published({ t }: { t: ScheduledTest }) {
   return (
     <Card>
-      <h2>Test published</h2>
+      <h2>Daily Test published</h2>
       <p><StatusBadge status={t.state} /> {t.state === "PUBLISHED_DELIVERY_PENDING" ? "Assigned to the students; delivery to the student portal is in progress (it is retried automatically)." : "Delivered to the student portal."}</p>
       <dl className="summary-grid">
         <dt>Test</dt><dd>{t.name}</dd>
