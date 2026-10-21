@@ -17,7 +17,9 @@ METHOD = re.compile(r"""method:\s*([^,}]+)""")
 VERBS = re.compile(r"""["'](GET|POST|PUT|PATCH|DELETE)["']""")
 # Action segments chosen at run time; the values are the union declared next to the call (kept in sync by a test below).
 DYNAMIC = {("components/staff.tsx", "confirm.kind"): ["deactivate", "reactivate"],   # "remove" uses its own DELETE call
-           ("components/globalTests.tsx", "confirm.kind"): ["publish", "withdraw"]}
+           ("components/globalTests.tsx", "confirm.kind"): ["publish", "withdraw"],
+           ("pages/GlobalTestsPage.tsx", "kind"): ["approve", "reject", "withdraw"],
+           ("pages/GlobalTestsPage.tsx", "change"): ["publish", "withdraw"]}
 
 
 def _interpolations(path: str, src: str = "") -> list[str]:
@@ -43,6 +45,8 @@ def frontend_calls() -> set[tuple[str, str, str]]:
             # options belong to THIS call only when they follow the path directly: `api(path, { method: ... })`
             method = METHOD.search(tail[:tail.find("})") if "})" in tail else 120]) if tail.lstrip().startswith(",") else None
             verbs = VERBS.findall(method.group(1)) if method else []
+            if text[max(0, m.start() - 20):m.start()].endswith("uploadWithProgress("):
+                verbs = ["POST"]                                # services/api.ts: a multipart POST that reports progress
             before = text[:m.start()].rstrip()
             if len(verbs) == 2 and before.endswith("?"):            # `cond ? PATH_A : PATH_B, { method: cond ? A : B }`: pair by branch
                 verbs = verbs[:1]

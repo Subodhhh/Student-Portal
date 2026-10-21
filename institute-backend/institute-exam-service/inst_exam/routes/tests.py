@@ -1,8 +1,11 @@
-"""Test -> Create Test: one guided workflow for Super Admin, Admin, Provider Admin and Teacher (permission `test.create`).
+"""Test -> Daily Test (formerly Create Test): one guided workflow for Super Admin, Admin, Provider Admin and Branch Admin (permission
+`test.create`; a Branch Admin only for their own branch). Teachers do not create tests: they see the scheduled tests that target a
+student they teach one of the test's subjects to (`exam.read`, services/teacher_scope.py). The Weekly Test (routes/test_series.py) reuses this module's audience, scope and paper rules.
 
-Order: audience -> name -> subjects -> metadata/schedule -> question paper + answer key per subject (paper service upload, all or
-nothing) -> review -> publish. This module owns the audience, the checks and the publication; it reuses the exam plan, the generator,
-the delivery outbox (and its student notifications) and the existing exam/result endpoints.
+Order: audience -> name -> subjects -> metadata/schedule -> per subject either a NEW question paper + answer key (paper service upload,
+all or nothing) or an approved paper already in the bank -> review -> publish. This module owns the audience, the checks and the
+publication; it reuses the exam plan, the generator, the delivery outbox (and its student notifications) and the existing exam/result
+endpoints.
 
 Audience (TARGETED, always within ONE provider) is the UNION of
   * whole branches  (every active batch member of the branch, the BRANCH rule),
@@ -11,8 +14,8 @@ Audience (TARGETED, always within ONE provider) is the UNION of
 Individual students SUPPLEMENT the batches; nobody is assigned twice. The server resolves the final list; the client's list is never
 trusted.
 
-Scope: platform roles - any provider; provider admins - their providers; teachers - only branches, batches and subjects of their
-teaching assignments (a whole branch only with a branch-wide assignment, a student only from a batch/branch they teach).
+Scope: platform roles - any provider; provider admins - their providers; branch admins - their branch. (The teaching-assignment
+branch of the scope rules below remains for any role that holds test.create through teaching assignments; none does today.)
 
 Publication (POST /tests, Idempotency-Key required): validates everything again, creates the plan (unpublished) with its audience and
 exact PUBLISHED paper versions, generates the exam (assignments written in the same transaction as the exam), and publishes it only if
@@ -43,10 +46,12 @@ from institute_common.models.exams import (
     StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch, Provider
-from institute_common.models.papers import Paper, PaperUpload, PaperVersion
+from institute_common.models.papers import Paper, PaperShare, PaperUpload, PaperVersion
 from institute_common.util import Strict
 from inst_exam.routes.exams import api_error_detail
 from inst_exam.services import exam_generation as gen
+from inst_exam.services import teacher_scope
+from inst_exam.services.test_policy import can_create_test
 
 router = APIRouter(prefix="/api/v1", tags=["Tests"])
 PERM = "test.create"
@@ -118,25 +123,35 @@ class TestDraftIn(Strict):
 
 # ------------------------------------------------------------------ scope
 
-def _provider(db: Session, p: Principal, provider_id: UUID) -> Provider:
+def _provider(db: Session, p: Principal, provider_id: UUID, perm: str = PERM) -> Provider:
     prov = db.get(Provider, provider_id)
-    if not prov or prov.deleted_at is not None or not p.can(PERM, provider_id=provider_id) and not any(
-            p.can(PERM, provider_id=provider_id, branch_id=b) for (b,) in db.execute(select(Branch.branch_id).where(Branch.provider_id == provider_id))):
+    if not prov or prov.deleted_at is not None or not p.can(perm, provider_id=provider_id) and not any(
+            p.can(perm, provider_id=provider_id, branch_id=b) for (b,) in db.execute(select(Branch.branch_id).where(Branch.provider_id == provider_id))):
         raise api_error(404, "NOT_FOUND", "Provider not found.")
     return prov
 
 
-def _manager(p: Principal, provider_id: UUID, branch_id: UUID) -> bool:
-    """test.create through a non-teacher role (platform, provider admin) - i.e. the whole branch."""
-    return p.can(PERM, exclude_roles=(Role.TEACHER, Role.BRANCH_ADMIN), provider_id=provider_id, branch_id=branch_id)
+def _manager(p: Principal, provider_id: UUID, branch_id: UUID, perm: str = PERM) -> bool:
+    """`perm` (default test.create) through an admin role for this branch (platform, provider admin, or the branch's own admin) - the
+    whole branch."""
+    return p.can(perm, exclude_roles=(Role.TEACHER,), provider_id=provider_id, branch_id=branch_id)
+
+
+def require_test_type(db: Session, p: Principal, test_type: str) -> None:
+    """Which roles may create which test type (services/test_policy.py): Global Tests are platform-only, Daily and Weekly Tests are
+    for platform, provider and branch admins. Checked in addition to the scoped permission, never instead of it."""
+    if not any(can_create_test(role.value, test_type) for role in p.roles):
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": PERM, "test_type": test_type})
+        raise api_error(403, "FORBIDDEN", f"Your role cannot create {test_type.title()} Tests.")
 
 
 def _teaching(p: Principal, provider_id: UUID, branch_id: UUID):
     return [t for t in p.teaching if t.provider_id == provider_id and t.branch_id == branch_id]
 
 
-def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
-    """Branches, batches and subjects the caller may target, per branch."""
+def branch_scope(db: Session, p: Principal, provider_id: UUID, perm: str = PERM) -> list[dict]:
+    """Branches, batches and subjects the caller may target, per branch (admins of a branch: all of it; teachers: their teaching
+    assignments)."""
     out = []
     branches = db.scalars(select(Branch).where(Branch.provider_id == provider_id, Branch.status == "ACTIVE", Branch.deleted_at.is_(None))
                           .order_by(Branch.name)).all()
@@ -144,7 +159,7 @@ def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
                          .where(ProviderSubject.provider_id == provider_id, Subject.status == "ACTIVE").order_by(Subject.name)).all()
     for br in branches:
         batches = db.scalars(select(Batch).where(Batch.branch_id == br.branch_id, Batch.status == "ACTIVE").order_by(Batch.name)).all()
-        if _manager(p, provider_id, br.branch_id):
+        if _manager(p, provider_id, br.branch_id, perm):
             subjects, allowed_batches, whole = offered, batches, True
         else:
             rows = _teaching(p, provider_id, br.branch_id)
@@ -160,11 +175,11 @@ def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
     return out
 
 
-def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UUID]) -> list[dict]:
+def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UUID], perm: str = PERM) -> list[dict]:
     """Every target and subject against the caller's scope. Returns problems (empty = authorized). Unknown and unauthorized look
     the same (no probing of other providers' data)."""
     problems: list[dict] = []
-    scope = {s["branch_id"]: s for s in branch_scope(db, p, a.provider_id)}
+    scope = {s["branch_id"]: s for s in branch_scope(db, p, a.provider_id, perm)}
     for b in a.branch_ids:
         if b not in scope:
             problems.append({"field": "branch_ids", "value": str(b), "message": "This branch is not available to you."})
@@ -181,7 +196,7 @@ def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UU
             if b in scope and not any(x["subject_id"] == sid for x in scope[b]["subjects"]):
                 problems.append({"field": "subjects", "value": str(sid), "message": f"This subject is not available to you in {scope[b]['name']}."})
     if a.student_ids:
-        reachable = set(student_candidates(db, p, a.provider_id, [b for b in a.branch_ids if b in scope]).keys())
+        reachable = set(student_candidates(db, p, a.provider_id, [b for b in a.branch_ids if b in scope], perm).keys())
         for sid in a.student_ids:
             if sid not in reachable:
                 problems.append({"field": "student_ids", "value": sid,
@@ -189,7 +204,7 @@ def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UU
     return problems
 
 
-def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids: list[UUID]) -> dict[str, dict]:
+def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids: list[UUID], perm: str = PERM) -> dict[str, dict]:
     """Students the caller may target individually: ACTIVE enrollments in the given branches (teachers: in batches they teach,
     or anywhere in a branch they teach as a whole). One entry per global student, listing their enrollments' branches/batches."""
     out: dict[str, dict] = {}
@@ -202,7 +217,7 @@ def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids:
                       .where(Enrollment.provider_id == provider_id, Enrollment.status == "ACTIVE", Enrollment.branch_id.in_(branch_ids))
                       .order_by(Enrollment.student_id)).all()
     for sid, _eid, br, bid, bname in rows:
-        if not _manager(p, provider_id, br):
+        if not _manager(p, provider_id, br, perm):
             teach = _teaching(p, provider_id, br)
             if not (any(t.batch_id is None for t in teach) or (bid and any(t.batch_id == bid for t in teach))):
                 continue
@@ -278,6 +293,7 @@ def test_audience(body: TestAudienceIn, p: Principal = Depends(get_principal), d
 def _check(db: Session, p: Principal, body: TestDraftIn) -> tuple[list[tuple[str, str, UUID | None]], list[dict]]:
     if not p.has_perm(PERM):
         p.require(db, PERM)
+    require_test_type(db, p, "DAILY")
     _provider(db, p, body.audience.provider_id)
     problems = authorize(db, p, body.audience, [s.subject_id for s in body.subjects])
     rows = [] if problems else resolve(db, body.audience)
@@ -295,23 +311,52 @@ def check_test(body: TestDraftIn, p: Principal = Depends(get_principal), db: Ses
     return {"ok": True, "eligible_count": len(rows)}
 
 
-def _paper_problems(db: Session, body: TestDraftIn) -> list[dict]:
+def paper_problem(db: Session, p: Principal, provider_id: UUID, subject_id: UUID, paper: Paper | None) -> str | None:
+    """Why `paper` cannot be used for `subject_id` in a test of `provider_id` (None = usable). Usable: the provider's own paper the
+    caller may read (a branch admin: their branch's papers), a paper another provider shared with it, or a platform paper that is
+    not reserved for a Global Test. Unknown and unauthorized look the same."""
+    if not paper or paper.subject_id != subject_id:
+        return "The paper does not belong to this subject."
+    if paper.scope == "GLOBAL":
+        if not gen.may_use_platform_paper(db, None, paper, None):
+            return "This platform paper belongs to a Global Test; schedule that test instead."
+        return None
+    if paper.provider_id == provider_id:
+        return None if p.can("paper.read", provider_id=provider_id, branch_id=paper.branch_id, subject_id=subject_id) \
+            else "The paper is not available to you."
+    return None if gen.authorized_source(db, provider_id, paper) else "The paper is not available to you."
+
+
+def _paper_problems(db: Session, p: Principal, body: TestDraftIn) -> list[dict]:
     out = []
     for s in body.subjects:
         if not s.paper_version_id:
-            out.append({"field": "subjects", "value": str(s.subject_id), "message": "Upload and validate this subject's question paper and answer key."})
+            out.append({"field": "subjects", "value": str(s.subject_id),
+                        "message": "Upload this subject's question paper and answer key, or choose an approved paper."})
             continue
         v = db.get(PaperVersion, s.paper_version_id)
         paper = db.get(Paper, v.paper_id) if v else None
-        if not paper or paper.provider_id != body.audience.provider_id or paper.subject_id != s.subject_id:
-            out.append({"field": "subjects", "value": str(s.subject_id), "message": "The paper does not belong to this subject and provider."})
+        problem = paper_problem(db, p, body.audience.provider_id, s.subject_id, paper)
+        if problem:
+            out.append({"field": "subjects", "value": str(s.subject_id), "message": problem})
         elif v.status != "PUBLISHED":
             out.append({"field": "subjects", "value": str(s.subject_id), "message": f"The paper version is {v.status}; it must be approved and published."})
-        elif not db.scalar(select(PaperUpload.upload_id).where(PaperUpload.paper_version_id == v.paper_version_id, PaperUpload.status == "VALIDATED",
-                                                               PaperUpload.answer_key_file_id.is_not(None))):
+        elif _uploaded_without_key(db, v.paper_version_id):
             out.append({"field": "subjects", "value": str(s.subject_id),
-                        "message": "This paper was not imported together with a separate answer key, which Create Test requires."})
+                        "message": "This paper was uploaded without a separate answer key, which a Daily Test upload requires."})
     return out
+
+
+def _uploaded_without_key(db: Session, paper_version_id: UUID) -> bool:
+    """An uploaded paper must have come with its separate answer key; a paper built from bank questions (no upload) carries its
+    answers in the questions themselves."""
+    uploads = db.scalars(select(PaperUpload).where(PaperUpload.paper_version_id == paper_version_id, PaperUpload.status == "VALIDATED")).all()
+    return bool(uploads) and not any(u.answer_key_file_id for u in uploads)
+
+
+def test_type(plan: ExamPlan) -> str:
+    """The product's three test types: a scheduled Global Test, an occurrence of a Weekly Test, or a Daily Test (every other plan)."""
+    return "GLOBAL" if plan.global_test_id else "WEEKLY" if plan.series_id else "DAILY"
 
 
 def _plan_summary(db: Session, plan: ExamPlan) -> dict:
@@ -366,7 +411,8 @@ def _summaries(db: Session, plans: list[ExamPlan]) -> list[dict]:
             state = "PUBLISHING"
         else:
             state = "NOT_PUBLISHED"
-        out.append({"plan_id": plan.plan_id, "exam_id": exam.exam_id if exam else None, "exam_version_id": ev.exam_version_id if ev else None,
+        out.append({"plan_id": plan.plan_id, "test_type": test_type(plan), "series_id": plan.series_id, "global_test_id": plan.global_test_id,
+                    "exam_id": exam.exam_id if exam else None, "exam_version_id": ev.exam_version_id if ev else None,
                     "name": plan.name, "state": state, "exam_status": exam.status if exam else None, "delivery_status": ob.status if ob else None,
                     "job_status": job.status if job else None,
                     "error": (job.error if job and job.status != "SUCCEEDED" else None) or (exam.cancelled_reason if exam else None),
@@ -392,7 +438,7 @@ def publish_test(body: TestDraftIn, idempotency_key: str = Header(min_length=8, 
         plan = existing
     else:
         rows, problems = _check(db, p, body)
-        problems += _paper_problems(db, body)
+        problems += _paper_problems(db, p, body)
         if problems:
             raise api_error_detail(422, "TEST_INVALID", "The test was not published.", errors=problems)
         a = body.audience
@@ -462,30 +508,77 @@ def _jsonable(d: dict) -> dict:
     return {k: (str(v) if isinstance(v, (UUID, datetime, Decimal)) else v) for k, v in d.items()}
 
 
-@router.get("/tests")
-def list_tests(provider_id: UUID | None = None, page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Scheduled tests the caller may see: platform roles all, provider admins their providers, teachers the tests they created or
-    whose every subject they teach in the test's branch."""
-    if not p.has_perm(PERM):
-        p.require(db, PERM)
-    stmt = select(ExamPlan).where(ExamPlan.global_test_id.is_(None))
-    if provider_id:
-        stmt = stmt.where(ExamPlan.provider_id == provider_id)
-    provs = p.scope_provider_ids(PERM)
-    if provs is not None:
-        stmt = stmt.where(ExamPlan.provider_id.in_(provs or [None]))
-    plans = db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all()
-    plan_subjects: dict = {}
-    for pid, sid in db.execute(select(ExamPlanSubject.plan_id, ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id.in_([x.plan_id for x in plans] or [None]))):
-        plan_subjects.setdefault(pid, []).append(sid)
+def visible_plans(db: Session, p: Principal, plans: list[ExamPlan]) -> list[ExamPlan]:
+    """Plans the caller may see: admins of the plan's branch (platform, provider, branch admin), its creator, and teachers with at
+    least one targeted student in their teaching scope for one of the plan's subjects (services/teacher_scope.py)."""
     visible = []
     for plan in plans:
         if _manager(p, plan.provider_id, plan.branch_id) or plan.created_by == p.staff_id:
             visible.append(plan)
-            continue
-        subs = plan_subjects.get(plan.plan_id, [])
-        if subs and all(p.can(PERM, provider_id=plan.provider_id, branch_id=plan.branch_id, subject_id=sid) for sid in subs):
+        elif p.can("exam.read", provider_id=plan.provider_id, branch_id=plan.branch_id, exclude_roles=(Role.TEACHER,)):
             visible.append(plan)
+        elif p.has_role(Role.TEACHER) and p.can("exam.read", provider_id=plan.provider_id) and teacher_scope.plan_students(db, p, plan):
+            visible.append(plan)
+    return visible
+
+
+def reader_provider_ids(p: Principal) -> set[UUID] | None:
+    """Providers whose tests the caller may list (test.create or exam.read); None = every provider."""
+    scopes = [p.scope_provider_ids(PERM), p.scope_provider_ids("exam.read")]
+    if any(s is None for s in scopes):
+        return None
+    return set().union(*scopes)
+
+
+@router.get("/tests")
+def list_tests(provider_id: UUID | None = None, test_type: str | None = Query(default=None, pattern="^(DAILY|WEEKLY|GLOBAL)$"),
+               global_test_id: UUID | None = None, page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Scheduled tests of all three types the caller may see (see `visible_plans`), newest first."""
+    if not (p.has_perm(PERM) or p.has_perm("exam.read")):
+        p.require(db, PERM)
+    stmt = select(ExamPlan)
+    if test_type == "GLOBAL":
+        stmt = stmt.where(ExamPlan.global_test_id.is_not(None))
+    elif test_type == "WEEKLY":
+        stmt = stmt.where(ExamPlan.series_id.is_not(None))
+    elif test_type == "DAILY":
+        stmt = stmt.where(ExamPlan.global_test_id.is_(None), ExamPlan.series_id.is_(None))
+    if provider_id:
+        stmt = stmt.where(ExamPlan.provider_id == provider_id)
+    if global_test_id:                                  # the schedules of one Global Test (all of its versions are separate tests)
+        stmt = stmt.where(ExamPlan.global_test_id == global_test_id)
+    provs = reader_provider_ids(p)
+    if provs is not None:
+        stmt = stmt.where(ExamPlan.provider_id.in_(provs or [None]))
+    visible = visible_plans(db, p, db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all())
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
     chunk = visible[(page - 1) * page_size: page * page_size]
     return {"items": _summaries(db, chunk), "total": len(visible), "page": page, "page_size": page_size}
+
+
+@router.get("/tests/papers")
+def test_papers(provider_id: UUID, subject_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Approved papers the caller may use for one subject of a Daily or Weekly Test: the provider's own (within the caller's
+    branches), papers shared with the provider, and platform papers that no Global Test reserves. Each lists its latest published
+    version, if any (a Weekly Test may name a paper whose next version is still being approved)."""
+    if not p.has_perm(PERM):
+        p.require(db, PERM)
+    _provider(db, p, provider_id)
+    papers = db.scalars(select(Paper).where(Paper.subject_id == subject_id, (Paper.provider_id == provider_id) | (Paper.scope == "GLOBAL")
+                                            | Paper.paper_id.in_(select(PaperShare.paper_id).where(
+                                                PaperShare.shared_with_provider_id == provider_id, PaperShare.status == "ACTIVE")))
+                        .order_by(Paper.title)).all()
+    items = []
+    for paper in papers:
+        if paper_problem(db, p, provider_id, subject_id, paper):
+            continue
+        latest = db.scalar(select(PaperVersion).where(PaperVersion.paper_id == paper.paper_id, PaperVersion.status == "PUBLISHED")
+                           .order_by(PaperVersion.version_no.desc()).limit(1))
+        if latest and _uploaded_without_key(db, latest.paper_version_id):
+            latest = None
+        items.append({"paper_id": paper.paper_id, "title": paper.title, "scope": paper.scope,
+                      "source": "Platform" if paper.scope == "GLOBAL" else "Own" if paper.provider_id == provider_id else "Shared",
+                      "published_version": None if not latest else {
+                          "paper_version_id": latest.paper_version_id, "version_no": latest.version_no,
+                          "question_count": latest.question_count, "total_marks": str(latest.total_marks)}})
+    return {"items": items[:200], "total": len(items)}

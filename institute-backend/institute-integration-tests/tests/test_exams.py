@@ -399,13 +399,13 @@ def test_results_scoped_to_assigned_students_and_teacher_batches(client, world, 
         assert [x["student_id"] for x in r["results"]] == ["STU000001", "STU000002"]            # foreign row filtered out
         assert r["summary"] == {"assigned": 2, "submitted": 2, "not_submitted": 0, "average": 8.0, "highest": 10, "lowest": 6}
         assert [x["rank"] for x in r["results"]] == [1, 2]
-        # a teacher assigned to a different batch only sees nothing from this batch
+        # a teacher of the same subject in a different batch does not see the exam at all (nobody targeted is theirs)
         with db_factory() as db:
             for t in db.query(TeacherSubjectAssignment).filter_by(staff_id=ctx["t_phy_id"]):
                 t.batch_id = ctx["other_batch"]
             db.commit()
         th = login(ctx["tphy"])
-        assert client.get(f"{API}/exams/{exam_id}/results", headers=th).json()["results"] == []
+        assert client.get(f"{API}/exams/{exam_id}/results", headers=th).status_code == 403
         assert client.get(f"{API}/exams/{exam_id}/results", headers=login(ctx["tchem"])).status_code == 200
     finally:
         set_result_client(None)

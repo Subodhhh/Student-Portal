@@ -1,4 +1,5 @@
 import CreateTestPage from "./pages/CreateTestPage";
+import { GlobalOccurrencePage } from "./pages/GlobalSchedulePages";
 import GlobalTestsPage, { GlobalTestDetailPage } from "./pages/GlobalTestsPage";
 import ScheduledTestsPage from "./pages/ScheduledTestsPage";
 import WeeklyTestPage, { NewWeeklyTestPage, WeeklyTestDetailPage } from "./pages/WeeklyTestPage";
@@ -17,6 +18,7 @@ import CompositePage from "./pages/CompositePage";
 import { ExamDetailPage, ExamPlansPage, ExamsPage } from "./pages/ExamsPages";
 import { AuditPage, BillingPage, NotificationsPage, SettingsPage, SupportPage } from "./pages/OpsPages";
 import { PaperDetailPage } from "./pages/PapersPage";
+import PhotoPapersPage, { PhotoDraftPage } from "./pages/PhotoPaperPages";
 import QuestionBankPage from "./pages/QuestionBankPage";
 import { BranchDetailPage, ProviderDetailPage, ProvidersPage } from "./pages/ProvidersPage";
 import RoleManagementPage, { RoleCategoryPage } from "./pages/StaffPage";
@@ -63,6 +65,10 @@ export function AppRoutes() {
             <Route path="papers" element={<QuestionBankPage />} />
             <Route path="papers/:versionId" element={<PaperDetailPage />} />
           </Route>
+          <Route element={<ProtectedRoute perm="paper.upload" />}>
+            <Route path="papers/photo" element={<PhotoPapersPage />} />
+            <Route path="papers/photo/:draftId" element={<PhotoDraftPage />} />
+          </Route>
           <Route element={<ProtectedRoute perm="examplan.manage" />}>
           <Route path="exam-plans" element={<ExamPlansPage />} />
           <Route path="exam-plans/new" element={<TestWizardPage />} />
@@ -77,9 +83,10 @@ export function AppRoutes() {
             <Route path="tests/weekly" element={<WeeklyTestPage />} />
             <Route path="tests/weekly/:seriesId" element={<WeeklyTestDetailPage />} />
           </Route>
-          <Route element={<ProtectedRoute anyPerm={["examplan.manage", "paper.publish"]} />}>
+          <Route element={<ProtectedRoute anyPerm={["examplan.manage", "paper.publish", "paper.upload"]} />}>
             <Route path="tests/global" element={<GlobalTestsPage />} />
             <Route path="tests/global/:testId" element={<GlobalTestDetailPage />} />
+            <Route path="tests/global/occurrences/:occurrenceId" element={<GlobalOccurrencePage />} />
           </Route>
           <Route element={<ProtectedRoute perm="examplan.manage" />}><Route path="tests/global/:testId/schedule" element={<ScheduleGlobalTestPage />} /></Route>
           {/* Internal diagnostics: not in any menu, still available to the platform owner at this address. */}
