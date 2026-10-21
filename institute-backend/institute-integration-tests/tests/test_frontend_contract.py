@@ -45,6 +45,8 @@ def frontend_calls() -> set[tuple[str, str, str]]:
             # options belong to THIS call only when they follow the path directly: `api(path, { method: ... })`
             method = METHOD.search(tail[:tail.find("})") if "})" in tail else 120]) if tail.lstrip().startswith(",") else None
             verbs = VERBS.findall(method.group(1)) if method else []
+            if text[max(0, m.start() - 20):m.start()].endswith("uploadWithProgress("):
+                verbs = ["POST"]                                # services/api.ts: a multipart POST that reports progress
             before = text[:m.start()].rstrip()
             if len(verbs) == 2 and before.endswith("?"):            # `cond ? PATH_A : PATH_B, { method: cond ? A : B }`: pair by branch
                 verbs = verbs[:1]

@@ -536,6 +536,9 @@ class OcrQuestion:
 class OcrBackend(Protocol):
     def read_questions(self, image: bytes, mime: str) -> list[OcrQuestion]: ...
 
+    # Photo papers (services/photo_drafts.py) need the page's text lines: [text, weakest word confidence, mean confidence] (0..100).
+    def read_lines(self, image: bytes, mime: str) -> list[list]: ...
+
 
 class OcrRejected(Exception):
     """Raised by a backend that read the page but found it structurally unusable (e.g. a numbering gap): carries row errors."""

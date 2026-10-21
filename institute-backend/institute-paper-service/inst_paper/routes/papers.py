@@ -715,6 +715,13 @@ def upload_paper(branch_id: UUID, subject_id: UUID, title: str = Form(min_length
                    f"The paper was rejected: {summary['failed_questions']} question(s) need correcting. Nothing was imported; fix them and upload again.")
         raise api_error_detail(422, "EXTRACTION_FAILED", message, upload_id=str(upload.upload_id), errors=result.errors[:200], summary=summary)
 
+    return persist_validated_paper(db, p, br, title, existing, result, upload)
+
+
+def persist_validated_paper(db: Session, p: Principal, br: Branch, title: str, existing: Paper | None, result, upload: PaperUpload) -> dict:
+    """Store a fully validated extraction as a new VALIDATED paper version (or refuse an identical paper). Shared by file uploads and
+    accepted photo drafts, so every import path creates papers, questions and history the same way."""
+    branch_id, subject_id = br.branch_id, upload.subject_id
     content_hash = _hash_questions([(q.stem, *q.options.values(), q.correct, q.marks, q.negative) for q in result.questions])
     dup = db.scalar(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
         Paper.branch_id == branch_id, Paper.subject_id == subject_id, PaperVersion.content_hash == content_hash,

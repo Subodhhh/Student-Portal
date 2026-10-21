@@ -66,6 +66,9 @@ def client(client, login):  # noqa: F811
 
         def put(self, url, headers=None, **kw):
             return self._pick(headers).put(url, headers=headers, **kw)
+
+        def delete(self, url, headers=None, **kw):
+            return self._pick(headers).delete(url, headers=headers, **kw)
     return Router()
 
 

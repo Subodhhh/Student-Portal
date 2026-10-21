@@ -123,17 +123,18 @@ class TestDraftIn(Strict):
 
 # ------------------------------------------------------------------ scope
 
-def _provider(db: Session, p: Principal, provider_id: UUID) -> Provider:
+def _provider(db: Session, p: Principal, provider_id: UUID, perm: str = PERM) -> Provider:
     prov = db.get(Provider, provider_id)
-    if not prov or prov.deleted_at is not None or not p.can(PERM, provider_id=provider_id) and not any(
-            p.can(PERM, provider_id=provider_id, branch_id=b) for (b,) in db.execute(select(Branch.branch_id).where(Branch.provider_id == provider_id))):
+    if not prov or prov.deleted_at is not None or not p.can(perm, provider_id=provider_id) and not any(
+            p.can(perm, provider_id=provider_id, branch_id=b) for (b,) in db.execute(select(Branch.branch_id).where(Branch.provider_id == provider_id))):
         raise api_error(404, "NOT_FOUND", "Provider not found.")
     return prov
 
 
-def _manager(p: Principal, provider_id: UUID, branch_id: UUID) -> bool:
-    """test.create through an admin role for this branch (platform, provider admin, or the branch's own admin) - the whole branch."""
-    return p.can(PERM, exclude_roles=(Role.TEACHER,), provider_id=provider_id, branch_id=branch_id)
+def _manager(p: Principal, provider_id: UUID, branch_id: UUID, perm: str = PERM) -> bool:
+    """`perm` (default test.create) through an admin role for this branch (platform, provider admin, or the branch's own admin) - the
+    whole branch."""
+    return p.can(perm, exclude_roles=(Role.TEACHER,), provider_id=provider_id, branch_id=branch_id)
 
 
 def require_test_type(db: Session, p: Principal, test_type: str) -> None:
@@ -148,8 +149,9 @@ def _teaching(p: Principal, provider_id: UUID, branch_id: UUID):
     return [t for t in p.teaching if t.provider_id == provider_id and t.branch_id == branch_id]
 
 
-def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
-    """Branches, batches and subjects the caller may target, per branch."""
+def branch_scope(db: Session, p: Principal, provider_id: UUID, perm: str = PERM) -> list[dict]:
+    """Branches, batches and subjects the caller may target, per branch (admins of a branch: all of it; teachers: their teaching
+    assignments)."""
     out = []
     branches = db.scalars(select(Branch).where(Branch.provider_id == provider_id, Branch.status == "ACTIVE", Branch.deleted_at.is_(None))
                           .order_by(Branch.name)).all()
@@ -157,7 +159,7 @@ def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
                          .where(ProviderSubject.provider_id == provider_id, Subject.status == "ACTIVE").order_by(Subject.name)).all()
     for br in branches:
         batches = db.scalars(select(Batch).where(Batch.branch_id == br.branch_id, Batch.status == "ACTIVE").order_by(Batch.name)).all()
-        if _manager(p, provider_id, br.branch_id):
+        if _manager(p, provider_id, br.branch_id, perm):
             subjects, allowed_batches, whole = offered, batches, True
         else:
             rows = _teaching(p, provider_id, br.branch_id)
@@ -173,11 +175,11 @@ def branch_scope(db: Session, p: Principal, provider_id: UUID) -> list[dict]:
     return out
 
 
-def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UUID]) -> list[dict]:
+def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UUID], perm: str = PERM) -> list[dict]:
     """Every target and subject against the caller's scope. Returns problems (empty = authorized). Unknown and unauthorized look
     the same (no probing of other providers' data)."""
     problems: list[dict] = []
-    scope = {s["branch_id"]: s for s in branch_scope(db, p, a.provider_id)}
+    scope = {s["branch_id"]: s for s in branch_scope(db, p, a.provider_id, perm)}
     for b in a.branch_ids:
         if b not in scope:
             problems.append({"field": "branch_ids", "value": str(b), "message": "This branch is not available to you."})
@@ -194,7 +196,7 @@ def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UU
             if b in scope and not any(x["subject_id"] == sid for x in scope[b]["subjects"]):
                 problems.append({"field": "subjects", "value": str(sid), "message": f"This subject is not available to you in {scope[b]['name']}."})
     if a.student_ids:
-        reachable = set(student_candidates(db, p, a.provider_id, [b for b in a.branch_ids if b in scope]).keys())
+        reachable = set(student_candidates(db, p, a.provider_id, [b for b in a.branch_ids if b in scope], perm).keys())
         for sid in a.student_ids:
             if sid not in reachable:
                 problems.append({"field": "student_ids", "value": sid,
@@ -202,7 +204,7 @@ def authorize(db: Session, p: Principal, a: TestAudienceIn, subject_ids: list[UU
     return problems
 
 
-def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids: list[UUID]) -> dict[str, dict]:
+def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids: list[UUID], perm: str = PERM) -> dict[str, dict]:
     """Students the caller may target individually: ACTIVE enrollments in the given branches (teachers: in batches they teach,
     or anywhere in a branch they teach as a whole). One entry per global student, listing their enrollments' branches/batches."""
     out: dict[str, dict] = {}
@@ -215,7 +217,7 @@ def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids:
                       .where(Enrollment.provider_id == provider_id, Enrollment.status == "ACTIVE", Enrollment.branch_id.in_(branch_ids))
                       .order_by(Enrollment.student_id)).all()
     for sid, _eid, br, bid, bname in rows:
-        if not _manager(p, provider_id, br):
+        if not _manager(p, provider_id, br, perm):
             teach = _teaching(p, provider_id, br)
             if not (any(t.batch_id is None for t in teach) or (bid and any(t.batch_id == bid for t in teach))):
                 continue

@@ -292,6 +292,22 @@ NEW_ROUTES = {
     ("POST", f"{API}/global-test-contributions/{{contribution_id}}/approve"),
     ("POST", f"{API}/global-test-contributions/{{contribution_id}}/reject"),
     ("POST", f"{API}/global-test-contributions/{{contribution_id}}/retry-copy"),
+    # Global Tests: central schedule and provider paper submissions
+    ("GET", f"{API}/global-tests/{{test_id}}/occurrences"), ("POST", f"{API}/global-tests/{{test_id}}/occurrences"),
+    ("POST", f"{API}/global-tests/{{test_id}}/occurrences/plan"), ("POST", f"{API}/global-tests/{{test_id}}/occurrences/publish"),
+    ("GET", f"{API}/global-occurrences/{{occurrence_id}}"), ("PUT", f"{API}/global-occurrences/{{occurrence_id}}"),
+    ("DELETE", f"{API}/global-occurrences/{{occurrence_id}}"), ("POST", f"{API}/global-occurrences/{{occurrence_id}}/cancel"),
+    ("GET", f"{API}/global-occurrences/{{occurrence_id}}/scope"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/students"),
+    ("GET", f"{API}/global-occurrences/{{occurrence_id}}/papers"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/submissions"),
+    ("POST", f"{API}/global-occurrences/{{occurrence_id}}/submissions"), ("POST", f"{API}/global-paper-submissions/{{submission_id}}/withdraw"),
+    ("GET", f"{API}/global-schedule"),
+    # photo papers: drafts from mobile photos with a separate answer key, previewed and confirmed before import
+    ("POST", f"{API}/branches/{{branch_id}}/subjects/{{subject_id}}/photo-drafts"), ("GET", f"{API}/photo-drafts"),
+    ("GET", f"{API}/photo-drafts/{{draft_id}}"), ("POST", f"{API}/photo-drafts/{{draft_id}}/files"),
+    ("PUT", f"{API}/photo-drafts/{{draft_id}}/files/order"), ("DELETE", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}"),
+    ("GET", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}/content"), ("POST", f"{API}/photo-drafts/{{draft_id}}/extract"),
+    ("PUT", f"{API}/photo-drafts/{{draft_id}}/questions"), ("POST", f"{API}/photo-drafts/{{draft_id}}/accept"),
+    ("POST", f"{API}/photo-drafts/{{draft_id}}/discard"),
 }
 
 

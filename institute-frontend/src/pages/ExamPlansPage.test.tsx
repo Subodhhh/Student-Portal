@@ -8,7 +8,7 @@ const common = { "/api/v1/notifications/unread-count": { unread_count: 0 }, "/ap
 const test = (status: string, extra: Record<string, unknown> = {}) => ({ test_id: "gt1", name: "Daily Physics #7", description: null, exam_type: "NEET", target_class: "Class 12",
   duration_minutes: 30, status, derived_from_test_id: null, created_at: "2026-10-10T00:00:00Z", published_at: status === "DRAFT" ? null : "2026-10-11T00:00:00Z",
   publisher: null, question_count: 20, total_marks: "80.00", sections: [{ position: 1, subject_id: "phy", subject: "Physics", paper_id: "gp", paper_title: "Platform Physics",
-    paper_version_id: "gpv", version_no: 2, version_status: "PUBLISHED", question_count: 20, total_marks: "80.00" }], ...extra });
+    paper_version_id: "gpv", version_no: 2, version_status: "PUBLISHED", question_count: 20, total_marks: "80.00" }], kind: "SECTIONS", subjects: [], marking_mode: "PER_QUESTION", marks_correct: null, marks_wrong: null, generate_lead_minutes: 60, occurrences: {}, next_occurrence_at: null, ...extra });
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Exam Plans", () => {
@@ -30,7 +30,7 @@ describe("Exam Plans", () => {
 
   it("lets providers schedule published Global Tests but not manage them", async () => {
     stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["examplan.manage"]), "/api/v1/global-tests": page([test("PUBLISHED")]) });
-    renderApp("/exam-plans?tab=global");
+    renderApp("/tests/global?tab=tests");
     expect(await screen.findByText("Daily Physics #7")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Schedule" }).getAttribute("href")).toBe("/tests/global/gt1/schedule");
     expect(screen.queryByRole("button", { name: /New Global Test|Publish|Withdraw/ })).toBeNull();
