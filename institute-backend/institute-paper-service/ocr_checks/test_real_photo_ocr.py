@@ -69,12 +69,53 @@ def test_a_page_photographed_sideways_is_turned_upright():
     assert [q["option_c"] for q in questions] == ["Mercury", "Sd"]
 
 
-def test_an_unreadable_photo_yields_flags_not_questions():
+def test_an_unreadable_photo_is_refused_with_what_to_retake():
+    from inst_paper.services.extraction import OcrUnreadable
     ocr = TesseractBackend()
     blank = io.BytesIO()
     Image.new("RGB", (900, 600), (205, 205, 205)).save(blank, "JPEG")
-    questions, issues = pd.build_questions([ocr.read_lines(blank.getvalue(), "image/jpeg")], None, 0.98, 500)
-    assert questions == [] and any("No numbered questions" in i for i in issues)
+    with pytest.raises(OcrUnreadable, match="No writing was found"):
+        ocr.read_lines(blank.getvalue(), "image/jpeg")
+    blurred = Image.open(io.BytesIO(render(PAGES[0], seed=7))).filter(ImageFilter.GaussianBlur(9))
+    out = io.BytesIO()
+    blurred.save(out, "JPEG")
+    with pytest.raises(OcrUnreadable):
+        ocr.read_lines(out.getvalue(), "image/jpeg")
+
+
+# ---- the reported example: question 1 photographed (upright or rotated), the answer key photographed separately
+REPORTED = ["1. For a conservative force, the curl of the force is:", "A) Zero", "B) Negative", "C) 1", "D) None"]
+
+
+@pytest.mark.parametrize("page_turn,key_turn", [(0, 0), (90, 0), (0, 270), (270, 90), (180, 0)])
+def test_reported_example_rotated_question_and_separate_key_photo(page_turn, key_turn):
+    ocr = TesseractBackend()
+    page = ocr.read_lines(render(REPORTED, rotate=page_turn, seed=11), "image/jpeg", "page")
+    key = ocr.read_lines(render(["Answer Key", "1. A"], rotate=key_turn, seed=12), "image/jpeg", "key")
+    questions, issues = pd.build_questions([page], key, 0.85, 500)
+    assert len(questions) == 1, (page, key, issues)
+    q = questions[0]
+    assert (q["question"], [q[f"option_{x}"] for x in "abcd"], q["correct"]) == (
+        "For a conservative force, the curl of the force is:", ["Zero", "Negative", "1", "None"], "A"), (q, page, key)
+    assert not any("No numbered questions" in i or "Unreadable answer-key line" in i for i in issues), issues
+
+
+@pytest.mark.parametrize("first", ["(1) What is the SI unit of force?", "Q1 What is the SI unit of force?", "Q.1 What is the SI unit of force?"])
+def test_other_numbering_styles_are_read(first):
+    ocr = TesseractBackend()
+    page = ocr.read_lines(render([first, "A) Newton", "B) Joule", "C) Watt", "D) Pascal"], seed=13), "image/jpeg")
+    questions, issues = pd.build_questions([page], [["1. A", 99, 99]], 0.85, 500)
+    assert [(q["number"], q["option_a"], q["correct"]) for q in questions] == [(1, "Newton", "A")], (page, issues)
+
+
+def test_options_on_one_line_and_a_multi_entry_key_photo():
+    ocr = TesseractBackend()
+    page = ocr.read_lines(render(["1. What is the SI unit of force?", "A) Newton    B) Joule    C) Watt    D) Pascal",
+                                  "2. Which gas do plants absorb from the air?", "(a) Oxygen  (b) Carbon dioxide", "(c) Nitrogen  (d) Helium"], seed=14), "image/jpeg")
+    key = ocr.read_lines(render(["Answer Key", "1-A    2-B"], seed=15), "image/jpeg", "key")
+    questions, issues = pd.build_questions([page], key, 0.85, 500)
+    got = [([q[f"option_{x}"] for x in "abcd"], q["correct"]) for q in questions]
+    assert got == [(["Newton", "Joule", "Watt", "Pascal"], "A"), (["Oxygen", "Carbon dioxide", "Nitrogen", "Helium"], "B")], (page, key, issues)
 
 
 def test_a_smudged_answer_key_photo_never_gives_an_unchecked_answer():

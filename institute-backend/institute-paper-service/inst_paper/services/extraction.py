@@ -83,7 +83,7 @@ class AnswerKey:
 
 
 _ANSWER_KEY: ContextVar[AnswerKey | None] = ContextVar("answer_key", default=None)
-_KEY_LINE = re.compile(r"^\s*(?:q(?:uestion)?\s*\.?\s*)?(\d{1,4})\s*(?:[.):,;\-\t]|\s)\s*\(?([A-Za-z])\)?\s*[.,;]?\s*$")
+_KEY_LINE = re.compile(r"^\s*(?:q(?:uestion)?\s*\.?\s*)?(\d{1,4})\s*(?:[.):,;\-\t]|\s)\s*\(?([A-Za-z])\)?\s*[.,;]?\s*$", re.IGNORECASE)
 _ID_COLS = {"question_id", "qid", "id"}
 _NUM_COLS = {"question", "question_no", "question_number", "no", "no.", "number", "q", "#", "sr", "sr_no"}
 _ANS_COLS = {"correct_option", "correct", "answer", "ans", "key", "correct_answer"}
@@ -537,7 +537,13 @@ class OcrBackend(Protocol):
     def read_questions(self, image: bytes, mime: str) -> list[OcrQuestion]: ...
 
     # Photo papers (services/photo_drafts.py) need the page's text lines: [text, weakest word confidence, mean confidence] (0..100).
-    def read_lines(self, image: bytes, mime: str) -> list[list]: ...
+    # `purpose` is "page" or "key"; `rotate` (degrees clockwise) overrides the automatic orientation when the uploader corrected it.
+    def read_lines(self, image: bytes, mime: str, purpose: str = "page", rotate: int | None = None) -> list[list]: ...
+
+
+class OcrUnreadable(Exception):
+    """Raised by read_lines when the photo has no usable text (blank, far too blurry or dark): the message tells the uploader what to
+    retake. Nothing is extracted from such a photo."""
 
 
 class OcrRejected(Exception):

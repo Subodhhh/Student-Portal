@@ -3,6 +3,8 @@
   1. POST /branches/{b}/subjects/{s}/photo-drafts           create the draft (Idempotency-Key; a retry returns the same draft)
   2. POST /photo-drafts/{id}/files                          one page photo (kind=PAGE) or answer-key photo/file (kind=ANSWER_KEY) per
                                                             request, at a position; OCR runs on it immediately (seconds per page)
+     POST /photo-drafts/{id}/files/{f}/read-again {rotate} OCR the stored photo again (optionally turned by the uploader); the
+                                                            original stays as uploaded
   3. POST /photo-drafts/{id}/extract                        parse the pages + key into the editable preview (services/photo_drafts.py)
   4. PUT  /photo-drafts/{id}/questions                      corrections (text, options, answers, order, "checked", "needs diagram"),
                                                             every change logged against the OCR text, which is kept as read
@@ -18,7 +20,7 @@ import io
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
-from pydantic import Field
+from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -194,10 +196,7 @@ def add_file(draft_id: UUID, kind: str = Form(pattern="^(PAGE|ANSWER_KEY)$"), po
         backend = extraction.get_ocr_backend()
         if backend is None or not hasattr(backend, "read_lines"):
             raise api_error(503, "OCR_UNAVAILABLE", "Photo papers need the OCR engine, which is not enabled on this server (OCR_ENGINE=tesseract).")
-        try:
-            lines, error = backend.read_lines(data, IMAGE_TYPES[mime]), None
-        except Exception as exc:  # noqa: BLE001 - recorded on the file; the uploader replaces the photo
-            lines, error = [], f"The photo could not be read ({type(exc).__name__}). Retake it flat and well lit."
+        lines, error = _read(backend, data, IMAGE_TYPES[mime], kind, None)
     key, _sha = get_store().save(data)
     sf = StoredFile(provider_id=d.provider_id, storage_key=key, original_name=(file.filename or f"{kind.lower()}-{position}")[:255],
                     content_type="text/csv" if is_text_key else IMAGE_TYPES[mime], size_bytes=len(data), sha256=sha, uploaded_by=p.staff_id)
@@ -213,6 +212,49 @@ def add_file(draft_id: UUID, kind: str = Form(pattern="^(PAGE|ANSWER_KEY)$"), po
     audit.record(db, "paper.photo_draft.file", "SUCCESS", actor=p.staff_id, target_type="photo_draft", target_id=d.draft_id,
                  provider_id=d.provider_id, branch_id=d.branch_id, ip=p.ip, details={"kind": kind, "position": position, "lines": len(lines)})
     return _file_out(row)
+
+
+def _read(backend, data: bytes, mime: str, kind: str, rotate: int | None) -> tuple[list, str | None]:
+    """OCR one photo -> (lines, error for the uploader). A refused or failed photo yields no lines, never partial guesses."""
+    try:
+        return backend.read_lines(data, mime, "key" if kind == "ANSWER_KEY" else "page", rotate), None
+    except extraction.OcrUnreadable as exc:
+        return [], str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the file; the uploader replaces the photo
+        return [], f"The photo could not be read ({type(exc).__name__}). Retake it flat and well lit."
+
+
+class ReadAgainIn(Strict):
+    rotate: int | None = Field(default=None, description="Clockwise turn that makes the photo upright (0, 90, 180, 270); omitted = automatic")
+
+    @field_validator("rotate")
+    @classmethod
+    def _quarter_turns(cls, v):
+        if v is not None and v not in (0, 90, 180, 270):
+            raise ValueError("rotate must be 0, 90, 180 or 270")
+        return v
+
+
+@router.post("/photo-drafts/{draft_id}/files/{draft_file_id}/read-again")
+def read_again(draft_id: UUID, draft_file_id: UUID, body: ReadAgainIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """OCR a stored photo again, e.g. after the uploader turned it upright. The uploaded file is not changed; only its OCR text is
+    replaced. The preview is rebuilt only when the uploader extracts again (corrections are never overwritten silently)."""
+    d = _draft(db, p, draft_id, write=True, lock=True)
+    f = db.get(PhotoDraftFile, draft_file_id)
+    if not f or f.draft_id != d.draft_id:
+        raise api_error(404, "NOT_FOUND", "File not found.")
+    sf = db.get(StoredFile, f.file_id)
+    if sf.content_type not in IMAGE_TYPES.values():
+        raise api_error(422, "NOT_A_PHOTO", "Only photos can be read again; a typed answer key is used as written.")
+    backend = extraction.get_ocr_backend()
+    if backend is None or not hasattr(backend, "read_lines"):
+        raise api_error(503, "OCR_UNAVAILABLE", "Photo papers need the OCR engine, which is not enabled on this server (OCR_ENGINE=tesseract).")
+    f.ocr_lines, f.ocr_error = _read(backend, get_store().read(sf.storage_key), sf.content_type, f.kind, body.rotate)
+    db.commit()
+    audit.record(db, "paper.photo_draft.file", "SUCCESS", actor=p.staff_id, target_type="photo_draft", target_id=d.draft_id,
+                 provider_id=d.provider_id, branch_id=d.branch_id, ip=p.ip,
+                 details={"kind": f.kind, "position": f.position, "read_again": True, "rotate": body.rotate, "lines": len(f.ocr_lines)})
+    return _file_out(f)
 
 
 def _file_out(f: PhotoDraftFile) -> dict:
@@ -284,6 +326,15 @@ def extract(draft_id: UUID, answer_key_only: bool = False, p: Principal = Depend
     key_is_text = bool(keys) and all(db.get(StoredFile, f.file_id).content_type == "text/csv" for f in keys)
     questions, issues = pd.build_questions([f.ocr_lines or [] for f in pages], key_lines, settings.ocr_min_confidence, settings.max_paper_questions,
                                            key_is_text=key_is_text)
+    first_of: dict[str, int] = {}
+    for f in pages:                                    # the same photo uploaded as two pages would duplicate its questions
+        sha = db.get(StoredFile, f.file_id).sha256
+        if sha in first_of:
+            issues.append(f"Page {f.position} is the same photo as page {first_of[sha]}: remove one of them.")
+        first_of.setdefault(sha, f.position)
+    bad_keys = [f.position for f in keys if f.ocr_error]
+    if bad_keys:
+        issues.append(f"Answer-key photo {', '.join(map(str, bad_keys))} could not be read: retake it, or enter those answers by hand.")
     if answer_key_only and d.questions:
         fresh = {q["number"]: q for q in questions}
         merged = []
