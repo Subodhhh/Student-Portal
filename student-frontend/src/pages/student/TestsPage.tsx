@@ -54,6 +54,7 @@ type Test = {
   start_at: string | null;
   end_at: string | null;
   status: string;
+  global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
 };
 
 type Attempt = {
@@ -212,13 +213,15 @@ function TestsPage() {
         return false;
       }
 
+      // A unified Global Test belongs to none of the institutes alone (its subjects come from each of them): shown under every filter.
       const matchesProvider =
         selectedProvider === "All Providers" ||
+        !!test.global_occurrence_id ||
         test.provider.name === selectedProvider;
 
       const searchableText = [
         test.name,
-        test.provider.name,
+        test.global_occurrence_id ? "Global Test" : test.provider.name,
         test.branch.name,
         test.description ?? "",
       ]
@@ -353,7 +356,7 @@ function TestsPage() {
                     </svg>
 
                     <span>
-                      {test.provider.name}
+                      {test.global_occurrence_id ? "Global Test" : test.provider.name}
                     </span>
                   </div>
 

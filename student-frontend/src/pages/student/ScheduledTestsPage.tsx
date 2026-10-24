@@ -18,6 +18,7 @@ type Test = {
   start_at: string | null;
   end_at: string | null;
   status: string;
+  global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
 
   provider: {
     provider_id: string;
@@ -91,6 +92,20 @@ function formatTimeRange(
   }
 
   return `${formatTime(startAt)} - ${formatTime(endAt)}`;
+}
+
+// A unified Global Test is one exam whose subjects come from the student's own institutes: it is shown as the Global Test, never as
+// one of those institutes.
+function TestSource({ test }: { test: Test }) {
+  if (test.global_occurrence_id) {
+    return <span>Global Test</span>;
+  }
+  return (
+    <>
+      <span>{test.provider.name}</span>
+      {test.branch?.name && <span> · {test.branch.name}</span>}
+    </>
+  );
 }
 
 function EmptyState({
@@ -464,16 +479,7 @@ function ScheduledTestsPage() {
                     </div>
 
                     <div className="scheduled-test-provider">
-                      <span>
-                        {test.provider.name}
-                      </span>
-
-                      {test.branch?.name && (
-                        <span>
-                          {" "}
-                          · {test.branch.name}
-                        </span>
-                      )}
+                      <TestSource test={test} />
                     </div>
 
                     <div className="scheduled-test-meta">
@@ -550,16 +556,7 @@ function ScheduledTestsPage() {
                   </div>
 
                   <div className="scheduled-test-provider">
-                    <span>
-                      {test.provider.name}
-                    </span>
-
-                    {test.branch?.name && (
-                      <span>
-                        {" "}
-                        · {test.branch.name}
-                      </span>
-                    )}
+                    <TestSource test={test} />
                   </div>
 
                   {test.description && (

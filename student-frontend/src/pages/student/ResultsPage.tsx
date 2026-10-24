@@ -12,6 +12,7 @@ type Result = {
   test_id: string;
   student_id: string;
   test_name: string;
+  global_occurrence_id?: string | null;  // a unified Global Test: papers from several of your institutes, owned by none of them alone
   provider_id: string;
   provider_name: string;
   branch_id: string;
@@ -108,8 +109,11 @@ function ResultsPage() {
     const searchValue = search.trim().toLowerCase();
 
     return results.filter((result) => {
+      // A unified Global Test result belongs to none of the institutes alone (provider_id is only its anchor): it is listed, labelled
+      // "Global Test", under every institute filter rather than under one institute as if it owned the whole exam.
       const matchesProvider =
         provider === "ALL" ||
+        !!result.global_occurrence_id ||
         result.provider_id === provider;
 
       const matchesSearch =
