@@ -32,7 +32,7 @@ from institute_common.database import utcnow
 from institute_common.models.exams import (
     ExamPlanBranch,
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
-    ExamVersion, ExamVersionPaper, GlobalTest, GlobalTestSection, StudentExamAssignment,
+    ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, GlobalTestSection, StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch
 from institute_common.core.class_levels import class_target
@@ -127,7 +127,14 @@ def resolve_slots(db: Session, plan: ExamPlan) -> Resolution:
         if paper.subject_id != slot.subject_id:
             miss("SUBJECT_MISMATCH", "The paper belongs to a different subject than the slot.")
             continue
-        if not authorized_source(db, plan.provider_id, paper):
+        if slot.source_submission_id:      # unified Global Test plan: authorized by its provider's submission, never by the plan's provider
+            sub = db.get(GlobalPaperSubmission, slot.source_submission_id)
+            if not (sub and plan.global_occurrence_id and sub.occurrence_id == plan.global_occurrence_id and sub.status == "ACTIVE"
+                    and sub.subject_id == slot.subject_id and sub.paper_version_id == version.paper_version_id
+                    and paper.provider_id == sub.provider_id):
+                miss("NOT_AUTHORIZED", "The paper is not an active submission of its provider for this Global Test date.")
+                continue
+        elif not authorized_source(db, plan.provider_id, paper):
             miss("NOT_AUTHORIZED", "The paper is not shared with this provider.")
             continue
         if not may_use_platform_paper(db, plan.global_test_id, paper, version.paper_version_id):
@@ -142,6 +149,8 @@ UNMATCHABLE = "!unmatchable"   # a class code no enrollment has: a plan whose ta
 
 def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
     """The plan's audience resolved from CURRENT data (see `resolve_audience`), including its Class (plan.target_class)."""
+    if unified_sources(db, plan.plan_id):
+        return unified_students(db, plan)
     class_level, problem = class_target(plan.target_class)
     if problem:                 # fail-safe for every reader (generation itself refuses such a plan before calling this)
         class_level = UNMATCHABLE
@@ -153,6 +162,37 @@ def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -
     subject_ids = list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)))
     return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids,
                             subject_ids=subject_ids, class_level=class_level, report=report)
+
+
+def unified_sources(db: Session, plan_id: UUID) -> list[GlobalPaperSubmission]:
+    """The submissions a unified Global Test plan's subjects come from, in slot order (empty for every other plan)."""
+    return list(db.scalars(select(GlobalPaperSubmission).join(ExamPlanSubject, ExamPlanSubject.source_submission_id == GlobalPaperSubmission.submission_id)
+                           .where(ExamPlanSubject.plan_id == plan_id).order_by(ExamPlanSubject.position)))
+
+
+def unified_students(db: Session, plan: ExamPlan) -> list[tuple[str, str, UUID | None]]:
+    """A unified plan's audience: its listed students (each resolved by every contributing submission at the deadline) who are still
+    actively enrolled with EVERY provider whose paper they receive. The plan's own provider/branch play no part. The assignment
+    records the enrollment of the first subject's provider (preferring that submission's branch) only as a reference."""
+    sources = unified_sources(db, plan.plan_id)
+    listed = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id)
+                                           .order_by(ExamPlanStudent.student_id))]
+    active: dict[UUID, dict[str, list[tuple[str, UUID]]]] = {}
+    for prov in {s.provider_id for s in sources}:
+        rows: dict[str, list[tuple[str, UUID]]] = {}
+        for sid, eid, br in db.execute(select(Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id)
+                                       .where(Enrollment.provider_id == prov, Enrollment.status == "ACTIVE", Enrollment.student_id.in_(listed or [""]))
+                                       .order_by(Enrollment.enrollment_id)):
+            rows.setdefault(sid, []).append((eid, br))
+        active[prov] = rows
+    first = sources[0] if sources else None
+    out = []
+    for sid in listed:
+        if first and all(sid in active[prov] for prov in active):
+            mine = active[first.provider_id][sid]
+            eid = next((e for e, br in mine if br == first.branch_id), mine[0][0])
+            out.append((sid, eid, None))
+    return out
 
 
 def subjects_taken(db: Session, enrollment_ids) -> dict[tuple[str, UUID], set[UUID]]:
@@ -249,9 +289,17 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
 
 
 def already_holding_global_test(db: Session, plan: ExamPlan, start: datetime, student_ids: list[str]) -> set[str]:
-    """Students who already have this Global Test for the same start time through ANOTHER plan of the same provider."""
+    """Students who already have this Global Test for the same start time through ANOTHER plan of the same provider; for a unified plan,
+    through ANY other plan of the same occurrence (one exam per student per occurrence, whichever provider)."""
     if not plan.global_test_id or not student_ids:
         return set()
+    if plan.global_occurrence_id and unified_sources(db, plan.plan_id):
+        rows = db.execute(
+            select(StudentExamAssignment.student_id).join(Exam, Exam.exam_id == StudentExamAssignment.exam_id)
+            .join(ExamPlan, ExamPlan.plan_id == Exam.plan_id)
+            .where(ExamPlan.global_occurrence_id == plan.global_occurrence_id, ExamPlan.plan_id != plan.plan_id, Exam.status != "CANCELLED",
+                   StudentExamAssignment.student_id.in_(student_ids))).all()
+        return {sid for (sid,) in rows}
     rows = db.execute(
         select(StudentExamAssignment.student_id)
         .join(ExamVersion, ExamVersion.exam_version_id == StudentExamAssignment.exam_version_id)
@@ -267,6 +315,8 @@ def _event(db: Session, job: ExamGenerationJob, kind: str, details: dict | None 
 
 
 def _notify_failure(db: Session, plan: ExamPlan, job: ExamGenerationJob, message: str) -> None:
+    if unified_sources(db, plan.plan_id):
+        return          # a unified plan belongs to the platform: the failure is on the occurrence (generation_error), not the anchor's inbox
     staff = responsible_staff(db, plan.provider_id, plan.branch_id, institute=plan.audience_type in ("INSTITUTE", "TARGETED"))
     notify(db, staff, kind="EXAM_GENERATION_FAILED", title=f"Exam generation failed: {plan.name}",
            body=f"{message}\n\nRun: {job.run_key}", dedupe=f"genfail:{job.job_id}:{job.attempts}", provider_id=plan.provider_id)
@@ -371,6 +421,7 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
         for pos, r in enumerate(res.resolved, start=1):
             db.add(ExamVersionPaper(exam_version_id=ev.exam_version_id, position=pos, subject_id=r.slot.subject_id,
                                     paper_version_id=r.version.paper_version_id, source_provider_id=r.paper.provider_id,
+                                    source_submission_id=r.slot.source_submission_id,
                                     question_count=r.version.question_count, total_marks=r.version.total_marks))
         for sid, eid, bid in students:
             db.add(StudentExamAssignment(exam_id=exam.exam_id, exam_version_id=ev.exam_version_id, student_id=sid,
@@ -407,11 +458,16 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
 
 def _notify_missing(db: Session, plan: ExamPlan, job: ExamGenerationJob, m: dict) -> None:
     subject_id = UUID(m["subject_id"])
-    staff = responsible_staff(db, plan.provider_id, plan.branch_id, subject_id, institute=plan.audience_type in ("INSTITUTE", "TARGETED"))
+    provider_id, branch_id, institute = plan.provider_id, plan.branch_id, plan.audience_type in ("INSTITUTE", "TARGETED")
+    slot = db.scalar(select(ExamPlanSubject).where(ExamPlanSubject.plan_id == plan.plan_id, ExamPlanSubject.position == m["position"]))
+    if slot and slot.source_submission_id:      # unified plan: tell the provider whose paper it was, never the anchor
+        sub = db.get(GlobalPaperSubmission, slot.source_submission_id)
+        provider_id, branch_id, institute = sub.provider_id, sub.branch_id, True
+    staff = responsible_staff(db, provider_id, branch_id, subject_id, institute=institute)
     notify(db, staff, kind="MISSING_PAPER", title=f"Missing paper: {m.get('subject') or 'subject'} for {plan.name}",
            body=f"{m['detail']} ({m['reason']}). The exam was generated without this subject; "
                 "once the paper is approved it will be used in the next exam.",
-           dedupe=f"missing:{job.job_id}:{m['subject_id']}", provider_id=plan.provider_id)
+           dedupe=f"missing:{job.job_id}:{m['subject_id']}", provider_id=provider_id)
 
 
 def run_due_plans(db: Session, now: datetime | None = None) -> list[ExamGenerationJob]:

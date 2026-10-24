@@ -14,12 +14,12 @@ from sqlalchemy.orm import Session
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
-from institute_common.models.academics import ProviderSubject
+from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.core.taxonomy import Label
 from institute_common.core.class_levels import TargetClass, normalize_class
 from institute_common.models.exams import (
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
-    ExamVersion, ExamVersionPaper, GlobalTest, StudentExamAssignment,
+    ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment
 from institute_common.models.papers import Paper, PaperVersion
@@ -28,7 +28,7 @@ from institute_common.util import Strict
 from institute_common.schemas.common import Page
 from institute_common.core.roles import Role
 from inst_exam.services import exam_generation as gen
-from inst_exam.services import assignment_sync, teacher_scope
+from inst_exam.services import assignment_sync, teacher_scope, unified
 from institute_common.clients.attempt_client import AttemptClient, get_attempt_client
 from institute_common.internal_http import InternalServiceError
 from institute_common.clients.result_client import ResultClient, ResultServiceError, get_result_client
@@ -181,9 +181,9 @@ class JobOut(BaseModel):
 
 class ExamOut(BaseModel):
     exam_id: UUID
-    plan_id: UUID
-    provider_id: UUID
-    branch_id: UUID
+    plan_id: UUID | None             # None only in a provider's view of a unified Global Test exam: the plan and its anchor
+    provider_id: UUID | None         # provider/branch belong to the platform side and may name another provider
+    branch_id: UUID | None
     name: str
     status: str
     exam_version_id: UUID | None = None
@@ -199,6 +199,8 @@ class ExamOut(BaseModel):
     settings: dict | None = None
     delivery_status: str | None = None
     institute_wide: bool = False      # whole-institute exam: visible to every branch admin of the provider (own students only)
+    unified_global: bool = False      # one exam per student for a Global Test date, assembled from several providers' papers
+    visible_subject_ids: list[UUID] | None = None   # a provider's view of a unified exam: only these subjects (None = all)
 
 
 class AssignmentOut(BaseModel):
@@ -395,7 +397,10 @@ def api_error_detail(status: int, code: str, message: str, **extra):
 def list_plans(branch_id: UUID, page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     br = _branch(db, branch_id)
     p.require(db, "examplan.manage", provider_id=br.provider_id, branch_id=branch_id)
-    res = paginate(db, select(ExamPlan).where(ExamPlan.branch_id == branch_id).order_by(ExamPlan.start_at.desc()), page, page_size)
+    stmt = select(ExamPlan).where(ExamPlan.branch_id == branch_id)
+    if not unified.is_platform(p, "examplan.manage"):        # a unified plan is never listed under its anchor branch
+        stmt = stmt.where(~unified.unified_plan_clause(ExamPlan.plan_id))
+    res = paginate(db, stmt.order_by(ExamPlan.start_at.desc()), page, page_size)
     res["items"] = [_plan_out(db, x) for x in res["items"]]
     return res
 
@@ -403,7 +408,7 @@ def list_plans(branch_id: UUID, page: int = 1, page_size: int = 25, p: Principal
 @router.get("/exam-plans/{plan_id}", response_model=PlanOut)
 def get_plan(plan_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     plan = _plan(db, plan_id)
-    p.require(db, "examplan.manage", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "examplan.manage", plan)
     return _plan_out(db, plan)
 
 
@@ -411,7 +416,7 @@ def get_plan(plan_id: UUID, p: Principal = Depends(get_principal), db: Session =
 def update_plan(plan_id: UUID, body: PlanPatch, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Edits affect only FUTURE generations; exams already generated keep their immutable manifest."""
     plan = _plan(db, plan_id)
-    p.require(db, "examplan.manage", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "examplan.manage", plan)
     changes = body.model_dump(exclude_unset=True)
     if plan.global_test_id and {"duration_minutes", "marking_mode", "marks_correct", "marks_wrong"} & changes.keys():
         raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Test keeps its own duration and marking scheme.")
@@ -438,7 +443,7 @@ def update_plan(plan_id: UUID, body: PlanPatch, p: Principal = Depends(get_princ
 @router.put("/exam-plans/{plan_id}/slots", response_model=PlanOut)
 def replace_slots(plan_id: UUID, slots: list[SlotIn], p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     plan = _plan(db, plan_id)
-    p.require(db, "examplan.manage", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "examplan.manage", plan)
     if plan.global_test_id:
         raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Test uses exactly its published papers.")
     if not slots or len(slots) > 20:
@@ -459,7 +464,7 @@ def replace_slots(plan_id: UUID, slots: list[SlotIn], p: Principal = Depends(get
 def generate_exam(plan_id: UUID, body: GenerateIn, idempotency_key: str | None = Header(default=None, max_length=100),
                   p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     plan = _plan(db, plan_id)
-    p.require(db, "exam.generate", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "exam.generate", plan)
     start, end = body.start_at or plan.start_at, body.end_at or plan.end_at
     if end <= start:
         raise api_error(422, "INVALID_WINDOW", "end_at must be after start_at.")
@@ -475,7 +480,7 @@ def generate_exam(plan_id: UUID, body: GenerateIn, idempotency_key: str | None =
 @router.get("/exam-plans/{plan_id}/jobs", response_model=Page[JobOut])
 def plan_jobs(plan_id: UUID, page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     plan = _plan(db, plan_id)
-    p.require(db, "exam.generate", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "exam.generate", plan)
     return paginate(db, select(ExamGenerationJob).where(ExamGenerationJob.plan_id == plan_id).order_by(ExamGenerationJob.started_at.desc()), page, page_size)
 
 
@@ -485,12 +490,34 @@ def job_events(job_id: UUID, p: Principal = Depends(get_principal), db: Session 
     if not job:
         raise api_error(404, "NOT_FOUND", "Job not found.")
     plan = _plan(db, job.plan_id)
-    p.require(db, "exam.generate", provider_id=plan.provider_id, branch_id=plan.branch_id)
+    _require_plan(db, p, "exam.generate", plan)
     return [{"type": e.event_type, "details": e.details, "at": e.occurred_at.isoformat()}
             for e in db.scalars(select(ExamGenerationEvent).where(ExamGenerationEvent.job_id == job_id).order_by(ExamGenerationEvent.occurred_at))]
 
 
 # ------------------------------------------------------------------ exams
+
+def _platform_only(db: Session, p: Principal, perm: str, target: str, target_id: UUID) -> None:
+    if not unified.is_platform(p, perm):
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": perm, target: str(target_id), "unified": True})
+        raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
+
+
+def _require_plan(db: Session, p: Principal, perm: str, plan: ExamPlan) -> None:
+    """A unified Global Test plan belongs to the platform; its anchor provider/branch grant nothing (services/unified.py)."""
+    if unified.is_unified_plan(db, plan.plan_id):
+        _platform_only(db, p, perm, "plan_id", plan.plan_id)
+    else:
+        p.require(db, perm, provider_id=plan.provider_id, branch_id=plan.branch_id)
+
+
+def _require_exam(db: Session, p: Principal, perm: str, e: Exam) -> None:
+    """Control actions on an exam (publish, cancel, sync): platform-only for a unified Global Test exam."""
+    if unified.is_unified_exam(db, e.exam_id):
+        _platform_only(db, p, perm, "exam_id", e.exam_id)
+    else:
+        p.require(db, perm, provider_id=e.provider_id, branch_id=e.branch_id)
+
 
 def _exam(db: Session, exam_id: UUID) -> Exam:
     e = db.get(Exam, exam_id)
@@ -519,7 +546,15 @@ def is_institute_wide(db: Session, e: Exam) -> bool:
 
 def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | OnlyStudents | None:
     """Authorise `perm` on exam `e` (403 otherwise). Returns None when the caller may see every assigned student, the set of
-    branches whose enrolled students they may see (branch admins of an institute-wide exam), or OnlyStudents (teachers)."""
+    branches whose enrolled students they may see (branch admins of an institute-wide exam), or OnlyStudents (teachers). A unified
+    Global Test exam returns None for platform roles and otherwise a SubjectScope: the caller's own contributed subjects and students
+    (services/unified.py); its anchor provider/branch grant nothing."""
+    if unified.is_unified_exam(db, e.exam_id):
+        s = unified.scope(db, p, perm, e)
+        if s is not None and not s.ids:
+            audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": perm, "exam_id": str(e.exam_id), "unified": True})
+            raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
+        return s
     if p.can(perm, exclude_roles=(Role.BRANCH_ADMIN, Role.TEACHER), provider_id=e.provider_id):
         return None                                       # platform roles, provider admins
     if is_institute_wide(db, e):
@@ -537,8 +572,8 @@ def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | On
     return OnlyStudents(frozenset(students))
 
 
-def _in_branches(scope: set[UUID] | OnlyStudents):
-    if isinstance(scope, OnlyStudents):
+def _in_branches(scope: set[UUID] | OnlyStudents | unified.SubjectScope):
+    if isinstance(scope, (OnlyStudents, unified.SubjectScope)):
         return StudentExamAssignment.student_id.in_(scope.ids or {""})
     return StudentExamAssignment.enrollment_id.in_(select(Enrollment.enrollment_id).where(Enrollment.branch_id.in_(scope)))
 
@@ -546,13 +581,20 @@ def _in_branches(scope: set[UUID] | OnlyStudents):
 def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> ExamOut:
     ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam.exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
     out = ExamOut(exam_id=exam.exam_id, plan_id=exam.plan_id, provider_id=exam.provider_id, branch_id=exam.branch_id,
-                  name=exam.name, status=exam.status, institute_wide=is_institute_wide(db, exam))
+                  name=exam.name, status=exam.status, institute_wide=is_institute_wide(db, exam), unified_global=unified.is_unified_exam(db, exam.exam_id))
     if ev:
         papers = db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == ev.exam_version_id).order_by(ExamVersionPaper.position)).all()
+        subject_view = isinstance(branches, unified.SubjectScope)
+        if subject_view:       # a provider's view of a unified exam: never another provider's subject, nor the whole exam's totals
+            papers = [x for x in papers if x.subject_id in branches.subject_ids]
         ob = db.scalar(select(ExamOutbox).where(ExamOutbox.exam_version_id == ev.exam_version_id, ExamOutbox.operation == "PUBLISH"))
         out.exam_version_id, out.start_at, out.end_at = ev.exam_version_id, ev.start_at, ev.end_at
         out.duration_minutes, out.total_questions, out.total_marks = ev.duration_minutes, ev.total_questions, ev.total_marks
         out.missing_subjects = ev.missing_subjects or []
+        if subject_view:
+            out.total_questions, out.total_marks = sum(x.question_count for x in papers), _papers_total(ev, papers)
+            out.missing_subjects = [m for m in out.missing_subjects if UUID(m["subject_id"]) in branches.subject_ids]
+            out.visible_subject_ids = sorted(branches.subject_ids, key=str)
         # Manifest shows provenance (source provider, version) but never question content.
         out.papers = [{"subject_id": str(x.subject_id), "paper_version_id": str(x.paper_version_id),
                        "source_provider_id": str(x.source_provider_id) if x.source_provider_id else None,
@@ -564,6 +606,11 @@ def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> Exa
         out.assigned_students = sum(out.assignment_status.values())
         out.settings = ev.settings
         out.delivery_status = ob.status if ob else "NOT_PUBLISHED"
+    if isinstance(branches, unified.SubjectScope):
+        # The anchor (plan, provider, branch) may be another provider's; whole-exam counts cover every provider's students.
+        out.plan_id = out.provider_id = out.branch_id = None
+        if out.settings:
+            out.settings = {k: v for k, v in out.settings.items() if k != "skipped_duplicates"}
     return out
 
 
@@ -574,21 +621,54 @@ def list_exams(branch_id: UUID, status: str | None = None, page: int = 1, page_s
     p.require(db, "exam.read", provider_id=br.provider_id, branch_id=branch_id)
     if not p.can("exam.read", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
         # teachers: the provider's exams with a targeted student they teach in this branch (wherever the exam was planned)
-        stmt = select(Exam).where(Exam.provider_id == br.provider_id)
+        stmt = select(Exam).where(Exam.provider_id == br.provider_id, ~unified.unified_exam_clause(Exam.exam_id))
         if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
             stmt = stmt.where(Exam.status == status)
-        mine = [e for e in db.scalars(stmt.order_by(Exam.created_at.desc())) if teacher_scope.exam_students(db, p, e, branch_id)]
-        page, page_size = max(page, 1), min(max(page_size, 1), 100)
-        return {"items": [_exam_out(db, e, exam_access(db, p, "exam.read", e)) for e in mine[(page - 1) * page_size: page * page_size]],
-                "total": len(mine), "page": page, "page_size": page_size}
+        mine = [(e, exam_access(db, p, "exam.read", e)) for e in db.scalars(stmt.order_by(Exam.created_at.desc()))
+                if teacher_scope.exam_students(db, p, e, branch_id)]
+        return _page_of(db, sorted(mine + _unified_in_branch(db, p, br, status), key=lambda x: x[0].created_at, reverse=True), page, page_size)
     # + whole-institute exams of the provider planned in another branch (one exam, never copied per branch)
     institute = select(ExamPlan.plan_id).where(ExamPlan.provider_id == br.provider_id, ExamPlan.audience_type == "INSTITUTE")
-    stmt = select(Exam).where((Exam.branch_id == branch_id) | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute)))
+    stmt = select(Exam).where((Exam.branch_id == branch_id) | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute)),
+                              ~unified.unified_exam_clause(Exam.exam_id))
     if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
         stmt = stmt.where(Exam.status == status)
+    extra = _unified_in_branch(db, p, br, status)
+    if extra:
+        rows = [(e, exam_access(db, p, "exam.read", e)) for e in db.scalars(stmt)] + extra
+        return _page_of(db, sorted(rows, key=lambda x: x[0].created_at, reverse=True), page, page_size)
     res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
     res["items"] = [_exam_out(db, e, exam_access(db, p, "exam.read", e)) for e in res["items"]]
     return res
+
+
+def _page_of(db: Session, rows: list[tuple[Exam, object]], page: int, page_size: int) -> dict:
+    page, page_size = max(page, 1), min(max(page_size, 1), 100)
+    return {"items": [_exam_out(db, e, s) for e, s in rows[(page - 1) * page_size: page * page_size]],
+            "total": len(rows), "page": page, "page_size": page_size}
+
+
+def _unified_in_branch(db: Session, p: Principal, br: Branch, status: str | None) -> list[tuple[Exam, object]]:
+    """Unified Global Test exams in which this branch's provider supplied a paper, with the caller's view narrowed to the assigned
+    students enrolled with that provider in this branch. Platform roles see the whole exam; others only their SubjectScope."""
+    contributed = (select(ExamVersion.exam_id).join(ExamVersionPaper, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id)
+                   .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+                   .where(GlobalPaperSubmission.provider_id == br.provider_id))
+    stmt = select(Exam).where(Exam.exam_id.in_(contributed))
+    if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
+        stmt = stmt.where(Exam.status == status)
+    out = []
+    for e in db.scalars(stmt):
+        here = set(db.scalars(select(StudentExamAssignment.student_id).join(Enrollment, Enrollment.student_id == StudentExamAssignment.student_id)
+                              .where(StudentExamAssignment.exam_id == e.exam_id, Enrollment.provider_id == br.provider_id,
+                                     Enrollment.branch_id == br.branch_id)))
+        s = unified.scope(db, p, "exam.read", e)
+        if s is None:
+            if here:
+                out.append((e, None))
+        elif s.ids & here:
+            out.append((e, unified.SubjectScope(frozenset(s.ids & here), s.subject_ids)))
+    return out
 
 
 @router.get("/exams/{exam_id}", response_model=ExamOut)
@@ -600,7 +680,7 @@ def get_exam(exam_id: UUID, p: Principal = Depends(get_principal), db: Session =
 @router.post("/exams/{exam_id}/publish", response_model=ExamOut)
 def publish_exam(exam_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     e = _exam(db, exam_id)
-    p.require(db, "exam.publish", provider_id=e.provider_id, branch_id=e.branch_id)
+    _require_exam(db, p, "exam.publish", e)
     if e.status != "SCHEDULED":
         raise api_error(409, "INVALID_TRANSITION", f"Exam is {e.status}.")
     ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
@@ -615,7 +695,7 @@ def publish_exam(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
 @router.post("/exams/{exam_id}/cancel", response_model=ExamOut)
 def cancel_exam(exam_id: UUID, body: CancelIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     e = _exam(db, exam_id)
-    p.require(db, "exam.schedule", provider_id=e.provider_id, branch_id=e.branch_id)
+    _require_exam(db, p, "exam.schedule", e)
     reason = need_reason(body.reason)
     if e.status == "CANCELLED":
         raise api_error(409, "INVALID_TRANSITION", "Exam is already cancelled.")
@@ -642,6 +722,32 @@ def exam_assignments(exam_id: UUID, page: int = 1, page_size: int = 50, p: Princ
 
 # ------------------------------------------------------------------ results & analytics
 
+def _papers_total(ev: ExamVersion, papers) -> Decimal:
+    """Marks of some of an exam's papers as delivered: UNIFORM marking gives every question the exam-level marks (as the generator's
+    exam total does); otherwise each paper keeps its own total."""
+    marking = (ev.settings or {}).get("marking") or {}
+    if marking.get("mode") == "UNIFORM":
+        total = Decimal(marking["correct"]) * sum(x.question_count for x in papers)
+    else:
+        total = sum((x.total_marks for x in papers), Decimal(0))
+    return total.quantize(Decimal("0.01"))            # the same 2-decimal form as exam_versions.total_marks
+
+
+def _subject_rows(db: Session, rc: ResultClient, ev: ExamVersion, scope: unified.SubjectScope) -> list[dict]:
+    """A provider's result rows of a unified exam: only its own subjects' marks, summed over those subjects (never the overall)."""
+    names = set(db.scalars(select(Subject.name).where(Subject.subject_id.in_(scope.subject_ids or [None]))))
+    out = []
+    for r in rc.exam_subject_results(str(ev.exam_version_id)):
+        mine = [x for x in r["subjects"] if x["subject"] in names]
+        add = lambda k, mine=mine: sum(x[k] for x in mine)  # noqa: E731
+        attempted, correct = add("attempted_questions"), add("correct_answers")
+        out.append({"student_id": r["student_id"], "subjects": mine, "total_marks": add("total_marks"), "obtained_marks": add("obtained_marks"),
+                    "attempted_questions": attempted, "correct_answers": correct, "incorrect_answers": add("incorrect_answers"),
+                    "unanswered_questions": add("unanswered_questions"), "accuracy": round(correct / attempted * 100, 2) if attempted else 0.0,
+                    "submitted_at": r["submitted_at"]})
+    return sorted(out, key=lambda x: -x["obtained_marks"])
+
+
 @router.get("/exams/{exam_id}/results")
 def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
                  rc: ResultClient = Depends(get_result_client), sc: StudentClient = Depends(get_student_client)):
@@ -652,8 +758,9 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
     ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
     if e.status != "PUBLISHED" or not ev:
         raise api_error(409, "NOT_PUBLISHED", "Results exist only for published exams.")
+    subject_view = isinstance(branches, unified.SubjectScope)
     try:
-        rows = rc.exam_results(str(ev.exam_version_id))
+        rows = _subject_rows(db, rc, ev, branches) if subject_view else rc.exam_results(str(ev.exam_version_id))
     except ResultServiceError:
         raise api_error(503, "RESULT_SERVICE_UNAVAILABLE", "Results are temporarily unavailable.")
 
@@ -670,8 +777,13 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
     marks = [r["obtained_marks"] for r in rows]
     out_rows = [{**r, "rank": i + 1, "name": (f"{names[r['student_id']].first_name} {names[r['student_id']].last_name}" if r["student_id"] in names else None)}
                 for i, r in enumerate(rows)]
+    if subject_view:
+        visible = [x for x in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == ev.exam_version_id))
+                   if x.subject_id in branches.subject_ids]
+        total = _papers_total(ev, visible)
     return {
-        "exam_id": str(exam_id), "window_closed": utcnow() >= ev.end_at, "total_marks": str(ev.total_marks),
+        "exam_id": str(exam_id), "window_closed": utcnow() >= ev.end_at, "total_marks": str(total if subject_view else ev.total_marks),
+        "subject_view": subject_view, "visible_subjects": sorted({s["subject"] for r in rows for s in r.get("subjects", [])}) if subject_view else None,
         "summary": {"assigned": len(allowed), "submitted": len(rows), "not_submitted": max(len(allowed) - len(rows), 0),
                     "average": round(sum(marks) / len(marks), 2) if marks else None,
                     "highest": max(marks) if marks else None, "lowest": min(marks) if marks else None},
@@ -684,7 +796,7 @@ def sync_exam_assignments(exam_id: UUID, p: Principal = Depends(get_principal), 
                           ac: AttemptClient = Depends(get_attempt_client)):
     """Refresh STARTED / COMPLETED / MISSED from the students' real attempts (the worker also does this every minute)."""
     e = _exam(db, exam_id)
-    p.require(db, "exam.generate", provider_id=e.provider_id, branch_id=e.branch_id)
+    _require_exam(db, p, "exam.generate", e)
     try:
         counts = assignment_sync.sync_exam(db, exam_id, ac)
     except InternalServiceError:

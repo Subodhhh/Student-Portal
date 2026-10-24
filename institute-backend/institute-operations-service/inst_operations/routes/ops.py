@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select, true
+from sqlalchemy import exists, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ from institute_common.core.security import Principal, api_error, can_see_provide
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import EnrollmentTransfer, ProviderSubject, Subject, TeacherSubjectAssignment
 from institute_common.models.exams import (
-    CompositeRequest, Exam, ExamGenerationJob, GlobalTest, ExamNotificationOutbox, ExamOutbox, ExamVersion, Notification, ResultCorrection,
+    CompositeRequest, Exam, ExamGenerationJob, GlobalTest, ExamNotificationOutbox, ExamOutbox, ExamVersion, ExamVersionPaper, Notification, ResultCorrection,
     StudentNotificationOutbox,
 )
 from institute_common.models.ops import (
@@ -570,6 +570,13 @@ def _paper_status_counts(db: Session, p: Principal) -> dict:
     return dict(db.execute(stmt.group_by(PaperVersion.status)).all())
 
 
+def _unified(exam_id_column):
+    """A unified Global Test exam (several providers' papers, inst_exam/services/unified.py): it belongs to the platform, never to the
+    provider/branch it is anchored on."""
+    return exists().where(ExamVersion.exam_id == exam_id_column, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id,
+                          ExamVersionPaper.source_submission_id.is_not(None))
+
+
 def false_():
     return ~true()
 
@@ -582,6 +589,7 @@ def _platform_overview(db: Session, now: datetime) -> dict[str, Any]:
                .join(ExamVersion, (ExamVersion.exam_id == Exam.exam_id) & (ExamVersion.version_no == latest.c.v))
                .where(Exam.status != "CANCELLED"))
     upcoming = db.execute(current.where(ExamVersion.start_at >= now).order_by(ExamVersion.start_at).limit(5)).all()
+    unified = set(db.scalars(select(Exam.exam_id).where(Exam.exam_id.in_([e.exam_id for e, _ in upcoming] or [None]), _unified(Exam.exam_id))))
     providers = {pid: name for pid, name in db.execute(select(Provider.provider_id, Provider.name).where(
         Provider.provider_id.in_({e.provider_id for e, _ in upcoming}))).all()} if upcoming else {}
     branches = {bid: name for bid, name in db.execute(select(Branch.branch_id, Branch.name).where(
@@ -606,7 +614,8 @@ def _platform_overview(db: Session, now: datetime) -> dict[str, Any]:
         "global_tests_published": _count(db, select(GlobalTest).where(GlobalTest.status == "PUBLISHED")),
         "upcoming_exam_list": [
             {"exam_id": str(e.exam_id), "name": e.name, "status": e.status, "start_at": v.start_at.isoformat(),
-             "provider_name": providers.get(e.provider_id), "branch_name": branches.get(e.branch_id)}
+             "provider_name": None if e.exam_id in unified else providers.get(e.provider_id),
+             "branch_name": None if e.exam_id in unified else branches.get(e.branch_id), "unified_global": e.exam_id in unified}
             for e, v in upcoming],
     }
 
@@ -616,6 +625,8 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
     role = p.highest_role()
     now = utcnow()
     exam_scope = scope_clause(p, "exam.read", Exam.provider_id, Exam.branch_id)
+    if role not in GLOBAL_ROLES:
+        exam_scope = exam_scope & ~_unified(Exam.exam_id)
     out: dict[str, Any] = {"role": role.value}
     upcoming = (select(Exam).join(ExamVersion, ExamVersion.exam_id == Exam.exam_id)
                 .where(exam_scope, Exam.status != "CANCELLED", ExamVersion.start_at >= now))

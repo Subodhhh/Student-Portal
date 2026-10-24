@@ -96,7 +96,8 @@ class ExamPlanSubject(Base):
     """One subject slot of a plan. Exactly one paper rule applies:
       paper_version_id -> that exact version, always;
       paper_id         -> that paper's latest PUBLISHED version at generation time.
-    A slot may point at another provider's paper only if it was shared with this provider."""
+    A slot may point at another provider's paper only if it was shared with this provider, or (unified Global Test plans) if it is
+    the paper of `source_submission_id`, an ACTIVE submission of the plan's occurrence."""
 
     __tablename__ = "exam_plan_subjects"
     __table_args__ = (
@@ -110,6 +111,7 @@ class ExamPlanSubject(Base):
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     paper_id: Mapped[UUID | None] = mapped_column(ForeignKey("papers.paper_id"))
     paper_version_id: Mapped[UUID | None] = mapped_column(ForeignKey("paper_versions.paper_version_id"))
+    source_submission_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_paper_submissions.submission_id"))
 
 
 class ExamGenerationJob(Base):
@@ -194,6 +196,7 @@ class ExamVersionPaper(Base):
     subject_id: Mapped[UUID] = mapped_column(nullable=False)
     paper_version_id: Mapped[UUID] = mapped_column(ForeignKey("paper_versions.paper_version_id"), nullable=False)
     source_provider_id: Mapped[UUID | None] = mapped_column()   # NULL: a GLOBAL (platform) paper
+    source_submission_id: Mapped[UUID | None] = mapped_column()  # set only in unified Global Test exams (provider, branch, audience)
     question_count: Mapped[int] = mapped_column(Integer, nullable=False)
     total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
 
