@@ -4,7 +4,8 @@ A teacher sees a test when at least one student TARGETED by it is in the teacher
 subjects: an active teaching assignment (provider, branch, subject, optionally one batch) whose subject is one of the test's subjects,
 in the branch of the enrollment the student was targeted through and, for a batch-level assignment, with the student in that batch.
 One matching subject is enough (a Physics teacher sees a Physics + Chemistry test of their students); teaching the subject in another
-batch or branch is not.
+batch or branch is not. Subject-wise enrollment: the student must also take the teacher's subject in a matching batch (a membership
+without a subject selection takes every subject; a student in no batch keeps the branch-wide rule).
 
 The targeted students are the exam's assignments once the exam exists (exactly who sat it), otherwise the plan's audience resolved
 from current enrollments by the generator's own rule (exam_generation.eligible_students). Only the matching students are ever shown to
@@ -48,11 +49,21 @@ def matching_students(db: Session, p: Principal, provider_id: UUID, subject_ids:
     batches: dict[str, set[UUID]] = {}
     for eid, bid in db.execute(select(EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id).where(EnrollmentBatch.enrollment_id.in_(enrollment_ids))):
         batches.setdefault(eid, set()).add(bid)
+    chosen = gen.subjects_taken(db, enrollment_ids)
+
+    def takes(eid: str, batch: UUID, subject: UUID) -> bool:
+        return subject in chosen.get((eid, batch), {subject})
+
+    def in_scope(t, eid: str, in_batches: set[UUID]) -> bool:
+        if t.batch_id is not None:
+            return t.batch_id in in_batches and takes(eid, t.batch_id, t.subject_id)
+        return not in_batches or any(takes(eid, b, t.subject_id) for b in in_batches)
+
     out = set()
     for sid, eid, bid in targets:
         branch = branch_of.get(eid)
         in_batches = batches.get(eid, set()) | ({bid} if bid else set())
-        if any(t.branch_id == branch and (t.batch_id is None or t.batch_id in in_batches) for t in taught):
+        if any(t.branch_id == branch and in_scope(t, eid, in_batches) for t in taught):
             out.add(sid)
     return out
 

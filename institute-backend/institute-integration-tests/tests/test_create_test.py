@@ -179,6 +179,22 @@ def test_multiple_individual_students_and_whole_branches(client, world, ct, logi
     assert eligible(client, login, ct, "pa", aud(world, ct, branches=("p1b2",), whole=("p1b2",))) == ["STU000003", "STU000004"]
 
 
+def test_batches_with_the_same_name_in_two_branches_never_leak(client, world, ct, login, db_factory):
+    """Batch membership and targeting use the Batch ID, never the name: two branches' batches renamed identically keep their
+    own audiences, and one branch's batch cannot be aimed at from the other branch."""
+    from institute_common.models.org import Batch
+    a = eligible(client, login, ct, "pa", aud(world, ct, batches=("batch_a",)))
+    c = eligible(client, login, ct, "pa", aud(world, ct, branches=("p1b2",), batches=("batch_c",)))
+    with db_factory() as db:
+        name = db.get(Batch, ct["batch_a"]).name
+        db.get(Batch, ct["batch_c"]).name = name                          # p1b2's batch now has p1b1's batch name
+        db.commit()
+    assert eligible(client, login, ct, "pa", aud(world, ct, batches=("batch_a",))) == a
+    assert eligible(client, login, ct, "pa", aud(world, ct, branches=("p1b2",), batches=("batch_c",))) == c
+    r = client.post(f"{API}/tests/check", json=draft(world, ct, audience=aud(world, ct, batches=("batch_c",))), headers=login(ct["pa"]))
+    assert r.status_code == 422 and "batch_ids" in {e["field"] for e in r.json()["detail"]["errors"]}, r.text
+
+
 def test_a_student_of_two_providers_is_targeted_by_each_under_one_identity(client, world, ct, login):
     assert "STU000001" in eligible(client, login, ct, "pa", aud(world, ct, batches=("batch_a",)))
     body = aud(world, ct, provider="p2", branches=("p2b1",), batches=("batch_d",))

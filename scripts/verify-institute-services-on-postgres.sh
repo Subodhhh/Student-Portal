@@ -18,7 +18,7 @@ PY
 ROOT="$(git rev-parse --show-toplevel)"
 PSQL_BASE="${PGBASE/postgresql+psycopg/postgresql}"
 SERVICES=(identity organization academics enrollment paper exam operations)
-NEW_TABLES='^(inst_.*_audit_spool|exam_notification_outbox|composite_.*|.*_alembic_version)$'
+NEW_TABLES='^(inst_.*_audit_spool|exam_notification_outbox|composite_.*|enrollment_batch_subjects|enrollment_academic_profiles|batch_academic_defaults|.*_alembic_version)$'
 
 prep() {   # $1 = database name: baseline students table + the real Student chains
   psql "$PSQL_BASE/postgres" -q -c "drop database if exists $1" -c "create database $1 encoding 'UTF8' template template0"

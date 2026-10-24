@@ -95,7 +95,8 @@ def test_students_audience_rejects_students_outside_the_provider(client, world, 
     r = client.post(f"{API}/branches/{world['p1b1']}/exam-plans", json=body(tc, audience_type="STUDENTS", batch_ids=[], student_ids=["STU000001", "STU000006"]), headers=h)
     assert r.status_code == 422 and r.json()["detail"]["student_ids"] == ["STU000006"]
     r = client.post(f"{API}/branches/{world['p1b1']}/audience-preview", json={"audience_type": "STUDENTS", "student_ids": ["STU000006"]}, headers=h)
-    assert r.json() == {"eligible_count": 0, "sample_student_ids": [], "not_eligible_student_ids": ["STU000006"]}
+    assert r.json() == {"eligible_count": 0, "sample_student_ids": [], "not_eligible_student_ids": ["STU000006"],
+                        "excluded_no_class": 0, "excluded_other_class": 0}
     assert client.post(f"{API}/branches/{world['p1b1']}/exam-plans", json=body(tc, audience_type="BRANCH", batch_ids=[str(tc["batch_a"])]),
                        headers=h).status_code == 422      # batch ids only for a BATCHES audience
     # another provider's admin cannot target this provider's branch at all
@@ -163,9 +164,15 @@ def gtest(client, world, tc, login, db_factory):
         paper.scope, paper.provider_id, paper.branch_id = "GLOBAL", None, None
         db.commit()
     h = login(tc["sa"])
-    t = client.post(f"{API}/global-tests", json={"name": "Daily Physics #1", "exam_type": "NEET", "target_class": "Class 12", "duration_minutes": 30,
+    t = client.post(f"{API}/global-tests", json={"name": "Daily Physics #1", "exam_type": "NEET", "target_class": "12th", "duration_minutes": 30,
                                                  "sections": [{"paper_version_id": str(gv)}]}, headers=h)
     assert t.status_code == 201, t.text
+    with db_factory() as db:   # the test is for Class 12th: the fixture's enrollments are in 12th (Class matching is exercised positively)
+        from institute_common.models.academics import EnrollmentAcademicProfile
+        from institute_common.models.org import Enrollment
+        for (eid,) in db.query(Enrollment.enrollment_id):
+            db.add(EnrollmentAcademicProfile(enrollment_id=eid, class_level="12TH", academic_year="2026-2027"))
+        db.commit()
     return {"test_id": t.json()["test_id"], "version": gv}
 
 

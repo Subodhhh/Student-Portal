@@ -40,6 +40,10 @@ def run_migrations_offline() -> None:
 def _run(connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata, version_table=VERSION_TABLE, include_object=include_object)
     with context.begin_transaction():
+        if connection.dialect.name == "postgresql":
+            # A pooled connection (Neon -pooler) can carry another client's session search_path (pg_dump leaves it empty); transaction-local
+            # so it never leaks back into the pool. Must precede alembic's own version-table lookup.
+            connection.exec_driver_sql("SET LOCAL search_path TO public")
         context.run_migrations()
 
 

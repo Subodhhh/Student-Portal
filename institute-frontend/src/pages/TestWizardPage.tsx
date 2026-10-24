@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ClassTargetSelect } from "../components/classLevels";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
@@ -113,7 +114,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
   const questionCount = sections.reduce((n, s) => n + s.questions, 0);
   const totalMarks = eff.marking === "UNIFORM" ? questionCount * Number(eff.correct || 0) : sections.reduce((n, s) => n + s.marks, 0);
 
-  const preview = useAudiencePreview(branchId, audience);
+  const preview = useAudiencePreview(branchId, audience, Object.keys(slots), eff.target_class);
   const valid: Record<Step, string | null> = {
     test: kind === "global" && !gt ? "Choose a published Global Test." : null,
     audience: audience.audience_type === "BATCHES" && audience.batch_ids.length === 0 ? "Choose at least one batch."
@@ -263,7 +264,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
           <div className="grid cols-3">
             <Field label="Test name" value={eff.name} onChange={(e) => setCfg({ ...cfg, name: e.target.value })} />
             <Field label="Exam type" value={eff.exam_type} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, exam_type: e.target.value })} placeholder="NEET" />
-            <Field label="Class / level" value={eff.target_class} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, target_class: e.target.value })} placeholder="Class 12" />
+            <ClassTargetSelect label="Class / level" value={eff.target_class} disabled={kind === "global"} onChange={(v) => setCfg({ ...cfg, target_class: v })} />
             <Field label="Duration (minutes, one shared timer)" type="number" min={1} max={720} value={eff.duration} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, duration: e.target.value })} />
             <Field label="Window opens (students may start from)" type="datetime-local" value={eff.start} onChange={(e) => setCfg({ ...cfg, start: e.target.value })} />
             <Field label="Window closes (last time to start)" type="datetime-local" value={eff.end} onChange={(e) => setCfg({ ...cfg, end: e.target.value })} />
@@ -353,9 +354,10 @@ function FixedPolicies() {
 
 const EMPTY_PREVIEW: Preview = { eligible_count: 0, sample_student_ids: [], not_eligible_student_ids: [] };
 
-function useAudiencePreview(branchId: string, audience: Audience) {
+/** `subjectIds`: the exam's subjects chosen so far; batch-based audiences then count only students who take all of them. */
+function useAudiencePreview(branchId: string, audience: Audience, subjectIds: string[], targetClass = "") {
   const [result, setResult] = useState<{ key: string; data: Preview | null; error: string } | null>(null);
-  const key = `${branchId}|${JSON.stringify(audience)}`;
+  const key = `${branchId}|${JSON.stringify({ ...audience, subject_ids: subjectIds, target_class: targetClass || null })}`;
   const empty = (audience.audience_type === "BATCHES" && !audience.batch_ids.length) || (audience.audience_type === "STUDENTS" && !audience.student_ids.length);
   useEffect(() => {
     if (empty) return;

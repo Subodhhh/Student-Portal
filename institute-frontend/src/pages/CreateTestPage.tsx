@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClassTargetSelect } from "../components/classLevels";
 import { Link } from "react-router-dom";
 import { useScope } from "../auth/ScopeContext";
 import ScopeBar from "../components/ScopeBar";
@@ -68,7 +69,7 @@ function Wizard({ providerId }: { providerId: string }) {
   const subjectName = (id: string) => subjectsAllowed.find((s) => s.subject_id === id)?.name ?? scopeData.branches.flatMap((b) => b.subjects).find((s) => s.subject_id === id)?.name ?? "Subject";
   const audience = audienceBody(providerId, branchIds, wholeIds, batchIds, [...students.keys()]);
   const fromBank = (sid: string) => source[sid] === "bank";
-  const audienceKey = JSON.stringify(audience);
+  const audienceKey = JSON.stringify({ ...audience, target_class: meta.target_class });   // the Class changes who is eligible
   const reportKey = (sid: string) => `${homeBranch}:${sid}`;
   const validated = subjectIds.length > 0 && subjectIds.every((sid) => reports[reportKey(sid)]?.ok);
   const body = draftBody({ audience, name, description, subjectIds, meta, versions: Object.fromEntries(subjectIds.map((sid) => [sid, reports[reportKey(sid)]?.paper_version_id ?? null])) });
@@ -96,7 +97,7 @@ function Wizard({ providerId }: { providerId: string }) {
     setErrors([]);
     if (step === "audience") {
       try {
-        const r = await api<{ eligible_count: number; students: { student_id: string; name: string | null }[] }>("/api/v1/tests/audience", { method: "POST", body: audience });
+        const r = await api<{ eligible_count: number; students: { student_id: string; name: string | null }[] }>("/api/v1/tests/audience", { method: "POST", body: { ...audience, target_class: meta.target_class || null } });
         if (r.eligible_count === 0) { setErrors([{ field: "audience", value: null, message: "Nobody is eligible: the selection has no active students." }]); return; }
         setEligible({ count: r.eligible_count, sample: r.students, key: audienceKey });
       } catch (e) { failWith(e); }
@@ -231,7 +232,7 @@ function Wizard({ providerId }: { providerId: string }) {
             <Field label="Window opens" type="datetime-local" value={meta.start} onChange={(e) => setMeta({ ...meta, start: e.target.value })} />
             <Field label="Window closes (last time to start)" type="datetime-local" value={meta.end} onChange={(e) => setMeta({ ...meta, end: e.target.value })} />
             <Field label="Exam type (optional)" value={meta.exam_type} onChange={(e) => setMeta({ ...meta, exam_type: e.target.value })} />
-            <Field label="Class / level (optional)" value={meta.target_class} onChange={(e) => setMeta({ ...meta, target_class: e.target.value })} />
+            <ClassTargetSelect value={meta.target_class} onChange={(v) => setMeta({ ...meta, target_class: v })} />
           </div>
           <p className="muted small">Times are in your timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}) and stored in UTC. Unanswered questions score 0. A student who
             starts before the window closes gets the full duration. Total marks are calculated from the validated papers.</p>

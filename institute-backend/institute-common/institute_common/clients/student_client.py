@@ -15,6 +15,10 @@ class StudentServiceError(Exception):
     pass
 
 
+class StudentRateLimited(Exception):
+    """The Student service refused: too many setup links for this student within its window."""
+
+
 @dataclass
 class StudentSummary:
     student_id: str
@@ -35,6 +39,7 @@ class StudentClient(Protocol):
     def get_many(self, student_ids: list[str]) -> dict[str, StudentSummary]: ...
     def create(self, *, first_name: str, last_name: str, email: str, phone: str | None,
                idempotency_key: str) -> StudentSummary: ...
+    def send_setup_link(self, student_id: str) -> dict | None: ...
 
 
 class HttpStudentClient:
@@ -99,6 +104,18 @@ class HttpStudentClient:
             raise StudentServiceError(f"create failed ({r.status_code})")
         return self._s(r.json())
 
+    def send_setup_link(self, student_id):
+        """Ask the Student service to email a password setup link. None = unknown/inactive student; StudentRateLimited = the
+        per-student hourly limit was reached. The token is never returned to this service."""
+        r = self._request("POST", f"/students/{student_id}/password-setup-link")
+        if r.status_code == 404:
+            return None
+        if r.status_code == 429:
+            raise StudentRateLimited(r.json().get("detail") or "Too many setup links for this student; try again later.")
+        if r.status_code != 200:
+            raise StudentServiceError(f"setup link failed ({r.status_code})")
+        return r.json()
+
 
 class UnconfiguredStudentClient:
     """Resolved when no service URL/key is set: authorization still runs first, and any
@@ -107,7 +124,7 @@ class UnconfiguredStudentClient:
     def _fail(self, *a, **kw):
         raise StudentServiceError("Student service is not configured.")
 
-    search = get = get_many = create = _fail
+    search = get = get_many = create = send_setup_link = _fail
 
 
 _client: StudentClient | None = None
