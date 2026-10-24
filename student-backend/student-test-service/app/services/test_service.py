@@ -1,3 +1,7 @@
+from datetime import timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories.question_repository import (
@@ -14,7 +18,29 @@ from app.repositories.test_repository import (
 )
 
 
-def format_test(row):
+def session_zone(db: Session):
+    """The zone tests.start_at/end_at are written in: the DB session's TimeZone (routes/internal._to_session_naive); UTC elsewhere."""
+    if "session_zone" not in db.info:
+        name = db.execute(text("SELECT current_setting('TimeZone')")).scalar_one() if db.get_bind().dialect.name == "postgresql" else "UTC"
+        try:
+            db.info["session_zone"] = ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            db.info["session_zone"] = None          # an offset-style setting: converted by PostgreSQL itself below
+    return db.info["session_zone"]
+
+
+def as_instant(db: Session, value):
+    """A naive start/end (wall clock in the session zone) as an aware UTC instant, so no client reinterprets it in its own
+    browser zone (a naive '10:00' was read as local time: 5h30 off in India). Aware values pass through; storage is untouched."""
+    if value is None or value.tzinfo is not None:
+        return value
+    zone = session_zone(db)
+    if zone is None:
+        return db.execute(text("SELECT CAST(:v AS timestamp) AT TIME ZONE current_setting('TimeZone')"), {"v": value}).scalar_one()
+    return value.replace(tzinfo=zone).astimezone(timezone.utc)
+
+
+def format_test(row, db: Session):
     if not row:
         return None
 
@@ -35,8 +61,8 @@ def format_test(row):
         "duration_minutes": row["duration_minutes"],
         "total_questions": row["total_questions"],
         "total_marks": row["total_marks"],
-        "start_at": row["start_at"],
-        "end_at": row["end_at"],
+        "start_at": as_instant(db, row["start_at"]),
+        "end_at": as_instant(db, row["end_at"]),
         "status": row["status"],
     }
 
@@ -52,7 +78,7 @@ def get_test(
         student_id=student_id,
     )
 
-    return format_test(row)
+    return format_test(row, db)
 
 
 def get_test_details(
@@ -66,7 +92,7 @@ def get_test_details(
         student_id=student_id,
     )
 
-    return format_test(row)
+    return format_test(row, db)
 
 
 def get_available_tests(
@@ -79,7 +105,7 @@ def get_available_tests(
     )
 
     return [
-        format_test(row)
+        format_test(row, db)
         for row in rows
     ]
 
@@ -94,7 +120,7 @@ def get_scheduled_tests_for_student(
     )
 
     return [
-        format_test(row)
+        format_test(row, db)
         for row in rows
     ]
 
@@ -109,7 +135,7 @@ def get_missed_tests_for_student(
     )
 
     return [
-        format_test(row)
+        format_test(row, db)
         for row in rows
     ]
 
@@ -137,7 +163,7 @@ def get_test_for_start(
     if not row:
         return None
 
-    test = format_test(row)
+    test = format_test(row, db)
 
     questions = get_questions_by_test(
         db=db,

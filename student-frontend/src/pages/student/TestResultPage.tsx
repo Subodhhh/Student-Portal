@@ -471,7 +471,7 @@ export default function TestResultPage() {
                 <p>
                   Correct answers are shown once no other student can start this test
                   {reviewAvailableAt
-                    ? ` (${new Date(reviewAvailableAt).toLocaleString("en-IN")}).`
+                    ? ` (${new Date(reviewAvailableAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}).`
                     : "."}
                 </p>
               </div>
