@@ -62,3 +62,22 @@ def test_returns_only_requested_exam_ordered_by_marks(env):
     rows = c.get(f"/internal/v1/tests/{a}/results", headers=H).json()
     assert [(r["student_id"], r["obtained_marks"]) for r in rows] == [("STU000002", 10), ("STU000001", 7)]
     assert c.get(f"/internal/v1/tests/{uuid.uuid4()}/results", headers=H).json() == []
+
+
+def test_subject_results_score_each_subject_with_the_evaluation_rules(env, monkeypatch):
+    """Per-subject marks for subject-scoped readers (a provider's view of a unified Global Test exam): +marks right, -negative wrong,
+    0 unanswered, case/space-insensitive, exactly as evaluation; the overall result row is not changed or returned."""
+    from app.routes import internal
+    c, Session = env
+    t = uuid.uuid4()
+    seed(Session, t, [("STU000001", 7)])
+    q = lambda subject, right, chosen: {"subject": subject, "marks": 4, "negative_marks": 1, "correct_answer": right, "selected_answer": chosen}  # noqa: E731
+    answers = [q("Physics", "A", " a "), q("Physics", "B", "C"), q("Physics", "C", None), q("Chemistry", "D", "d"), q(None, "A", "A")]
+    monkeypatch.setattr(internal, "get_questions_with_answers", lambda db, attempt_id: answers)
+    [row] = c.get(f"/internal/v1/tests/{t}/results/subjects", headers=H).json()
+    by = {s["subject"]: s for s in row["subjects"]}
+    assert row["student_id"] == "STU000001" and "obtained_marks" not in row
+    assert (by["Physics"]["obtained_marks"], by["Physics"]["total_marks"], by["Physics"]["correct_answers"], by["Physics"]["incorrect_answers"],
+            by["Physics"]["unanswered_questions"]) == (3, 12, 1, 1, 1)
+    assert by["Chemistry"]["obtained_marks"] == 4 and by["Other"]["obtained_marks"] == 4
+    assert c.get(f"/internal/v1/tests/{t}/results/subjects").status_code == 401             # service key required

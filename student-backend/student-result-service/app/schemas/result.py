@@ -30,6 +30,7 @@ class ResultListItem(BaseModel):
     student_id: str
 
     test_name: str
+    global_occurrence_id: UUID | None = None   # a unified Global Test: not owned by provider_id (only its anchor), labelled "Global Test"
     provider_id: UUID
     provider_name: str
 

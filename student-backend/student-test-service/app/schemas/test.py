@@ -30,6 +30,7 @@ class TestResponse(BaseModel):
     start_at: datetime | None
     end_at: datetime | None
     status: str
+    global_occurrence_id: UUID | None = None      # a unified Global Test (shown as the Global Test, not as the provider above)
 
 
 class TestStartResponse(TestResponse):

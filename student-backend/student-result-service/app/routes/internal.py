@@ -15,6 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.result_history import ResultHistory
 from app.models.test_result import TestResult
+from app.repositories.result_repository import get_questions_with_answers
 from app.services import reevaluation
 
 MAX_ROWS = 5000
@@ -41,6 +42,23 @@ def exam_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
          "accuracy": r.accuracy, "submitted_at": r.created_at.isoformat()}
         for r in rows
     ]
+
+
+@router.get("/tests/{test_id}/results/subjects")
+def exam_subject_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Per student, every subject's marks, scored with exactly the evaluation rules (reevaluation.score) from the stored answers and
+    the current answer key. For readers allowed only some subjects (a provider's view of a unified Global Test exam): the Institute
+    backend keeps only their subjects and never shows the overall score to them. A manual marks adjustment changes only the overall
+    result, so it is not part of any subject here."""
+    out = []
+    # shortcut: one answers query per evaluated attempt; batch it if exams reach thousands of students.
+    for r in db.scalars(select(TestResult).where(TestResult.test_id == test_id).order_by(TestResult.student_id).limit(MAX_ROWS)):
+        by_subject: dict[str, list] = {}
+        for q in get_questions_with_answers(db=db, attempt_id=r.attempt_id):
+            by_subject.setdefault(q["subject"] or "Other", []).append(q)
+        out.append({"student_id": r.student_id, "submitted_at": r.created_at.isoformat(),
+                    "subjects": [{"subject": name, **reevaluation.score(qs)} for name, qs in by_subject.items()]})
+    return out
 
 
 class AdjustIn(BaseModel):
