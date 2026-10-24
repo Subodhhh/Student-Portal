@@ -36,6 +36,39 @@ describe("Providers & Branches", () => {
     expect(await screen.findByText("No teaching assignments in this branch")).toBeTruthy();
   });
 
+  it("manages a branch's batches from its Batches tab, by this branch's ID", async () => {
+    let batches = [{ batch_id: "bt1", name: "NEET 2027", status: "ACTIVE", start_date: null, end_date: null }];
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["provider.read", "staff.read", "batch.manage"]), "/api/v1/staff": page([]),
+      "/api/v1/teaching": page([]), "/api/v1/providers/p1/subjects": [],
+      "/api/v1/branches/b1/batches": () => page(batches),
+      "POST /api/v1/branches/b1/batches": (_u: URL, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        batches = [...batches, { batch_id: "bt2", name: body.name, status: "ACTIVE", start_date: null, end_date: null }];
+        return batches[1];
+      } });
+    renderApp("/providers/p1/branches/b1");
+    fireEvent.click(await screen.findByRole("tab", { name: "Batches" }));
+    expect(await screen.findByText("NEET 2027")).toBeTruthy();
+    expect(calls.some((c) => c.method === "GET" && c.path === "/api/v1/branches/b1/batches")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "New batch" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "JEE 2028" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("JEE 2028")).toBeTruthy();
+    const post = calls.filter((c) => c.method === "POST");
+    expect(post.map((c) => c.path)).toEqual(["/api/v1/branches/b1/batches"]);              // created in THIS branch, by its ID
+    expect(post[0].body).toEqual({ name: "JEE 2028", start_date: null, end_date: null,                       // no Class defaults chosen
+      default_class_level: null, default_academic_year: null, default_other_description: null });
+    expect(calls.some((c) => /\/branches\/(?!b1\/)[^/]+\/batches/.test(c.path))).toBe(false); // no other branch's batches
+  });
+
+  it("shows no Batches tab without batch.manage", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["provider.read", "teaching.assign"]), "/api/v1/teaching": page([]),
+      "/api/v1/providers/p1/subjects": [], "/api/v1/branches/b1/batches": page([]) });
+    renderApp("/providers/p1/branches/b1");
+    expect(await screen.findByRole("tab", { name: "Teaching assignments" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Batches" })).toBeNull();
+  });
+
   it("does not show a branch that belongs to another provider under this provider", async () => {
     stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["provider.read", "staff.read"]), "/api/v1/branches/b9": { ...MAIN, branch_id: "b9", provider_id: "p2" } });
     renderApp("/providers/p1/branches/b9");

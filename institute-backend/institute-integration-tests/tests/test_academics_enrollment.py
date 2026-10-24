@@ -5,6 +5,7 @@ from institute_common.core.roles import Role
 from institute_common.clients.student_client import StudentServiceError, StudentSummary, set_student_client
 
 API = "/api/v1"
+ACAD = {"class_level": "11th", "academic_year": "2026-2027"}   # every enrollment needs its Class / Academic Year
 
 
 class FakeStudents:
@@ -43,6 +44,18 @@ class FakeStudents:
         sid = f"STU{len(self.rows) + 1:06d}"
         self.add(sid, first_name, last_name, email, phone)
         return self.rows[sid]
+
+    def send_setup_link(self, sid):
+        """Like the Student service: None for an unknown student, StudentRateLimited after 3 links per student (per hour there)."""
+        from institute_common.clients.student_client import StudentRateLimited
+        self._chk()
+        if sid not in self.rows:
+            return None
+        self.setup_links = getattr(self, "setup_links", {})
+        self.setup_links[sid] = self.setup_links.get(sid, 0) + 1
+        if self.setup_links[sid] > 3:
+            raise StudentRateLimited("A setup link was already sent to this student 3 times in the last hour. Try again later.")
+        return {"student_id": sid, "expires_at": "2026-10-24T12:00:00+00:00"}
 
 
 @pytest.fixture()
@@ -181,15 +194,15 @@ def test_enroll_new_student_and_no_duplicate_identity(client, world, seeded, stu
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     h = login(ba)
     new = {"first_name": "Asha", "last_name": "Rao", "email": "asha@example.com", "phone": "9000000001"}
-    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"new_student": new, "batch_ids": [str(seeded["batch_p1b1"])]}, headers=h)
+    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "new_student": new, "batch_ids": [str(seeded["batch_p1b1"])]}, headers=h)
     assert r.status_code == 201, r.text
     assert r.json()["student_id"] == "STU000001" and r.json()["batch_ids"] == [str(seeded["batch_p1b1"])]
     # same email again: never creates a second identity
-    again = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"new_student": new}, headers=h)
+    again = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "new_student": new}, headers=h)
     assert again.status_code == 409 and again.json()["detail"]["code"] == "STUDENT_EXISTS"
     assert students.created == 1
     # enrolling the existing student twice in the branch is rejected
-    dup = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000001"}, headers=h)
+    dup = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000001"}, headers=h)
     assert dup.status_code == 409 and dup.json()["detail"]["code"] == "ALREADY_ENROLLED"
 
 
@@ -198,9 +211,9 @@ def test_phone_match_requires_explicit_confirmation(client, world, students, mak
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     h = login(ba)
     new = {"first_name": "Ravi", "last_name": "K", "email": "ravi@example.com", "phone": "9000000002"}
-    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"new_student": new}, headers=h)
+    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "new_student": new}, headers=h)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "STUDENT_MATCH_FOUND" and students.created == 0
-    ok = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"new_student": new, "confirm_distinct_person": True}, headers=h)
+    ok = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "new_student": new, "confirm_distinct_person": True}, headers=h)
     assert ok.status_code == 201 and students.created == 1
 
 
@@ -209,9 +222,9 @@ def test_existing_student_joins_second_provider_without_duplicate(client, world,
     _, ba1 = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     _, ba2 = make_staff([(Role.BRANCH_ADMIN, world["p2"], world["p2b1"])])
     h1 = login(ba1)
-    assert client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000005"}, headers=h1).status_code == 201
+    assert client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005"}, headers=h1).status_code == 201
     h2 = login(ba2)
-    assert client.post(f"{API}/branches/{world['p2b1']}/enrollments", json={"student_id": "STU000005"}, headers=h2).status_code == 201
+    assert client.post(f"{API}/branches/{world['p2b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005"}, headers=h2).status_code == 201
     assert students.created == 0 and len(students.rows) == 1
 
 
@@ -222,9 +235,9 @@ def test_enrollment_isolation_and_lookup_minimal_disclosure(client, world, seede
     look = client.post(f"{API}/students/lookup", json={"branch_id": str(world["p1b1"]), "email": "meera@example.com"}, headers=h).json()
     assert look["matches"] == [{"student_id": "STU000005", "name": "Meera S."}]   # no email/phone/surname
     assert client.post(f"{API}/students/lookup", json={"branch_id": str(world["p2b1"]), "email": "meera@example.com"}, headers=h).status_code == 403
-    assert client.post(f"{API}/branches/{world['p2b1']}/enrollments", json={"student_id": "STU000005"}, headers=h).status_code == 403
+    assert client.post(f"{API}/branches/{world['p2b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005"}, headers=h).status_code == 403
     # batch from another branch cannot be attached
-    bad = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000005", "batch_ids": [str(seeded["batch_p1b2"])]}, headers=h)
+    bad = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005", "batch_ids": [str(seeded["batch_p1b2"])]}, headers=h)
     assert bad.status_code == 422
     assert client.get(f"{API}/branches/{world['p2b1']}/enrollments", headers=h).status_code == 403
 
@@ -233,7 +246,7 @@ def test_student_service_outage_is_reported_not_swallowed(client, world, student
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     h = login(ba)
     students.down = True
-    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000001"}, headers=h)
+    r = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000001"}, headers=h)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "STUDENT_SERVICE_UNAVAILABLE"
 
 
@@ -242,7 +255,7 @@ def test_cross_branch_transfer_needs_provider_admin(client, world, students, mak
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     _, pa = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
     hb = login(ba)
-    eid = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000005"}, headers=hb).json()["enrollment_id"]
+    eid = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005"}, headers=hb).json()["enrollment_id"]
     t = client.post(f"{API}/enrollments/{eid}/transfers", json={"to_branch_id": str(world["p1b2"]), "reason": "relocated"}, headers=hb)
     assert t.status_code == 201
     tid = t.json()["transfer_id"]
@@ -263,7 +276,7 @@ def test_other_provider_admin_cannot_decide_transfer(client, world, students, ma
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     _, pa2 = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
     hb = login(ba)
-    eid = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"student_id": "STU000005"}, headers=hb).json()["enrollment_id"]
+    eid = client.post(f"{API}/branches/{world['p1b1']}/enrollments", json={"academic": ACAD, "student_id": "STU000005"}, headers=hb).json()["enrollment_id"]
     tid = client.post(f"{API}/enrollments/{eid}/transfers", json={"to_branch_id": str(world["p1b2"]), "reason": "relocated"}, headers=hb).json()["transfer_id"]
     h2 = login(pa2)
     assert client.post(f"{API}/transfers/{tid}/approve", json={"note": "not my provider"}, headers=h2).status_code == 403

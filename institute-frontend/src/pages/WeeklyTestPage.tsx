@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClassTargetSelect } from "../components/classLevels";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
@@ -201,7 +202,7 @@ function SeriesForm({ providerId }: { providerId: string }) {
             <Field label="Marks deducted for a wrong answer" type="number" min={0} max={100} value={cfg.wrong} onChange={(e) => setCfg({ ...cfg, wrong: e.target.value })} />
           </>}
           <Field label="Exam type (optional)" value={cfg.exam_type} onChange={(e) => setCfg({ ...cfg, exam_type: e.target.value })} />
-          <Field label="Class / level (optional)" value={cfg.target_class} onChange={(e) => setCfg({ ...cfg, target_class: e.target.value })} />
+          <ClassTargetSelect value={cfg.target_class} onChange={(v) => setCfg({ ...cfg, target_class: v })} />
         </div>
       </Card>
       <Card>

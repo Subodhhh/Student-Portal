@@ -16,6 +16,7 @@ from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject
 from institute_common.core.taxonomy import Label
+from institute_common.core.class_levels import TargetClass, normalize_class
 from institute_common.models.exams import (
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
     ExamVersion, ExamVersionPaper, GlobalTest, StudentExamAssignment,
@@ -98,7 +99,7 @@ class PlanIn(AudienceIn, MarkingIn):
     auto_publish: bool = True
     status: Literal["ACTIVE", "DRAFT"] = "ACTIVE"      # DRAFT: saved but never generated until activated
     exam_type: Label = None
-    target_class: Label = None
+    target_class: TargetClass = None
     slots: list[SlotIn] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -120,7 +121,7 @@ class PlanPatch(Strict):
     auto_publish: bool | None = None
     status: str | None = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
     exam_type: Label = None
-    target_class: Label = None
+    target_class: TargetClass = None
     marking_mode: Literal["PER_QUESTION", "UNIFORM"] | None = None
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
@@ -160,6 +161,9 @@ class PreviewOut(BaseModel):
     eligible_count: int
     sample_student_ids: list[str]
     not_eligible_student_ids: list[str] = []
+    # Students the plan's Class kept out: no Class set on their enrollment / a different Class
+    excluded_no_class: int = 0
+    excluded_other_class: int = 0
 
 
 class JobOut(BaseModel):
@@ -346,14 +350,24 @@ def check_plan(branch_id: UUID, body: PlanCheckIn, p: Principal = Depends(get_pr
     return {"ok": True}
 
 
+class AudiencePreviewIn(AudienceIn):
+    subject_ids: list[UUID] = Field(default_factory=list, max_length=20)   # the plan's subjects, when already chosen
+    target_class: TargetClass = None                                      # the plan's Class, when chosen
+
+
 @router.post("/branches/{branch_id}/audience-preview", response_model=PreviewOut)
-def audience_preview(branch_id: UUID, body: AudienceIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+def audience_preview(branch_id: UUID, body: AudiencePreviewIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """How many students the audience reaches right now (the same resolution generation uses)."""
     br = _branch(db, branch_id)
     require_plan_scope(db, p, br, body.audience_type)
     missing = validate_audience(db, br, body)
-    rows = gen.resolve_audience(db, br.provider_id, branch_id, body.audience_type, body.batch_ids, body.student_ids)
-    return PreviewOut(eligible_count=len(rows), sample_student_ids=[r[0] for r in rows[:10]], not_eligible_student_ids=missing[:100])
+    report: dict = {}
+    rows = gen.resolve_audience(db, br.provider_id, branch_id, body.audience_type, body.batch_ids, body.student_ids,
+                                subject_ids=body.subject_ids, class_level=normalize_class(body.target_class), report=report)
+    got = {r[0] for r in rows}
+    return PreviewOut(eligible_count=len(rows), sample_student_ids=[r[0] for r in rows[:10]], not_eligible_student_ids=missing[:100],
+                      excluded_no_class=len(report.get("excluded_no_class", set()) - got),
+                      excluded_other_class=len(report.get("excluded_other_class", set()) - got))
 
 
 @router.put("/exam-plans/{plan_id}/audience", response_model=PlanOut)

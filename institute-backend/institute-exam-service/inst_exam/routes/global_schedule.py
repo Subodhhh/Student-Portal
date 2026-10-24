@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from institute_common.clients.student_client import StudentClient, get_student_client
 from institute_common.core import audit
+from institute_common.core.class_levels import class_target
 from institute_common.core.roles import GLOBAL_ROLES, Role
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
@@ -531,9 +532,12 @@ def submit_paper(occurrence_id: UUID, body: SubmissionIn, idempotency_key: str =
     problems = daily.authorize(db, p, a, [body.subject_id], UPLOAD)
     if problems:
         raise api_error_detail(422, "AUDIENCE_INVALID", "Some selections are not allowed.", errors=problems)
-    students = {sid for sid, _e, _b in daily.resolve(db, a)}
+    # exactly the rule generation applies (global_generation.resolve_submission): this paper's subject and the test's Class
+    code, class_problem = class_target(t.target_class)
+    students = {sid for sid, _e, _b in daily.resolve(db, a, [body.subject_id], gg.UNMATCHABLE if class_problem else code)}
     if not students:
-        raise api_error(422, "AUDIENCE_EMPTY", "Nobody is eligible: the selection has no active students.")
+        raise api_error(422, "AUDIENCE_EMPTY", "Nobody is eligible: no active student in this selection takes this subject"
+                        + (f" in Class {t.target_class}" if t.target_class and not class_problem else "") + ".")
     for other in db.scalars(select(GlobalPaperSubmission).where(
             GlobalPaperSubmission.occurrence_id == occurrence_id, GlobalPaperSubmission.provider_id == a.provider_id,
             GlobalPaperSubmission.subject_id == body.subject_id, GlobalPaperSubmission.status == "ACTIVE")):

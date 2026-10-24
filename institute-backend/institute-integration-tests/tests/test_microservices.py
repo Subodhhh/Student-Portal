@@ -258,6 +258,8 @@ def test_each_public_route_is_served_by_exactly_one_service():
 
 # Public routes that did not exist in the monolith (new features). Adding one means adding it here on purpose.
 NEW_ROUTES = {
+    ("PATCH", f"{API}/enrollments/{{enrollment_id}}/academic-profile"),          # Class / Academic Year per enrollment
+    ("POST", f"{API}/enrollments/{{enrollment_id}}/password-setup-link"),         # staff-initiated password setup link
     ("POST", f"{API}/paper-versions/{{pv_id}}/revisions"),
     ("POST", f"{API}/branches/{{branch_id}}/activate"),
     ("POST", f"{API}/branches/{{branch_id}}/composite-requests"), ("GET", f"{API}/branches/{{branch_id}}/composite-requests"),
@@ -379,3 +381,12 @@ def test_service_health_is_for_the_platform_owner_only(client, world, make_staff
     scope = {Role.ADMIN: (None, None), Role.PROVIDER_ADMIN: (world["p1"], None), Role.BRANCH_ADMIN: (world["p1"], world["p1b1"]), Role.TEACHER: (world["p1"], None)}[role]
     _, code = make_staff([(role, *scope)])
     assert client.get(f"{API}/system/health", headers=login(code)).status_code == 403
+
+
+def test_migration_revision_ids_fit_the_alembic_version_column():
+    """alembic_version.version_num is varchar(32) on PostgreSQL: a longer revision id fails only there (SQLite does not enforce it)."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    ids = {f.name: re.search(r'^revision = "([^"]+)"', f.read_text(), re.M).group(1) for f in root.glob("institute-*-service/alembic/versions/*.py")}
+    assert ids and not {name: rid for name, rid in ids.items() if len(rid) > 32}

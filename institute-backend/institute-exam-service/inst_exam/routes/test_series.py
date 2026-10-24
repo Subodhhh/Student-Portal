@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
+from institute_common.core.class_levels import TargetClass, class_target
 from institute_common.database import get_db, utcnow
 from institute_common.models.exams import Exam, ExamPlan, ExamPlanBatch, ExamPlanBranch, ExamPlanStudent, ExamPlanSubject, TestSeries
 from institute_common.models.org import Branch
@@ -63,7 +64,7 @@ class SeriesIn(Strict):
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
     exam_type: Label = None
-    target_class: Label = None
+    target_class: TargetClass = None
 
     @field_validator("name")
     @classmethod
@@ -127,13 +128,20 @@ def _audience(s: TestSeries) -> daily.TestAudienceIn:
 
 # ------------------------------------------------------------------ validation shared by preview, create and generate
 
-def _problems(db: Session, p: Principal, audience: daily.TestAudienceIn, subjects: list[SeriesSubjectIn]) -> tuple[int, list[dict], list[dict]]:
+def _problems(db: Session, p: Principal, audience: daily.TestAudienceIn, subjects: list[SeriesSubjectIn],
+              target_class: str | None = None) -> tuple[int, list[dict], list[dict]]:
     """(eligible students now, blocking problems, warnings) for a series configuration, checked against the CALLER's scope."""
     problems = daily.authorize(db, p, audience, [s.subject_id for s in subjects])
     warnings: list[dict] = []
-    eligible = 0 if problems else len(daily.resolve(db, audience))
+    class_level, class_problem = class_target(target_class)
+    if class_problem:           # a legacy label stored before Classes were controlled: never guessed
+        problems.append({"field": "target_class", "value": target_class, "message": class_problem})
+    report: dict = {}
+    rows = [] if problems else daily.resolve(db, audience, [s.subject_id for s in subjects], class_level, report)
+    eligible = len(rows)
     if not problems and not eligible:
-        problems.append({"field": "audience", "value": None, "message": "Nobody is eligible: the selected batches/branches have no active students."})
+        problems.append({"field": "audience", "value": None,
+                         "message": "Nobody is eligible: the selected batches/branches have no active students." + daily.class_note(report, rows)})
     for s in subjects:
         paper = db.get(Paper, s.paper_id)
         problem = daily.paper_problem(db, p, audience.provider_id, s.subject_id, paper)
@@ -318,7 +326,7 @@ def preview_series(body: SeriesIn, p: Principal = Depends(get_principal), db: Se
     """The dates that would be scheduled, the audience size, problems and warnings. Writes nothing."""
     _require_creator(db, p)
     daily._provider(db, p, body.audience.provider_id)
-    eligible, problems, warnings = _problems(db, p, body.audience, body.subjects)
+    eligible, problems, warnings = _problems(db, p, body.audience, body.subjects, body.target_class)
     future, schedule_problems = _schedule(body, utcnow())
     conflicts = _conflicts(db, body.audience.provider_id, body.audience.branch_ids, [(o["start_at"], o["end_at"]) for o in future])
     return {"ok": not (problems or schedule_problems), "eligible_count": eligible, "occurrences": future, "problems": problems + schedule_problems,
@@ -336,7 +344,7 @@ def create_series(body: SeriesIn, idempotency_key: str = Header(min_length=8, ma
         raise api_error(409, "IDEMPOTENCY_KEY_REUSED", "This request key belongs to another user's test.")
     if not s:
         daily._provider(db, p, body.audience.provider_id)
-        _eligible, problems, _warnings = _problems(db, p, body.audience, body.subjects)
+        _eligible, problems, _warnings = _problems(db, p, body.audience, body.subjects, body.target_class)
         _future, schedule_problems = _schedule(body, utcnow())
         if problems or schedule_problems:
             raise api_error_detail(422, "TEST_INVALID", "The Weekly Test was not created.", errors=problems + schedule_problems)
@@ -375,7 +383,7 @@ def generate_series(series_id: UUID, p: Principal = Depends(get_principal), db: 
     """Schedule the occurrences that are still missing (retry after a failure). Existing tests are returned unchanged."""
     _require_creator(db, p)
     s = _series(db, p, series_id, manage=True)
-    _eligible, problems, _w = _problems(db, p, _audience(s), [SeriesSubjectIn.model_validate(x) for x in s.subjects])
+    _eligible, problems, _w = _problems(db, p, _audience(s), [SeriesSubjectIn.model_validate(x) for x in s.subjects], s.target_class)
     if problems:
         raise api_error_detail(422, "TEST_INVALID", "The Weekly Test can no longer be scheduled as configured.", errors=problems)
     try:

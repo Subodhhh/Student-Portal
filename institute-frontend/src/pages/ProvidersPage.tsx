@@ -9,6 +9,7 @@ import { StaffList } from "../components/staff";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SearchField, SelectField, Spinner, StatCard, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
+import { Batches } from "./BatchesPage";
 
 type ProviderRow = Provider & { phone?: string | null; address?: string | null; created_at?: string; branch_count?: number; staff_count?: number; student_count?: number };
 const day = (s?: string) => (s ? new Date(s).toLocaleDateString() : "—");
@@ -228,6 +229,7 @@ export function BranchDetailPage() {
       <Tabs active={tab} onChange={setTab} tabs={[
         ...(can("staff.read") ? [{ id: "staff", label: "Staff" }] : []),
         ...(can("enrollment.manage") ? [{ id: "students", label: "Students" }] : []),
+        ...(can("batch.manage") ? [{ id: "batches", label: "Batches" }] : []),
         { id: "teaching", label: "Teaching assignments" },
       ]} />
       {tab === "students" && can("enrollment.manage") && <StudentDirectory key={branchId} providerId={providerId} branchId={branchId} />}
@@ -237,6 +239,7 @@ export function BranchDetailPage() {
           <StaffList key={branchId} branchId={branchId} roleFilter />
         </>
       )}
+      {tab === "batches" && can("batch.manage") && <Batches key={branchId} providerId={providerId} branchId={branchId} />}
       {tab === "teaching" && <TeachingAssignments providerId={providerId} branchId={branchId} />}
     </>
   );

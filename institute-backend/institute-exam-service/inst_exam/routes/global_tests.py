@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
+from institute_common.core.class_levels import TargetClass
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import ExamPlan, ExamPlanSubject, GlobalTest, GlobalTestOccurrence, GlobalTestSection, GlobalTestSubject
@@ -43,7 +44,7 @@ class GlobalTestIn(Strict):
     name: str = Field(min_length=3, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     exam_type: Label = None
-    target_class: Label = None
+    target_class: TargetClass = None
     duration_minutes: int = Field(gt=0, le=720)
     subject_ids: list[UUID] = Field(default_factory=list, max_length=20)     # SCHEDULE test: providers supply the papers
     sections: list[SectionIn] = Field(default_factory=list, max_length=20)   # SECTIONS test (earlier model)

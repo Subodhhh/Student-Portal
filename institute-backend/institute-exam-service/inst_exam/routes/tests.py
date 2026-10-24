@@ -39,6 +39,7 @@ from institute_common.core import audit
 from institute_common.core.roles import Role
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
+from institute_common.core.class_levels import TargetClass, normalize_class
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import (
@@ -96,7 +97,7 @@ class TestDraftIn(Strict):
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
     exam_type: Label = None
-    target_class: Label = None
+    target_class: TargetClass = None
 
     @field_validator("name")
     @classmethod
@@ -228,8 +229,20 @@ def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids:
     return out
 
 
-def resolve(db: Session, a: TestAudienceIn) -> list[tuple[str, str, UUID | None]]:
-    return gen.resolve_audience(db, a.provider_id, a.branch_ids[0], "TARGETED", a.batch_ids, a.student_ids, branch_ids=a.whole_branch_ids)
+def resolve(db: Session, a: TestAudienceIn, subject_ids=(), class_level: str | None = None,
+            report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
+    """`subject_ids`: the test's subjects; batch-based selections then reach only students who take all of them in that batch.
+    `class_level`: the test's Class code (core/class_levels); batch-based selections then reach only enrollments of that Class."""
+    return gen.resolve_audience(db, a.provider_id, a.branch_ids[0], "TARGETED", a.batch_ids, a.student_ids, branch_ids=a.whole_branch_ids,
+                                subject_ids=subject_ids, class_level=class_level, report=report)
+
+
+def class_note(report: dict, rows) -> str:
+    """Why students were kept out by the Class, for messages ('' when the Class excluded nobody)."""
+    got = {r[0] for r in rows}
+    none, other = len(report.get("excluded_no_class", set()) - got), len(report.get("excluded_other_class", set()) - got)
+    parts = ([f"{none} without a Class on their enrollment"] if none else []) + ([f"{other} in a different Class"] if other else [])
+    return f" The test's Class excluded {' and '.join(parts)}." if parts else ""
 
 
 def _names(sc: StudentClient, ids: list[str]) -> dict:
@@ -271,8 +284,13 @@ def test_students(provider_id: UUID, branch_ids: list[UUID] = Query(...), q: str
     return {"items": items[:200], "total": len(items)}
 
 
+class TestAudiencePreviewIn(TestAudienceIn):
+    subject_ids: list[UUID] = Field(default_factory=list, max_length=20)   # the test's subjects, when already chosen
+    target_class: TargetClass = None                                      # the test's Class, when chosen
+
+
 @router.post("/tests/audience")
-def test_audience(body: TestAudienceIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+def test_audience(body: TestAudiencePreviewIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
                   sc: StudentClient = Depends(get_student_client)):
     """Server-side resolution of the audience: who would be assigned, and why a selection is not allowed."""
     if not p.has_perm(PERM):
@@ -281,13 +299,15 @@ def test_audience(body: TestAudienceIn, p: Principal = Depends(get_principal), d
     problems = authorize(db, p, body, [])
     if problems:
         raise api_error_detail(422, "AUDIENCE_INVALID", "Some selections are not allowed.", errors=problems)
-    rows = resolve(db, body)
+    report: dict = {}
+    rows = resolve(db, body, body.subject_ids, normalize_class(body.target_class), report)
     missing = [sid for sid in body.student_ids if sid not in {r[0] for r in rows}]
     names = _names(sc, [r[0] for r in rows])
     return {"eligible_count": len(rows),
             "students": [{"student_id": sid, "name": (f"{names[sid].first_name} {names[sid].last_name}" if sid in names else None)}
                          for sid, _e, _b in rows[:300]],
-            "not_assigned": [{"student_id": sid, "reason": "No active batch membership/enrollment in the selected branches."} for sid in missing]}
+            "not_assigned": [{"student_id": sid, "reason": "No active batch membership/enrollment in the selected branches."} for sid in missing],
+            "class_note": class_note(report, rows).strip() or None}
 
 
 def _check(db: Session, p: Principal, body: TestDraftIn) -> tuple[list[tuple[str, str, UUID | None]], list[dict]]:
@@ -296,9 +316,11 @@ def _check(db: Session, p: Principal, body: TestDraftIn) -> tuple[list[tuple[str
     require_test_type(db, p, "DAILY")
     _provider(db, p, body.audience.provider_id)
     problems = authorize(db, p, body.audience, [s.subject_id for s in body.subjects])
-    rows = [] if problems else resolve(db, body.audience)
+    report: dict = {}
+    rows = [] if problems else resolve(db, body.audience, [s.subject_id for s in body.subjects], normalize_class(body.target_class), report)
     if not problems and not rows:
-        problems.append({"field": "audience", "value": None, "message": "Nobody is eligible: the selected batches/branches have no active students."})
+        problems.append({"field": "audience", "value": None,
+                         "message": "Nobody is eligible: the selected batches/branches have no active students." + class_note(report, rows)})
     return rows, problems
 
 

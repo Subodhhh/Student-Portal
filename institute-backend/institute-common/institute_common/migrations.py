@@ -87,7 +87,8 @@ TRIGGERS: dict[str, list[tuple[str, str, str, str]]] = {
 
 
 # Tables introduced by a LATER revision of their service (explicit op.create_table there); the baseline must not create them.
-LATER_TABLES = frozenset({"composite_requests", "composite_request_slots"})
+LATER_TABLES = frozenset({"composite_requests", "composite_request_slots", "enrollment_batch_subjects",
+                          "enrollment_academic_profiles", "batch_academic_defaults"})
 # exam_plan_students / global_tests / global_test_sections (exam 0004) are NOT listed: exam_plans references global_tests, so a fresh
 # database must create them together in the baseline; 0004 creates them only where they are missing (existing databases).
 

@@ -80,7 +80,7 @@ describe("Create Test wizard", () => {
   it("runs audience -> name -> subjects -> details -> files -> import & validate -> review -> publish, with the server deciding each gate", async () => {
     const calls = stubApi(routes());
     await throughFiles();
-    expect(post(calls, "/api/v1/tests/audience")[0].body).toEqual({ provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["ba"], student_ids: [] });
+    expect(post(calls, "/api/v1/tests/audience")[0].body).toEqual({ provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["ba"], student_ids: [], target_class: null });
     expect(post(calls, "/api/v1/tests/check")).toHaveLength(1);
     expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);    // not validated yet
     fireEvent.click(screen.getByRole("button", { name: "Import & Validate" }));
@@ -163,7 +163,7 @@ describe("Create Test wizard", () => {
     fireEvent.click(await screen.findByLabelText("Select STU000003"));
     next();
     await waitFor(() => expect(post(calls, "/api/v1/tests/audience")).toHaveLength(1));
-    expect(post(calls, "/api/v1/tests/audience")[0].body).toEqual({ provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["bb"], student_ids: ["STU000003"] });
+    expect(post(calls, "/api/v1/tests/audience")[0].body).toEqual({ provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["bb"], student_ids: ["STU000003"], target_class: null });
   });
 
   it("uses an approved paper from the bank instead of an upload", async () => {

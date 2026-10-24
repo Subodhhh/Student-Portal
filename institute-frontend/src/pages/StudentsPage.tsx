@@ -2,14 +2,20 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
+import { AcademicFields } from "../components/classLevels";
+import { type Academic, type AcademicForm, EMPTY_ACADEMIC, academicBody, academicErrors, academicText, classLabel, toForm } from "../services/classLevels";
 import NeedBranch from "../components/NeedBranch";
 import { StudentDirectory } from "../components/students";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 
-type Enrollment = { enrollment_id: string; student_id: string; student_name: string | null; status: string; batch_ids: string[]; enrolled_at: string };
-type Batch = { batch_id: string; name: string; status: string };
+// batch_subjects: batch_id -> the subjects taken in that batch; a batch missing there takes every subject it offers.
+type Enrollment = { enrollment_id: string; student_id: string; student_name: string | null; status: string; batch_ids: string[]; batch_subjects?: Record<string, string[]>; enrolled_at: string;
+  academic?: Academic | null };
+// default_*: optional Class / Academic Year a batch suggests when enrolling into it (prefill only).
+type Batch = { batch_id: string; name: string; status: string; default_class_level?: string | null; default_academic_year?: string | null; default_other_description?: string | null };
+type Subject = { subject_id: string; name: string };
 type Transfer = { transfer_id: string; student_id: string; to_branch_id: string; status: string; reason: string | null };
 
 /** Students & Enrollments: the global directory (one identity per student, with the enrollments the viewer manages) and the branch
@@ -43,7 +49,10 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
   const list = useApi<Page<Enrollment>>(`/api/v1/branches/${branchId}/enrollments?page=${page}&page_size=25`);
   const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`);
   const transfers = useApi<Page<Transfer>>(can("enrollment.transfer_approve") ? `/api/v1/providers/${providerId}/transfers?status=PENDING` : null);
+  const subjects = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const batchName = (id: string) => batches.data?.items.find((b) => b.batch_id === id)?.name ?? id.slice(0, 8);
+  const subjectName = (id: string) => subjects.data?.find((s) => s.subject_id === id)?.name ?? id.slice(0, 8);
+  const batchLabel = (e: Enrollment, id: string) => batchName(id) + (e.batch_subjects?.[id] ? ` (${e.batch_subjects[id].map(subjectName).join(", ")})` : "");
   const decide = useAction();
   return (
     <>
@@ -68,7 +77,8 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
             <DataTable rows={list.data?.items ?? []} rowKey={(e) => e.enrollment_id} empty={<EmptyState title="No students enrolled" hint="Enroll your first student." />}
               columns={[
                 { header: "Student ID", render: (e) => e.student_id }, { header: "Name", render: (e) => e.student_name ?? "—" },
-                { header: "Batches", render: (e) => e.batch_ids.map(batchName).join(", ") || "—" },
+                { header: "Class", render: (e) => academicText(e.academic) || <span className="muted">Not set</span> },
+                { header: "Batches", render: (e) => e.batch_ids.map((id) => batchLabel(e, id)).join(", ") || "—" },
                 { header: "Status", render: (e) => <StatusBadge status={e.status} /> },
                 { header: "", render: (e) => (
                   <div className="row">
@@ -97,14 +107,29 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
   const [nf, setNf] = useState({ first_name: "", last_name: "", email: "", phone: "" });
   const [confirmDistinct, setConfirmDistinct] = useState(false);
   const [batchIds, setBatchIds] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<Record<string, string[] | null>>({});
+  const [ac, setAc] = useState<AcademicForm>(EMPTY_ACADEMIC);
+  const [acTouched, setAcTouched] = useState(false);       // staff changed Class/Year themselves: batch defaults no longer prefill
+  const [showErrors, setShowErrors] = useState(false);
   const [conflict, setConflict] = useState("");
   const search = useAction();
   const submit = useAction();
-  const toggle = (id: string) => setBatchIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const suggestion = batchDefaults(batches.filter((b) => batchIds.includes(b.batch_id)));
+  const toggle = (id: string) => {
+    const next = batchIds.includes(id) ? batchIds.filter((x) => x !== id) : [...batchIds, id];
+    setBatchIds(next);
+    if (!acTouched) {     // prefill from the selected batches' defaults until staff edit Class/Year; conflicting defaults prefill nothing
+      const s = batchDefaults(batches.filter((b) => next.includes(b.batch_id)));
+      setAc(s.kind === "one" ? s.form : EMPTY_ACADEMIC);
+    }
+  };
   const doEnroll = () => submit.run(async () => {
     setConflict("");
+    if (Object.keys(academicErrors(ac, true)).length) { setShowErrors(true); return; }
     try {
-      const body = mode === "search" ? { student_id: picked, batch_ids: batchIds } : { new_student: { ...nf, phone: nf.phone || null }, confirm_distinct_person: confirmDistinct, batch_ids: batchIds };
+      const batch_subjects = batchIds.filter((b) => chosen[b]).map((b) => ({ batch_id: b, subject_ids: chosen[b] }));
+      const academic = academicBody(ac);
+      const body = mode === "search" ? { student_id: picked, batch_ids: batchIds, batch_subjects, academic } : { new_student: { ...nf, phone: nf.phone || null }, confirm_distinct_person: confirmDistinct, batch_ids: batchIds, batch_subjects, academic };
       await api(`/api/v1/branches/${branchId}/enrollments`, { method: "POST", body });
       onDone();
     } catch (e) {
@@ -136,7 +161,18 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
         </>
       )}
       <h3 style={{ marginTop: "var(--space-4)" }}>Batches</h3>
-      {batches.filter((b) => b.status === "ACTIVE").map((b) => <label key={b.batch_id} className="row"><input type="checkbox" checked={batchIds.includes(b.batch_id)} onChange={() => toggle(b.batch_id)} />{b.name}</label>)}
+      {batches.filter((b) => b.status === "ACTIVE").map((b) => (
+        <div key={b.batch_id}>
+          <label className="row"><input type="checkbox" checked={batchIds.includes(b.batch_id)} onChange={() => toggle(b.batch_id)} />{b.name}</label>
+          {batchIds.includes(b.batch_id) && <SubjectPicker batch={b} value={chosen[b.batch_id] ?? null} onChange={(v) => setChosen((c) => ({ ...c, [b.batch_id]: v }))} />}
+        </div>
+      ))}
+      <h3 style={{ marginTop: "var(--space-4)" }}>Class and academic year</h3>
+      {suggestion.kind === "conflict" && !acTouched && (
+        <Alert kind="warn">The selected batches suggest different classes ({suggestion.labels.join("; ")}). Choose this student's class and academic year.</Alert>
+      )}
+      {suggestion.kind === "one" && !acTouched && <p className="muted small">Prefilled from the batch defaults ({suggestion.labels[0]}). Change them if this student differs.</p>}
+      <AcademicFields value={ac} required showErrors={showErrors} onChange={(v) => { setAc(v); setAcTouched(true); }} />
       {submit.error && <Alert kind="error">{submit.error}</Alert>}
       <div style={{ height: "var(--space-3)" }} />
       <Button busy={submit.busy} onClick={() => void doEnroll()} disabled={mode === "search" ? !picked : !(nf.first_name && nf.last_name && nf.email)}>Enroll</Button>
@@ -174,6 +210,34 @@ function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment:
     setSaved(member ? "Removed from batch." : "Added to batch.");
     onChanged();
   });
+  const setSubjects = (batchId: string, subject_ids: string[] | null) => void run(async () => {
+    setSaved("");
+    await api(`/api/v1/enrollments/${current.enrollment_id}/batches/${batchId}`, { method: "PUT", body: { subject_ids } });
+    setCurrent((c) => {
+      const next = { ...(c.batch_subjects ?? {}) };
+      if (subject_ids) next[batchId] = subject_ids; else delete next[batchId];
+      return { ...c, batch_subjects: next };
+    });
+    setSaved("Subjects updated.");
+    onChanged();
+  });
+  const [acForm, setAcForm] = useState<AcademicForm>(toForm(enrollment.academic));
+  const [acErrors, setAcErrors] = useState(false);
+  const saveAcademic = () => void run(async () => {
+    setSaved("");
+    if (Object.keys(academicErrors(acForm, true)).length) { setAcErrors(true); return; }
+    const out = await api<Academic>(`/api/v1/enrollments/${current.enrollment_id}/academic-profile`, { method: "PATCH", body: academicBody(acForm) });
+    setCurrent((c) => ({ ...c, academic: out }));      // batches and subject selections are untouched
+    setAcForm(toForm(out));
+    setAcErrors(false);
+    setSaved("Class and academic year saved.");
+    onChanged();
+  });
+  const sendSetupLink = () => void run(async () => {
+    setSaved("");
+    const out = await api<{ expires_at: string | null }>(`/api/v1/enrollments/${current.enrollment_id}/password-setup-link`, { method: "POST" });
+    setSaved(`Password setup link sent to the student's email${out.expires_at ? ` (valid until ${new Date(out.expires_at).toLocaleTimeString()})` : ""}.`);
+  });
   const setStatus = (status: "ACTIVE" | "INACTIVE") => void run(async () => {
     setSaved("");
     const out = await api<Enrollment>(`/api/v1/enrollments/${current.enrollment_id}`, { method: "PATCH", body: { status, reason } });
@@ -187,17 +251,29 @@ function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment:
       <p className="muted small">Student ID {current.student_id} · <StatusBadge status={current.status} /></p>
       {error && <Alert kind="error">{error}</Alert>}
       {saved && <Alert kind="success">{saved}</Alert>}
-      <h3>Batches</h3>
+      <h3>Class and academic year</h3>
+      {current.academic ? <p className="small">Saved: <strong>{academicText(current.academic)}</strong></p> : (
+        <Alert kind="warn">No class / academic year yet (this enrollment was made before classes were recorded). Class-specific exams do not reach this student until you set them.</Alert>
+      )}
+      <AcademicFields value={acForm} required showErrors={acErrors} disabled={busy} onChange={setAcForm} />
+      <Button small busy={busy} onClick={saveAcademic}>Save class</Button>
+      <h3 style={{ marginTop: "var(--space-4)" }}>Batches</h3>
       {!active && <p className="muted small">Reactivate the enrollment to change its batches.</p>}
       {batches.filter((b) => b.status === "ACTIVE" || current.batch_ids.includes(b.batch_id)).map((b) => {
         const member = current.batch_ids.includes(b.batch_id);
         return (
-          <label key={b.batch_id} className="row">
-            <input type="checkbox" checked={member} disabled={busy || (!active && !member) || (!member && b.status !== "ACTIVE")} onChange={() => toggleBatch(b.batch_id, member)} />
-            {b.name}{b.status !== "ACTIVE" ? " (inactive batch)" : ""}
-          </label>
+          <div key={b.batch_id}>
+            <label className="row">
+              <input type="checkbox" checked={member} disabled={busy || (!active && !member) || (!member && b.status !== "ACTIVE")} onChange={() => toggleBatch(b.batch_id, member)} />
+              {b.name}{b.status !== "ACTIVE" ? " (inactive batch)" : ""}
+            </label>
+            {member && <SubjectPicker batch={b} value={current.batch_subjects?.[b.batch_id] ?? null} disabled={busy || !active || b.status !== "ACTIVE"} onChange={(v) => setSubjects(b.batch_id, v)} />}
+          </div>
         );
       })}
+      <h3 style={{ marginTop: "var(--space-4)" }}>Password</h3>
+      <p className="muted small">Email the student a link to set (or reset) their Student Portal password. At most 3 links per student per hour.</p>
+      <Button small variant="secondary" busy={busy} disabled={!active} onClick={sendSetupLink}>Send password setup link</Button>
       <h3 style={{ marginTop: "var(--space-4)" }}>{active ? "Deactivate enrollment" : "Reactivate enrollment"}</h3>
       <p className="muted small">{active ? "The student stops receiving new exams from this branch. Past attempts and results are kept." : "The student becomes eligible for future exams of this branch again."}</p>
       <TextAreaField label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -206,4 +282,39 @@ function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment:
       </Button>
     </Modal>
   );
+}
+
+/** The subjects a student takes in one batch: every subject the batch offers (null, the default) or only the ticked ones. Exams of
+ * this batch reach the student only if they take all of the exam's subjects. At least one subject stays ticked. */
+function SubjectPicker({ batch, value, disabled, onChange }: { batch: Batch; value: string[] | null; disabled?: boolean; onChange: (v: string[] | null) => void }) {
+  const offered = useApi<Subject[]>(`/api/v1/batches/${batch.batch_id}/subjects`);
+  if (offered.loading || offered.error) return null;
+  const all = (offered.data ?? []).map((s) => s.subject_id);
+  if (!all.length) return <p className="muted small" style={{ marginLeft: 24 }}>This batch has no subjects yet.</p>;
+  const taken = value ?? all;
+  const toggle = (id: string) => {
+    const next = taken.includes(id) ? taken.filter((x) => x !== id) : [...taken, id];
+    if (next.length) onChange(all.every((s) => next.includes(s)) ? null : next);
+  };
+  return (
+    <div role="group" aria-label={`Subjects in ${batch.name}`} style={{ marginLeft: 24 }}>
+      {(offered.data ?? []).map((s) => {
+        const on = taken.includes(s.subject_id);
+        return <label key={s.subject_id} className="row"><input type="checkbox" checked={on} disabled={disabled || (on && taken.length === 1)} onChange={() => toggle(s.subject_id)} />{s.name}</label>;
+      })}
+    </div>
+  );
+}
+
+type Suggestion = { kind: "none" } | { kind: "one"; form: AcademicForm; labels: string[] } | { kind: "conflict"; labels: string[] };
+
+/** What the selected batches suggest for Class / Academic Year: nothing, one consistent default, or conflicting defaults (never resolved silently). */
+function batchDefaults(selected: Batch[]): Suggestion {
+  const withDefaults = selected.filter((b) => b.default_class_level || b.default_academic_year);
+  const key = (b: Batch) => `${b.default_class_level ?? ""}|${b.default_other_description ?? ""}|${b.default_academic_year ?? ""}`;
+  const describe = (b: Batch) => `${b.name}: ${[b.default_class_level ? classLabel(b.default_class_level) + (b.default_other_description ? ` (${b.default_other_description})` : "") : null, b.default_academic_year].filter(Boolean).join(", ")}`;
+  if (!withDefaults.length) return { kind: "none" };
+  if (new Set(withDefaults.map(key)).size > 1) return { kind: "conflict", labels: withDefaults.map(describe) };
+  const b = withDefaults[0];
+  return { kind: "one", labels: [describe(b)], form: { class_level: b.default_class_level ?? "", academic_year: b.default_academic_year ?? "", other_class_description: b.default_other_description ?? "" } };
 }

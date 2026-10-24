@@ -4,6 +4,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from institute_common.core.class_levels import CLASS_LEVELS, OTHER_MAX
+from institute_common.core.taxonomy import sql_in
 from institute_common.database import Base, UTCDateTime, utcnow
 
 
@@ -88,6 +90,69 @@ class EnrollmentEvent(Base):
     actor_staff_id: Mapped[UUID | None] = mapped_column()
     reason: Mapped[str | None] = mapped_column(String(1000))
     occurred_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class EnrollmentBatchSubject(Base):
+    """A subject the student takes in one batch membership (enrollment subject 0003). A membership WITHOUT rows takes every subject
+    its batch offers (the original behaviour); with rows, only those subjects count for exam eligibility and teacher visibility."""
+
+    __tablename__ = "enrollment_batch_subjects"
+    __table_args__ = (UniqueConstraint("enrollment_batch_id", "subject_id", name="uq_enrollment_batch_subject"),)
+
+    enrollment_batch_subject_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    enrollment_batch_id: Mapped[UUID] = mapped_column(ForeignKey("enrollment_batches.enrollment_batch_id", ondelete="CASCADE"),
+                                                      nullable=False, index=True)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+def _year_check(col: str) -> str:
+    """'YYYY-YYYY' with consecutive years; portable (PostgreSQL and the SQLite test database)."""
+    return (f"{col} IS NULL OR (length({col}) = 9 AND substr({col}, 5, 1) = '-' "
+            f"AND CAST(substr({col}, 6, 4) AS INTEGER) = CAST(substr({col}, 1, 4) AS INTEGER) + 1)")
+
+
+class EnrollmentAcademicProfile(Base):
+    """Class and Academic Year of ONE provider enrollment (enrollment 0004). Never on the global student identity: the same student can
+    have a different Class at another provider. Exactly one row per enrollment; see core/class_levels.py for the values and matching."""
+
+    __tablename__ = "enrollment_academic_profiles"
+    __table_args__ = (
+        CheckConstraint(f"class_level IN ({sql_in(CLASS_LEVELS)})", name="eap_class_level_check"),
+        CheckConstraint(_year_check("academic_year") + " AND academic_year IS NOT NULL", name="eap_academic_year_check"),
+        CheckConstraint("(class_level = 'OTHER' AND other_class_description IS NOT NULL) OR (class_level <> 'OTHER' AND other_class_description IS NULL)",
+                        name="eap_other_description_check"),
+    )
+
+    enrollment_id: Mapped[str] = mapped_column(ForeignKey("enrollments.enrollment_id", ondelete="CASCADE"), primary_key=True)
+    class_level: Mapped[str] = mapped_column(String(12), nullable=False)
+    academic_year: Mapped[str] = mapped_column(String(9), nullable=False)
+    other_class_description: Mapped[str | None] = mapped_column(String(OTHER_MAX))
+    updated_by: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class BatchAcademicDefault(Base):
+    """Optional Class / Academic Year a batch suggests when students are enrolled into it (academics 0002). Only prefills the enrollment
+    form: changing it never rewrites an enrollment's confirmed profile. A row exists only while at least one default is set."""
+
+    __tablename__ = "batch_academic_defaults"
+    __table_args__ = (
+        CheckConstraint(f"default_class_level IS NULL OR default_class_level IN ({sql_in(CLASS_LEVELS)})", name="bad_class_level_check"),
+        CheckConstraint(_year_check("default_academic_year"), name="bad_academic_year_check"),
+        CheckConstraint("(default_class_level = 'OTHER' AND default_other_description IS NOT NULL) "
+                        "OR ((default_class_level IS NULL OR default_class_level <> 'OTHER') AND default_other_description IS NULL)",
+                        name="bad_other_description_check"),
+    )
+
+    batch_id: Mapped[UUID] = mapped_column(ForeignKey("batches.batch_id", ondelete="CASCADE"), primary_key=True)
+    default_class_level: Mapped[str | None] = mapped_column(String(12))
+    default_academic_year: Mapped[str | None] = mapped_column(String(9))
+    default_other_description: Mapped[str | None] = mapped_column(String(OTHER_MAX))
+    updated_by: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class EnrollmentTransfer(Base):

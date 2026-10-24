@@ -92,8 +92,8 @@ def create_test(client, login, gs, **over):
     return r.json()
 
 
-def published(client, login, gs, months=1):
-    t = create_test(client, login, gs)
+def published(client, login, gs, months=1, **over):
+    t = create_test(client, login, gs, **over)
     r = client.post(f"{API}/global-tests/{t['test_id']}/occurrences/plan", headers=login(gs["sa"]),
                     json={"months": next_months(months), "weekdays": [5], "start_time": "10:00", "timezone": "Asia/Kolkata", "window_minutes": 180})
     assert r.status_code == 200, r.text

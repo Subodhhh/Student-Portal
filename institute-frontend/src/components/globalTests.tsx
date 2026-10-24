@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClassTargetSelect } from "./classLevels";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { isGlobalRole } from "../auth/roles";
@@ -128,7 +129,7 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
       <TextAreaField label="Description (optional)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
       <div className="grid cols-3">
         <Field label="Exam type" value={f.exam_type} onChange={(e) => setF({ ...f, exam_type: e.target.value })} placeholder="NEET" />
-        <Field label="Class" value={f.target_class} onChange={(e) => setF({ ...f, target_class: e.target.value })} placeholder="Class 12" />
+        <ClassTargetSelect label="Class" value={f.target_class} onChange={(v) => setF({ ...f, target_class: v })} />
         <Field label="Duration (minutes)" type="number" min={1} max={720} value={f.duration} onChange={(e) => setF({ ...f, duration: e.target.value })} />
       </div>
       <fieldset className="checklist"><legend>Subjects (each provider submits its own paper per subject)</legend>
@@ -183,7 +184,7 @@ function SectionsTestForm({ test, onClose, onDone }: { test: GlobalTest; onClose
       <TextAreaField label="Description (optional)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
       <div className="grid cols-3">
         <Field label="Exam type" value={f.exam_type} onChange={(e) => setF({ ...f, exam_type: e.target.value })} placeholder="NEET" />
-        <Field label="Class" value={f.target_class} onChange={(e) => setF({ ...f, target_class: e.target.value })} placeholder="Class 12" />
+        <ClassTargetSelect label="Class" value={f.target_class} onChange={(v) => setF({ ...f, target_class: v })} />
         <Field label="Duration (minutes)" type="number" min={1} max={720} value={f.duration} onChange={(e) => setF({ ...f, duration: e.target.value })} />
       </div>
       <h3>Sections: approved platform papers (one per subject)</h3>

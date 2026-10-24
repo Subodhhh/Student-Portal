@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from institute_common.core import audit
 from institute_common.core.roles import Role
+from institute_common.core.class_levels import class_target
 from institute_common.database import utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import (
@@ -45,9 +46,23 @@ def deadline(test: GlobalTest, occ: GlobalTestOccurrence) -> datetime:
     return occ.start_at - timedelta(minutes=test.generate_lead_minutes)
 
 
-def resolve_submission(db: Session, sub: GlobalPaperSubmission) -> list[tuple[str, str, UUID | None]]:
+def submission_class(db: Session, sub: GlobalPaperSubmission) -> tuple[str | None, str | None]:
+    """The Global Test's Class for matching: (code or UNMATCHABLE, problem). A legacy label is never guessed: it reaches nobody through
+    batches (staff-listed students still count) and the occurrence report names the problem."""
+    test = db.get(GlobalTest, db.get(GlobalTestOccurrence, sub.occurrence_id).test_id)
+    code, problem = class_target(test.target_class)
+    return (gen.UNMATCHABLE if problem else code), problem
+
+
+_LOOKUP = object()
+
+
+def resolve_submission(db: Session, sub: GlobalPaperSubmission, class_level=_LOOKUP) -> list[tuple[str, str, UUID | None]]:
+    """Students one submission reaches: its audience, its one subject and (by default) its Global Test's Class."""
     from inst_exam.routes.tests import TestAudienceIn, resolve
-    return resolve(db, TestAudienceIn.model_validate(sub.audience))
+    if class_level is _LOOKUP:
+        class_level, _problem = submission_class(db, sub)
+    return resolve(db, TestAudienceIn.model_validate(sub.audience), [sub.subject_id], class_level)
 
 
 def assignments(db: Session, occ: GlobalTestOccurrence, provider_id: UUID) -> dict:
@@ -60,12 +75,14 @@ def assignments(db: Session, occ: GlobalTestOccurrence, provider_id: UUID) -> di
     papers: dict[str, dict[UUID, tuple[GlobalPaperSubmission, str]]] = defaultdict(dict)
     ambiguous: set[tuple[str, UUID]] = set()
     not_ready = []
+    code, problem = class_target(db.get(GlobalTest, occ.test_id).target_class)    # one Class for the whole occurrence
+    class_level = gen.UNMATCHABLE if problem else code
     for sub in subs:
         v = db.get(PaperVersion, sub.paper_version_id)
         if not v or v.status not in READY:
             not_ready.append(sub)
             continue
-        for sid, eid, _bid in resolve_submission(db, sub):
+        for sid, eid, _bid in resolve_submission(db, sub, class_level):
             if sub.subject_id in papers[sid] and papers[sid][sub.subject_id][0].submission_id != sub.submission_id:
                 ambiguous.add((sid, sub.subject_id))
             else:
@@ -136,6 +153,9 @@ def generate_occurrence(db: Session, occ: GlobalTestOccurrence, now: datetime | 
         GlobalPaperSubmission.occurrence_id == occ.occurrence_id, GlobalPaperSubmission.status == "ACTIVE"))}, key=str)
     offering = sorted({p for (p,) in db.execute(select(ProviderSubject.provider_id).where(ProviderSubject.subject_id.in_(subject_order or [None])))}, key=str)
     report = {"plans": 0, "exams": [], "students": 0, "ambiguous": 0, "missing": [], "failed": []}
+    _code, class_problem = class_target(test.target_class)
+    if class_problem:
+        report["class_problem"] = class_problem
     when = occ.start_at.strftime("%d %b %Y %H:%M UTC")
     for provider_id in providers:
         try:

@@ -16,8 +16,10 @@ from institute_common.context import current_service
 OWNED: dict[str, frozenset[str]] = {
     "identity": frozenset({"staff", "staff_tokens", "staff_role_assignments", "institute_audit_logs"}),
     "organization": frozenset({"providers", "branches"}),
-    "academics": frozenset({"subjects", "provider_subjects", "batch_subjects", "teacher_subject_assignments", "batches"}),
-    "enrollment": frozenset({"enrollments", "enrollment_batches", "enrollment_events", "enrollment_transfers"}),
+    "academics": frozenset({"subjects", "provider_subjects", "batch_subjects", "teacher_subject_assignments", "batches",
+                            "batch_academic_defaults"}),
+    "enrollment": frozenset({"enrollments", "enrollment_batches", "enrollment_events", "enrollment_transfers",
+                             "enrollment_batch_subjects", "enrollment_academic_profiles"}),
     "paper": frozenset({"stored_files", "bank_questions", "question_versions", "paper_uploads", "papers", "paper_versions",
                         "paper_version_questions", "paper_version_events", "paper_shares", "global_paper_copies",
                         "paper_photo_drafts", "paper_photo_draft_files"}),

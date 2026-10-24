@@ -35,7 +35,8 @@ from institute_common.models.exams import (
     ExamVersion, ExamVersionPaper, GlobalTest, GlobalTestSection, StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch
-from institute_common.models.academics import Subject
+from institute_common.core.class_levels import class_target
+from institute_common.models.academics import EnrollmentAcademicProfile, EnrollmentBatchSubject, Subject
 from institute_common.models.papers import Paper, PaperShare, PaperVersion
 from inst_exam.services.notify import notify, responsible_staff
 
@@ -136,16 +137,39 @@ def resolve_slots(db: Session, plan: ExamPlan) -> Resolution:
     return out
 
 
-def eligible_students(db: Session, plan: ExamPlan) -> list[tuple[str, str, UUID | None]]:
-    """The plan's audience resolved from CURRENT data (see `resolve_audience`)."""
+UNMATCHABLE = "!unmatchable"   # a class code no enrollment has: a plan whose target cannot be matched reaches nobody through batches
+
+
+def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
+    """The plan's audience resolved from CURRENT data (see `resolve_audience`), including its Class (plan.target_class)."""
+    class_level, problem = class_target(plan.target_class)
+    if problem:                 # fail-safe for every reader (generation itself refuses such a plan before calling this)
+        class_level = UNMATCHABLE
+        if report is not None:
+            report["class_problem"] = problem
     batch_ids = [b for (b,) in db.execute(select(ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id))]
     student_ids = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id))]
     branch_ids = [b for (b,) in db.execute(select(ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id == plan.plan_id))]
-    return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids)
+    subject_ids = list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)))
+    return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids,
+                            subject_ids=subject_ids, class_level=class_level, report=report)
+
+
+def subjects_taken(db: Session, enrollment_ids) -> dict[tuple[str, UUID], set[UUID]]:
+    """(enrollment_id, batch_id) -> the subjects chosen in that batch membership. A membership missing here has no selection and
+    takes every subject its batch offers."""
+    out: dict[tuple[str, UUID], set[UUID]] = {}
+    for eid, bid, sid in db.execute(
+            select(EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id, EnrollmentBatchSubject.subject_id)
+            .join(EnrollmentBatchSubject, EnrollmentBatchSubject.enrollment_batch_id == EnrollmentBatch.enrollment_batch_id)
+            .where(EnrollmentBatch.enrollment_id.in_(list(enrollment_ids) or [None]))):
+        out.setdefault((eid, bid), set()).add(sid)
+    return out
 
 
 def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_type: str, batch_ids: list[UUID],
-                     student_ids: list[str], *, branch_ids: list[UUID] = ()) -> list[tuple[str, str, UUID | None]]:
+                     student_ids: list[str], *, branch_ids: list[UUID] = (), subject_ids=(), class_level: str | None = None,
+                     report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
     """(student_id, enrollment_id, batch_id), one row per student. Used by generation and by the wizard's audience preview.
 
     BATCHES / BRANCH / INSTITUTE: an ACTIVE enrollment at the provider (in the plan's branch for BATCHES and BRANCH) and an
@@ -153,16 +177,22 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
     of any active branch). STUDENTS: the listed students with an ACTIVE enrollment at the provider (the plan's branch is
     preferred when a student is enrolled in several branches); a listed student without one is not assigned.
     TARGETED: the union of whole branches (`branch_ids`, BRANCH rule), batches of any branch of the provider (BATCHES rule in each
-    batch's own branch) and listed students (STUDENTS rule); a student reached several ways is assigned once."""
+    batch's own branch) and listed students (STUDENTS rule); a student reached several ways is assigned once.
+    Subject-wise enrollment: with `subject_ids` (the exam's subjects), a batch-based rule counts a membership only if the student takes
+    ALL of them in that batch (a membership without a subject selection takes every subject). Listed students are a staff override
+    and are never filtered by subject.
+    Class: with `class_level` (a code from core/class_levels.class_target), batch-based rules also require the ENROLLMENT's academic
+    profile to have exactly that Class; enrollments without a profile are excluded. `report` (if given) counts the students excluded
+    for each reason (excluded_no_class / excluded_other_class). Listed students are never filtered by Class either."""
     if audience_type == "TARGETED":
         rows: list[tuple[str, str, UUID | None]] = []
         for b in dict.fromkeys(branch_ids):
-            rows += resolve_audience(db, provider_id, b, "BRANCH", [], [])
+            rows += resolve_audience(db, provider_id, b, "BRANCH", [], [], subject_ids=subject_ids, class_level=class_level, report=report)
         by_branch: dict[UUID, list[UUID]] = {}
         for bid, br in db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))):
             by_branch.setdefault(br, []).append(bid)
         for br, bids in by_branch.items():
-            rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [])
+            rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [], subject_ids=subject_ids, class_level=class_level, report=report)
         rows += resolve_audience(db, provider_id, branch_id, "STUDENTS", [], list(student_ids))
         seen: set[str] = set()
         unique = []
@@ -200,6 +230,16 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
                                                          Branch.deleted_at.is_(None))
         stmt = stmt.where(Enrollment.branch_id.in_(active_branches))
     rows = db.execute(stmt.order_by(Enrollment.student_id, EnrollmentBatch.batch_id)).all()
+    if subject_ids:
+        needed, chosen = set(subject_ids), subjects_taken(db, {eid for _sid, eid, _bid in rows})
+        rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), needed)]
+    if class_level:
+        classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
+                                  .where(EnrollmentAcademicProfile.enrollment_id.in_({eid for _sid, eid, _bid in rows} or {None}))).all())
+        if report is not None:
+            for key, cond in (("excluded_no_class", lambda c: c is None), ("excluded_other_class", lambda c: c is not None and c != class_level)):
+                report.setdefault(key, set()).update(sid for sid, eid, _bid in rows if cond(classes.get(eid)))
+        rows = [r for r in rows if classes.get(r[1]) == class_level]
     seen, out = set(), []
     for sid, eid, bid in rows:
         if sid not in seen:
@@ -296,8 +336,19 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
                 _notify_missing(db, plan, job, m)
             return job
 
+        _code, class_problem = class_target(plan.target_class)
+        if class_problem:       # never guess a legacy / 'Other' target: refuse instead of silently including or excluding students
+            job.status, job.error, job.finished_at = "FAILED", class_problem, utcnow()
+            _event(db, job, "FAILED", {"reason": class_problem, "target_class": plan.target_class})
+            db.commit()
+            _notify_failure(db, plan, job, class_problem)
+            return job
         require_published_global_test(db, plan, lock=True)   # withdrawal racing this generation waits for the row lock
-        students = eligible_students(db, plan)
+        audience: dict = {}
+        students = eligible_students(db, plan, audience)
+        if plan.target_class:
+            _event(db, job, "AUDIENCE", {"target_class": plan.target_class, "students": len(students),
+                                         **{k: len(v - {s for s, _, _ in students}) for k, v in audience.items() if isinstance(v, set)}})
         start, end = start_at or plan.start_at, end_at or plan.end_at
         duplicates = already_holding_global_test(db, plan, start, [sid for sid, _, _ in students])
         students = [row for row in students if row[0] not in duplicates]
