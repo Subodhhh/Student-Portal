@@ -222,8 +222,9 @@ with TestClient(gateway, base_url="http://localhost") as c:
     B3 = c.post(f"{API}/providers/{P2}/branches", json={"name": "Home classes", "city": "Nashik", "state": "MH"}, headers=h).json()["branch_id"]
     PHY = c.post(f"{API}/subjects", json={"code": "PHY", "name": "Physics"}, headers=h).json()["subject_id"]
     CHE = c.post(f"{API}/subjects", json={"code": "CHE", "name": "Chemistry"}, headers=h).json()["subject_id"]
-    for prov in (P, P2):
-        for sj in (PHY, CHE):
+    BIO = c.post(f"{API}/subjects", json={"code": "BIO", "name": "Biology"}, headers=h).json()["subject_id"]
+    for prov, sjs in ((P, (PHY, CHE)), (P2, (BIO,))):        # the tutor teaches Biology only
+        for sj in sjs:
             c.put(f"{API}/providers/{prov}/subjects/{sj}", json={}, headers=h)
     A = c.post(f"{API}/branches/{B1}/batches", json={"name": "NEET A"}, headers=h).json()["batch_id"]
     BB = c.post(f"{API}/branches/{B1}/batches", json={"name": "NEET B"}, headers=h).json()["batch_id"]
@@ -256,7 +257,7 @@ with TestClient(gateway, base_url="http://localhost") as c:
     PV_TOM = csv_paper(c, login(c, TB["staff_code"]), B1, PHY, "T", 4, "Tom Physics Set")
     PV_BA_CHE = csv_paper(c, login(c, BA["staff_code"]), B1, CHE, "B", 3, "Pune Chemistry Set")
     PV_PA_CHE = csv_paper(c, login(c, PA["staff_code"]), B2, CHE, "M", 3, "Mumbai Chemistry Draft", approve=False)   # never approved
-    PV_TUTOR = csv_paper(c, login(c, TU["staff_code"]), B3, PHY, "R", 2, "Ravi Physics Set")
+    PV_TUTOR = csv_paper(c, login(c, TU["staff_code"]), B3, BIO, "R", 2, "Ravi Biology Set")
     check("set-up: platform Admin, 2 providers (one a tutor without batches), Branch Admin, 2 Physics teachers, 5 students, 4 papers", True)
 
 # ------------------------------------------------------------------ the two portals on their own origins
@@ -386,7 +387,7 @@ check("Global Test: one SCHEDULE test, published, created by the Super Admin, +4
       and tests_[0][4:8] == ("UNIFORM", 4, 1, 30) and sql("select count(*) from global_test_sections where test_id = :t", t=tests_[0][0])[0][0] == 0, tests_)
 GT = tests_[0][0]
 subjects = sorted(n for (n,) in sql("select s.name from global_test_subjects g join subjects s on s.subject_id = g.subject_id where g.test_id = :t", t=GT))
-check("its subjects are Physics and Chemistry", subjects == ["Chemistry", "Physics"], subjects)
+check("its subjects are Physics, Chemistry and Biology", subjects == ["Biology", "Chemistry", "Physics"], subjects)
 occ = sql("select occurrence_id, start_at, status from global_test_occurrences where test_id = :t order by start_at", t=GT)
 months = {o[1].strftime("%Y-%m") for o in occ if o[2] == "PUBLISHED"}
 check("dates across 3 months, all published (the deleted draft is gone), every one a Saturday 10:00 Asia/Kolkata",
@@ -402,8 +403,8 @@ subs = sql("""select s.name as subj, coalesce(st.full_name, ''), sub.status, sub
               order by sub.submitted_at""", o=O1)
 active = {(r[0], r[1]): r for r in subs if r[2] == "ACTIVE"}
 check("first date: Tara (photo paper, NEET A), Tom (NEET B), the Branch Admin (Chemistry, all of Pune), the Provider Admin (Chemistry, Mumbai, "
-      "unapproved) and the tutor (Physics, 2 students) each have one ACTIVE submission",
-      {("Physics", "Tara Physics"), ("Physics", "Tom Physics"), ("Chemistry", "Bharat Branch"), ("Chemistry", "Priya Admin"), ("Physics", "Ravi Tutor")}
+      "unapproved) and the tutor (Biology, 2 students) each have one ACTIVE submission",
+      {("Physics", "Tara Physics"), ("Physics", "Tom Physics"), ("Chemistry", "Bharat Branch"), ("Chemistry", "Priya Admin"), ("Biology", "Ravi Tutor")}
       == set(active), [(r[0], r[1], r[2]) for r in subs])
 check("the refused overlapping submission (Provider Admin, Chemistry for all of North) was not stored",
       not any(r[1] == "Priya Admin" and r[4].get("whole_branch_ids") and len(r[4]["whole_branch_ids"]) == 2 for r in subs), subs)
@@ -451,16 +452,24 @@ def exams_by_student():
 
 
 got = exams_by_student()
-want = {S1: {(P, tuple(sorted([tara_pv, PV_BA_CHE]))), (P2, (PV_TUTOR,))}, S2: {(P, tuple(sorted([tara_pv, PV_BA_CHE])))},
+want = {S1: {(P, tuple(sorted([tara_pv, PV_BA_CHE, PV_TUTOR])))}, S2: {(P, tuple(sorted([tara_pv, PV_BA_CHE])))},
         S4: {(P, tuple(sorted([PV_TOM, PV_BA_CHE])))}, S5: {(P2, (PV_TUTOR,))}}
-check("each student gets exactly their own teachers' papers: NEET A = Tara + Pune Chemistry, NEET B = Tom + Pune Chemistry, "
-      "tutor students = Ravi's paper (Asha gets one exam per provider)",
-      {s: {(p, tuple(v)) for p, v, *_ in xs} for s, xs in got.items()} == want, got)
+check("each student gets ONE exam with exactly their own teachers' papers: NEET A = Tara + Pune Chemistry, NEET B = Tom + Pune Chemistry, "
+      "Asha (North + the tutor) = Tara Physics + Pune Chemistry + Ravi Biology, Esha = Ravi Biology",
+      {s: {(p, tuple(v)) for p, v, *_ in xs} for s, xs in got.items()} == want and all(len(xs) == 1 for xs in got.values()), got)
+prov_of = dict(sql("""select vp.paper_version_id::text, sub.provider_id::text from exam_version_papers vp
+                      join global_paper_submissions sub on sub.submission_id = vp.source_submission_id
+                      join exam_versions v on v.exam_version_id = vp.exam_version_id join exams e on e.exam_id = v.exam_id
+                      where e.exam_id = :e""", e=got[S1][0][2]))
+check("Asha's exam keeps each paper's provenance: Physics and Chemistry from North, Biology from the tutor",
+      prov_of == {tara_pv: P, PV_BA_CHE: P, PV_TUTOR: P2}, prov_of)
 check("Chitra (Mumbai) gets no exam: no Physics paper and the Mumbai Chemistry paper was never approved", S3 not in got, got.get(S3))
 notes = [json.loads(p) if isinstance(p, str) else p for (p,) in sql("select payload from exam_notification_outbox where payload->>'kind' = 'GLOBAL_TEST_MISSING_PAPERS'")]
-text_ = json.dumps(notes)
-check("provider admins are told what is missing: North (Mumbai Physics uncovered, unapproved Chemistry), the tutor (no Chemistry)",
-      len(notes) >= 2 and "not approved" in text_ and "Chemistry" in text_, notes)
+north_notes = [n for n in notes if n["provider_id"] == P]
+check("provider admins are told what is missing: North (unapproved Mumbai Chemistry, the Mumbai student uncovered); the tutor, whose only "
+      "subject (Biology) is covered, is told nothing",
+      north_notes and all("not approved" in n["body"] and "Mumbai: 1" in n["body"] for n in north_notes)
+      and not [n for n in notes if n["provider_id"] == P2], notes)
 exam_window = sql("""select pl.start_at, pl.end_at, pl.duration_minutes, e.status, o.start_at, o.end_at from exams e join exam_plans pl on pl.plan_id = e.plan_id
                      join global_test_occurrences o on o.occurrence_id = pl.global_occurrence_id where pl.global_occurrence_id = :o""", o=O1)
 check("generated exams are PUBLISHED with the date's window and the test's duration (30 min)",
@@ -485,12 +494,24 @@ with factory() as db:
 check("published exams delivered to the Student test service", delivered.get("failed", 0) == 0 and delivered.get("sent", 0) >= 3, delivered)
 check("students get a password through the real Student auth service", set_student_password("asha@family.example.com")
       and set_student_password("chitra@family.example.com"))
-north_ev = next(ev for p, _v, _e, ev in got[S1] if p == P)
-tutor_ev = next(ev for p, _v, _e, ev in got[S1] if p == P2)
-# the answers Asha gives: every Physics question right; Chemistry: question 1 right, question 2 wrong, question 3 left blank
+[(_p, _v, asha_exam, asha_ev)] = got[S1]
+# provider isolation of the unified exam: each provider sees only the subjects it supplied; the anchor grants nothing more
+with TestClient(gateway, base_url="http://localhost") as c:
+    hn = login(c, PA["staff_code"])
+    north = c.get(f"{API}/exams/{asha_exam}", headers=hn).json()
+    cancel = c.post(f"{API}/exams/{asha_exam}/cancel", json={"reason": "not North's to cancel"}, headers=hn)
+with TestClient(gateway, base_url="http://localhost") as c:
+    tutor_view = c.get(f"{API}/exams/{asha_exam}", headers=login(c, TU["staff_code"])).json()
+with TestClient(gateway, base_url="http://localhost") as c:
+    full = c.get(f"{API}/exams/{asha_exam}", headers=login(c, "STF000001")).json()
+check("North's admin sees only Physics + Chemistry of Asha's exam, the tutor only Biology, the platform all three; North cannot cancel it",
+      {x["subject_id"] for x in north["papers"]} == {PHY, CHE} and [x["subject_id"] for x in tutor_view["papers"]] == [BIO]
+      and len(full["papers"]) == 3 and cancel.status_code == 403, (north.get("papers"), tutor_view.get("papers"), cancel.status_code))
+# the answers Asha gives: every Physics question right; Chemistry: question 1 right, question 2 wrong, question 3 left blank;
+# Biology: question 1 right, question 2 left blank
 answers = {e["question"]: e["options"]["ABCD".index(e["correct"])] for e in EXPECTED}
-answers.update({"Pune Chemistry Set question 1?": "A1", "Pune Chemistry Set question 2?": "A2"})
-params.update({"north_test": north_ev, "tutor_test": tutor_ev, "answers": answers})
+answers.update({"Pune Chemistry Set question 1?": "A1", "Pune Chemistry Set question 2?": "A2", "Ravi Biology Set question 1?": "A1"})
+params.update({"asha_test": asha_ev, "answers": answers})
 (WORK / "ui_params.json").write_text(json.dumps(params))
 
 print("\nbrowser journeys, student (Chromium, Student portal)")
@@ -501,15 +522,71 @@ print("\npersisted results (student journey)")
 s = httpx.Client(timeout=20, headers={"Origin": "http://localhost"})
 check("Asha signs in to the Student services", s.post(STU["auth"] + "/auth/login", json={"login": S1, "password": PW}).status_code == 200)
 attempts = sql("select attempt_id, status, test_id, started_at, expires_at from test_attempts where student_id = :s", s=S1)
-check("one SUBMITTED attempt by Asha on North's Global Test exam, timed by the existing timer (30 minutes)",
-      any(str(a[2]) == north_ev and str(a[1]).upper().endswith(("SUBMITTED", "EVALUATED", "COMPLETED"))
-          and abs((a[4] - a[3]).total_seconds() - 1800) < 120 for a in attempts), attempts)
-res = sql("select total_marks, obtained_marks from test_results where test_id = :t and student_id = :s", t=north_ev, s=S1)
-check("her result is evaluated by the existing Student result logic with the Global Test's +4/-1 marking: "
-      "5 correct, 1 wrong, 1 skipped of 7 -> 19 of 28", res == [(28, 19)], res)
+check("exactly one attempt by Asha for the date, SUBMITTED on her unified exam, timed by one shared timer (30 minutes)",
+      len(attempts) == 1 and str(attempts[0][2]) == asha_ev and str(attempts[0][1]).upper().endswith(("SUBMITTED", "EVALUATED", "COMPLETED"))
+      and abs((attempts[0][4] - attempts[0][3]).total_seconds() - 1800) < 120, attempts)
+res = sql("select total_marks, obtained_marks from test_results where test_id = :t and student_id = :s", t=asha_ev, s=S1)
+check("one overall result, evaluated by the existing Student result logic with the Global Test's +4/-1 marking across all subjects: "
+      "6 correct, 1 wrong, 2 skipped of 9 -> 23 of 36", res == [(36, 23)], res)
+listed = [t for t in s.get(STU["test"] + "/tests").json() if t["name"].startswith("National Mock")]
+check("the Student test service lists exactly one National Mock for Asha, marked as the Global Test date (no copy per provider)",
+      len(listed) == 1 and str(listed[0]["test_id"]) == asha_ev and str(listed[0]["global_occurrence_id"]) == str(O1), listed)
+mine = [r for r in s.get(STU["result"] + "/results").json() if r["test_name"].startswith("National Mock")]
+check("her Results list has ONE National Mock result, labelled as the Global Test (not as the anchor provider), marked with the date",
+      len(mine) == 1 and mine[0]["provider_name"] == "Global Test" and str(mine[0]["global_occurrence_id"]) == str(O1)
+      and mine[0]["obtained_marks"] == 23, mine)
+# provider-specific results through the REAL Student result service (its per-subject SQL on this PostgreSQL), never a fake client
+print("\nresults of the unified exam, per provider (real Student result service)")
+esha_exam = got[S5][0][2]
+with TestClient(gateway, base_url="http://localhost") as c:                    # one session per staff member, one sign-in each
+    h = login(c, PA["staff_code"])
+    north_r = c.get(f"{API}/exams/{asha_exam}/results", headers=h)
+    north_a = c.get(f"{API}/exams/{asha_exam}/assignments", headers=h)
+    north_esha = c.get(f"{API}/exams/{esha_exam}/results", headers=h)
 with TestClient(gateway, base_url="http://localhost") as c:
+    tutor_r = c.get(f"{API}/exams/{asha_exam}/results", headers=login(c, TU["staff_code"]))
+nr, tr = north_r.json(), tutor_r.json()
+
+
+def subjects_of(r):
+    return {x["subject"]: (x["obtained_marks"], x["total_marks"]) for row in r.get("results", []) for x in row.get("subjects", [])}
+
+
+check("North's admin sees only Physics + Chemistry of Asha's result: 16/16 + 3/12 = 19 of 28 (her Physics all right; Chemistry +4 -1)",
+      north_r.status_code == 200 and nr["subject_view"] is True and nr["visible_subjects"] == ["Chemistry", "Physics"]
+      and subjects_of(nr) == {"Physics": (16, 16), "Chemistry": (3, 12)} and [(x["student_id"], x["obtained_marks"], x["total_marks"]) for x in nr["results"]] == [(S1, 19, 28)]
+      and nr["total_marks"] == "28.00", nr)
+check("the tutor sees only Biology: 4 of 8 (question 1 right, question 2 left blank)",
+      tutor_r.status_code == 200 and tr["subject_view"] is True and subjects_of(tr) == {"Biology": (4, 8)}
+      and [(x["student_id"], x["obtained_marks"]) for x in tr["results"]] == [(S1, 4)], tr)
+ANSWER_KEYS = {"selected_answer", "correct_answer", "correct_option", "answer", "answers", "options", "question_text", "explanation"}
+
+
+def keys_of(v):
+    if isinstance(v, dict):
+        return set(v) | {k for x in v.values() for k in keys_of(x)}
+    return {k for x in v for k in keys_of(x)} if isinstance(v, list) else set()
+
+
+def overall_of(r):                                   # any row or summary carrying the whole-exam score (23 of 36)
+    return [x for x in r.get("results", []) if x.get("obtained_marks") == 23 or x.get("total_marks") == 36] + \
+           ([r["summary"]] if r.get("summary", {}).get("highest") == 23 else [])
+
+
+leak = sorted(keys_of(nr) & ANSWER_KEYS) + sorted(keys_of(tr) & ANSWER_KEYS) + overall_of(nr) + overall_of(tr) + \
+       sorted(set(subjects_of(nr)) - {"Physics", "Chemistry"}) + sorted(set(subjects_of(tr)) - {"Biology"})
+check("neither provider sees the other's subject, any answer, or the overall score (23)", not leak, leak)
+check("North sees only its own students of the exam (Asha) and nothing of Esha's tutor-only exam",
+      north_a.status_code == 200 and [x["student_id"] for x in north_a.json()["items"]] == [S1] and north_esha.status_code == 403,
+      (north_a.text[:300], north_esha.status_code))
+
+with TestClient(gateway, base_url="http://localhost") as c:            # the platform admin's last sign-in (5 per account per 15 minutes)
     h = login(c, "STF000001")
+    full_r = c.get(f"{API}/exams/{asha_exam}/results", headers=h)
     actions = {x["action"] for x in c.get(f"{API}/audit-logs?page_size=200", headers=h).json()["items"]}
+fr = full_r.json()
+check("the platform sees the whole result: 23 of 36 overall", full_r.status_code == 200 and fr["subject_view"] is False
+      and [(x["student_id"], x["obtained_marks"], x["total_marks"]) for x in fr["results"]] == [(S1, 23, 36)], fr)
 wanted = {"global_test.occurrence.generate"}
 check("audit log records the generation", wanted <= actions, sorted(actions))
 summary()
