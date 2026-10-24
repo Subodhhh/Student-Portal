@@ -13,6 +13,7 @@ type Job = { job_id: string; status: string; exam_id: string | null; error: stri
 type Exam = { exam_id: string; name: string; status: string; start_at: string | null; end_at: string | null; duration_minutes: number | null; total_questions: number | null; total_marks: string | null;
   missing_subjects: { subject: string | null; reason: string; detail: string }[]; papers: { subject_id: string; source_provider_id: string | null; platform_paper?: boolean; paper_version_id: string; question_count: number }[];
   assigned_students: number; assignment_status?: Record<string, number>; delivery_status: string | null;
+  unified_global?: boolean; visible_subject_ids?: string[] | null;   // a provider's view of a unified Global Test exam: its own subjects only
   settings?: { marking?: { mode: string; correct?: number; wrong?: number }; audience_type?: string; global_test_id?: string | null; skipped_duplicates?: number } | null };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
@@ -101,7 +102,7 @@ function ExamList({ branchId }: { branchId: string }) {
   );
 }
 
-type Results = { window_closed: boolean; total_marks: string; summary: { assigned: number; submitted: number; not_submitted: number; average: number | null; highest: number | null; lowest: number | null };
+type Results = { window_closed: boolean; total_marks: string; subject_view?: boolean; visible_subjects?: string[] | null; summary: { assigned: number; submitted: number; not_submitted: number; average: number | null; highest: number | null; lowest: number | null };
   results: { rank: number; student_id: string; name: string | null; obtained_marks: number; total_marks: number; accuracy: number }[] };
 
 type Correction = { correction_id: string; kind: "MARKS_ADJUSTMENT" | "ANSWER_KEY"; status: string; student_id: string | null; reason: string; actor: string; created_at: string;
@@ -174,14 +175,17 @@ export function ExamDetailPage() {
   if (exam.loading) return <Spinner />;
   if (exam.error || !exam.data) return <Alert kind="error">{exam.error || "Not found"}</Alert>;
   const e = exam.data;
+  const partial = !!e.visible_subject_ids;      // unified Global Test, provider view: own subjects and students only, no control actions
   return (
     <>
       <PageHeader crumbs={[<Link key="exams" to="/exams">Exams & Results</Link>, e.name]} title={e.name} subtitle={`${fmt(e.start_at)} → ${fmt(e.end_at)} · ${e.duration_minutes} min shared timer`}
         actions={<><StatusBadge status={e.status} />
-          {e.status === "SCHEDULED" && can("exam.publish") && <Button busy={act.busy} onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/publish`, { method: "POST" }); exam.reload(); })}>Publish to students</Button>}
-          {e.status !== "CANCELLED" && can("exam.schedule") && <Button variant="danger" onClick={() => setCancelling(true)}>Cancel exam</Button>}</>} />
+          {!partial && e.status === "SCHEDULED" && can("exam.publish") && <Button busy={act.busy} onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/publish`, { method: "POST" }); exam.reload(); })}>Publish to students</Button>}
+          {!partial && e.status !== "CANCELLED" && can("exam.schedule") && <Button variant="danger" onClick={() => setCancelling(true)}>Cancel exam</Button>}</>} />
       {act.error && <Alert kind="error">{act.error}</Alert>}
       <div className="stack">
+        {partial && <Alert kind="info">One Global Test exam per student, assembled from each student's own institutes. You see only the subjects your
+          institute supplied and your own students; the overall score is visible only to the student and the platform.</Alert>}
         <div className="grid stats">
           <StatCard label="Questions" value={e.total_questions ?? 0} /><StatCard label="Total marks" value={e.total_marks ?? 0} /><StatCard label="Assigned students" value={e.assigned_students} />
           <StatCard label="Delivery to students" value={e.delivery_status ?? "—"} tone={e.delivery_status === "FAILED" ? "danger" : undefined} />
@@ -196,7 +200,7 @@ export function ExamDetailPage() {
             <dt>Timer</dt><dd>One shared timer of {e.duration_minutes} minutes; starting inside the window gives the full duration</dd>
             <dt>Attempts</dt><dd>One attempt per student, resumable; students who never start are marked missed</dd>
             <dt>Results</dt><dd>After evaluation; answers reviewable once the window has closed</dd>
-            {e.settings?.global_test_id && <><dt>Source</dt><dd>Global Test (platform papers, unchanged)</dd></>}
+            {e.settings?.global_test_id && <><dt>Source</dt><dd>{e.unified_global ? "Global Test date: each subject is the paper its institute submitted for the student" : "Global Test (platform papers, unchanged)"}</dd></>}
             {!!e.settings?.skipped_duplicates && <><dt>Duplicates</dt><dd>{e.settings.skipped_duplicates} student(s) not assigned: they already have this test for the same time</dd></>}
           </dl>
         </Card>
@@ -217,7 +221,7 @@ export function ExamDetailPage() {
                 <div className="grid stats"><StatCard label="Submitted" value={`${results.data.summary.submitted}/${results.data.summary.assigned}`} /><StatCard label="Average" value={results.data.summary.average ?? "—"} /><StatCard label="Highest" value={results.data.summary.highest ?? "—"} /><StatCard label="Lowest" value={results.data.summary.lowest ?? "—"} /></div>
                 {!results.data.window_closed && <p className="muted small">The exam window is still open; results will keep arriving.</p>}
                 <DataTable rows={results.data.results} rowKey={(r) => r.student_id} empty={<EmptyState title="No submissions yet" />}
-                  columns={[{ header: "Rank", render: (r) => r.rank }, { header: "Student", render: (r) => `${r.name ?? ""} ${r.student_id}` }, { header: "Marks", render: (r) => `${r.obtained_marks}/${r.total_marks}` }, { header: "Accuracy", render: (r) => `${r.accuracy.toFixed(1)}%` }]} />
+                  columns={[{ header: "Rank", render: (r) => r.rank }, { header: "Student", render: (r) => `${r.name ?? ""} ${r.student_id}` }, { header: results.data.subject_view ? `Marks (${(results.data.visible_subjects ?? []).join(", ") || "your subjects"})` : "Marks", render: (r) => `${r.obtained_marks}/${r.total_marks}` }, { header: "Accuracy", render: (r) => `${r.accuracy.toFixed(1)}%` }]} />
               </>
             )}
           </Card>

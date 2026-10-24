@@ -14,6 +14,7 @@ type Test = {
   start_at: string | null;
   end_at: string | null;
   status: string;
+  global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
 
   provider: {
     provider_id: string;
@@ -186,10 +187,16 @@ function TestDetailsPage() {
               </svg>
             </span>
 
-            <span>{test.provider.name}</span>
+            {test.global_occurrence_id ? (
+              <span>Global Test</span>
+            ) : (
+              <>
+                <span>{test.provider.name}</span>
 
-            {test.branch?.name && (
-              <span> · {test.branch.name}</span>
+                {test.branch?.name && (
+                  <span> · {test.branch.name}</span>
+                )}
+              </>
             )}
           </div>
 
@@ -222,7 +229,7 @@ function TestDetailsPage() {
       <div className="test-details-grid">
         <div className="test-detail-item">
           <span>Provider</span>
-          <strong>{test.provider.name}</strong>
+          <strong>{test.global_occurrence_id ? "Global Test (papers from your institutes)" : test.provider.name}</strong>
         </div>
 
         <div className="test-detail-item">

@@ -81,3 +81,24 @@ describe("Audit Log", () => {
     });
   });
 });
+
+describe("Unified Global Test exam, provider view", () => {
+  it("explains the subject-only view, offers no control actions and labels the marks with the provider's subjects", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["exam.read", "exam.schedule", "exam.publish", "result.read"]),
+      "/api/v1/exams/ex1": { exam_id: "ex1", plan_id: "pl9", provider_id: "p1", branch_id: "b1", name: "NEET UG - 02 (2026-11-07)", status: "PUBLISHED",
+        start_at: "2026-11-07T04:30:00Z", end_at: "2026-11-07T10:30:00Z", duration_minutes: 180, total_questions: 90, total_marks: "360.00", missing_subjects: [],
+        papers: [{ subject_id: "phy", source_provider_id: "p1", paper_version_id: "v-phy-1", question_count: 45 }, { subject_id: "chem", source_provider_id: "p1", paper_version_id: "v-chem-1", question_count: 45 }],
+        assigned_students: 2, assignment_status: { ASSIGNED: 2 }, delivery_status: "SENT", settings: { marking: { mode: "UNIFORM", correct: 4, wrong: 1 }, global_test_id: "gt9" },
+        unified_global: true, visible_subject_ids: ["chem", "phy"] },
+      "/api/v1/exams/ex1/results": { window_closed: true, total_marks: "360.00", subject_view: true, visible_subjects: ["Chemistry", "Physics"],
+        summary: { assigned: 2, submitted: 1, not_submitted: 1, average: 120, highest: 120, lowest: 120 },
+        results: [{ rank: 1, student_id: "STU000001", name: "Riya Patil", obtained_marks: 120, total_marks: 360, accuracy: 80 }] } });
+    renderApp("/exams/ex1");
+    expect(await screen.findByText(/You see only the subjects your/)).toBeTruthy();
+    expect(screen.getByText(/each subject is the paper its institute submitted/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel exam" })).toBeNull();               // the platform owns the exam
+    fireEvent.click(screen.getByRole("button", { name: "Load results" }));
+    expect(await screen.findByText("Marks (Chemistry, Physics)")).toBeTruthy();
+    expect(screen.getByText("120/360")).toBeTruthy();
+  });
+});
