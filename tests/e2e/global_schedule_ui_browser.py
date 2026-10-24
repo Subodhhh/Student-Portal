@@ -141,6 +141,7 @@ with sync_playwright() as pw:
             dialog.get_by_label("Duration (minutes)").fill("30")
             dialog.get_by_label("Physics", exact=True).check()
             dialog.get_by_label("Chemistry", exact=True).check()
+            dialog.get_by_label("Biology", exact=True).check()
             dialog.get_by_label("Paper deadline (hours before each test opens)").fill("2")
             expect(dialog.get_by_text("approved platform papers")).to_have_count(0)
             shot(page, "sa-new-test")
@@ -408,7 +409,7 @@ with sync_playwright() as pw:
             expect(page.get_by_text("Submitted “Mumbai Chemistry Draft” for 1 student(s).")).to_be_visible()
             for title in ("Tara photo paper", "Tom Physics Set", "Pune Chemistry Set"):
                 expect(row(page, title)).to_be_visible()
-            expect(page.get_by_text("Ravi Physics Set")).to_have_count(0)
+            expect(page.get_by_text("Ravi Biology Set")).to_have_count(0)
             shot(page, "pa-coverage")
         step("Provider Admin: an overlapping audience is refused; the corrected one (Mumbai, unapproved paper) is accepted; "
              "all of North's submissions are visible, no other provider's", page, provider_admin)
@@ -419,9 +420,9 @@ with sync_playwright() as pw:
 
         def tutor():
             first_date(page)
-            dialog = submit_paper(page, "Ravi Physics Set", branches=["Home classes"], students=P["tutor_students"])
+            dialog = submit_paper(page, "Ravi Biology Set", subject="Biology", branches=["Home classes"], students=P["tutor_students"])
             dialog.get_by_role("button", name="Submit paper").click()
-            expect(page.get_by_text("Submitted “Ravi Physics Set” for 2 student(s).")).to_be_visible()
+            expect(page.get_by_text("Submitted “Ravi Biology Set” for 2 student(s).")).to_be_visible()
             expect(page.get_by_text("Tara photo paper")).to_have_count(0)
         step("an independent tutor without batches submits for two students picked individually; sees only their own", page, tutor)
         ctx.close()
@@ -469,36 +470,40 @@ with sync_playwright() as pw:
                 leaks.append(resp.url)
         ctx.on("response", watch)                                                                    # every tab of this session
 
-        def both():
-            page.goto(SUI + "/tests")
-            cards = page.locator(".test-card, article, li").filter(has_text="National Mock")
-            expect(page.get_by_text("National Mock").first).to_be_visible()
-            expect(page.locator("text=National Mock >> visible=true")).to_have_count(2)            # one per provider
-            expect(page.locator("text=North Academy >> visible=true").first).to_be_visible()      # (the provider filter's options are hidden)
-            expect(page.locator("text=Ravi Tutorials >> visible=true").first).to_be_visible()
-            del cards
+        def one():
+            for path in ("/tests", "/scheduled-tests"):
+                page.goto(SUI + path)
+                expect(page.get_by_text("National Mock").first).to_be_visible()
+                expect(page.locator("text=National Mock >> visible=true")).to_have_count(1)        # ONE card, not one per provider
+                card = page.locator("article").filter(has_text="National Mock")
+                expect(card.get_by_text("Global Test")).to_be_visible()                             # shown as the Global Test ...
+                expect(card.get_by_text("North Academy")).to_have_count(0)                          # ... never as one of her institutes
+                expect(card.get_by_text("Ravi Tutorials")).to_have_count(0)
             shot(page, "asha-tests")
-        step("Asha (enrolled with two providers) sees a Global Test from each provider", page, both)
+        step("Asha (enrolled with two providers) sees ONE Global Test card for the date", page, one)
 
         def take():
             page.goto(SUI + "/tests")
-            card = page.locator("div, article, li").filter(has_text="North Academy").filter(has=page.get_by_role("button", name="Start Test")).last
+            card = page.locator("div, article, li").filter(has_text="National Mock").filter(has=page.get_by_role("button", name="Start Test")).last
             with ctx.expect_page() as opened:                                                    # the portal opens the attempt in a new tab
                 card.get_by_role("button", name="Start Test").click()
             tab = opened.value
             tab.set_default_timeout(20000)
-            tab.wait_for_url(re.compile(rf"/tests/{P['north_test']}/attempt"))
+            tab.wait_for_url(re.compile(rf"/tests/{P['asha_test']}/attempt"))
             header = tab.locator(".test-attempt-question-header strong")
             expect(tab.locator(".test-attempt-question h2")).to_be_visible()
 
             def index():
                 return int(re.search(r"Question (\d+) of", header.inner_text()).group(1))
             total = int(re.search(r"of (\d+)", header.inner_text()).group(1))
-            check("the exam has the 7 questions of her two papers (4 Physics from the photo paper + 3 Chemistry)", total == 7, total, tab)
+            check("one exam with the 9 questions of her three papers (4 Physics photo paper + 3 Chemistry from North, 2 Biology from the tutor)",
+                  total == 9, total, tab)
+            subjects_seen = []
             answered = 0
             for i in range(1, total + 1):
                 expect(header).to_contain_text(f"Question {i} of")
                 stem = tab.locator(".test-attempt-question h2").inner_text().strip()
+                subjects_seen.append("Biology" if stem.startswith("Ravi Biology") else "Chemistry" if stem.startswith("Pune Chemistry") else "Physics")
                 want = P["answers"].get(stem)
                 if want:
                     tab.locator(".test-attempt-option").filter(has_text=re.compile(rf"^\s*[A-D]\.\s*{re.escape(want)}\s*$")).click()
@@ -516,15 +521,18 @@ with sync_playwright() as pw:
                             expect(tab.locator(".test-attempt-option.selected")).to_have_count(1)   # the saved answer survived the reload
                         tab.get_by_role("button", name="Save & Next").click()
                         del q
-            check("answered 6 of 7 questions as planned", answered == 6, answered, tab)
+            groups = [x for i, x in enumerate(subjects_seen) if i == 0 or subjects_seen[i - 1] != x]   # the Student portal orders subjects by name
+            check("answered 7 of 9 questions as planned, questions grouped by subject (4 Physics, 3 Chemistry, 2 Biology, each subject together)",
+                  answered == 7 and len(groups) == 3 and {x: subjects_seen.count(x) for x in groups} == {"Physics": 4, "Chemistry": 3, "Biology": 2},
+                  (answered, subjects_seen), tab)
             shot(tab, "asha-attempt")
             tab.once("dialog", lambda d: d.accept())
             submitted["done"] = True
             tab.get_by_role("button", name="Submit Test").click()
             tab.wait_for_url(re.compile(r"/result"), timeout=30000)
-            expect(tab.get_by_text(re.compile(r"\b19\b")).first).to_be_visible(timeout=20000)
+            expect(tab.get_by_text(re.compile(r"\b23\b")).first).to_be_visible(timeout=20000)
             shot(tab, "asha-result")
-        step("she takes North's exam: answers, reloads mid-way (resume keeps answers), submits, sees her score", page, take)
+        step("she takes her one Global Test exam: answers, reloads mid-way (resume keeps answers), submits, sees one overall score", page, take)
         check("no correct answer reached the browser before submission", not leaks, leaks, page)
         ctx.close()
 
