@@ -326,7 +326,7 @@ function PerformancePage() {
             {review_available
               ? "Your test has been evaluated. Question-by-question answer review is available from the result page."
               : `Your test has been evaluated. Answer review opens after the test window closes${
-                  review_available_at ? ` (${new Date(review_available_at).toLocaleString("en-IN")})` : ""
+                  review_available_at ? ` (${new Date(review_available_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })})` : ""
                 }.`}
           </p>
         </div>
