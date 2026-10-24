@@ -47,6 +47,7 @@ from sqlalchemy.orm import sessionmaker
 from tests.gateway import SERVICES, app
 
 ORIGIN, API, PW = {"Origin": "http://localhost:5174"}, "/api/v1", "Pipeline-" + uuid4().hex
+ACAD = {"class_level": "11th", "academic_year": "2026-2027"}   # every enrollment needs its Class / Academic Year
 results: list[tuple[str, bool]] = []
 
 
@@ -131,11 +132,11 @@ with TestClient(app, base_url="http://localhost") as c:
     check("0", "teacher invited and verified", c.post(f"{API}/auth/verify-email", json={"token": token, "new_password": PW}, headers=ORIGIN).status_code == 200, r.text)
     h = login(c, "STF000001")
     c.post(f"{API}/teaching", json={"staff_id": T["staff_id"], "branch_id": B, "subject_id": SJ, "batch_id": BT}, headers=h)
-    r = c.post(f"{API}/branches/{B}/enrollments", json={"new_student": {"first_name": "Riya", "last_name": "Patil", "email": "riya@family.example.com"},
+    r = c.post(f"{API}/branches/{B}/enrollments", json={"academic": ACAD, "new_student": {"first_name": "Riya", "last_name": "Patil", "email": "riya@family.example.com"},
                                                         "batch_ids": [BT]}, headers=h)
     check("0", "student identity created by the REAL Student service and enrolled", r.status_code == 201, r.text)
     SID = r.json()["student_id"]
-    r = c.post(f"{API}/branches/{B}/enrollments", json={"new_student": {"first_name": "Aman", "last_name": "Shah", "email": "aman@family.example.com"}}, headers=h)
+    r = c.post(f"{API}/branches/{B}/enrollments", json={"academic": ACAD, "new_student": {"first_name": "Aman", "last_name": "Shah", "email": "aman@family.example.com"}}, headers=h)
     OTHER = r.json()["student_id"]                                    # enrolled, but not in the exam's batch
     with factory() as db:
         sync = reference_sync.run_once(db, full=True)

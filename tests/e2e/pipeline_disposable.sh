@@ -39,6 +39,8 @@ with engine.begin() as c:   # every column the authentication model has and the 
             default = " default now()" if col.name in ("created_at", "updated_at") else ""
             c.execute(text(f'alter table students add column "{col.name}" {col.type.compile(engine.dialect)}{default}'))
 Base.metadata.create_all(engine, tables=[t for n, t in Base.metadata.tables.items() if n != "students"], checkfirst=True)
+with engine.begin() as c:   # the Student ID counter, as the authentication migration seeds it (a fresh database: nothing issued yet)
+    c.execute(text("insert into student_id_allocator (name, last_value) select 'STU', 0 where not exists (select 1 from student_id_allocator)"))
 EOF
 )
 for s in identity organization academics enrollment paper exam operations; do

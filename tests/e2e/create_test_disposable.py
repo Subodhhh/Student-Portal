@@ -43,6 +43,7 @@ from sqlalchemy.orm import sessionmaker
 from tests.gateway import SERVICES, app
 
 ORIGIN, API, PW = {"Origin": "http://localhost:5174"}, "/api/v1", "CreateTest-" + uuid4().hex
+ACAD = {"class_level": "11th", "academic_year": "2026-2027"}   # every enrollment needs its Class / Academic Year
 results: list[tuple[str, bool]] = []
 
 
@@ -160,7 +161,7 @@ with TestClient(app, base_url="http://localhost") as c:
 
     def enroll(branch, first, mail, batch_ids, sid=None):
         body = {"student_id": sid, "batch_ids": batch_ids} if sid else {"new_student": {"first_name": first, "last_name": "Test", "email": mail}, "batch_ids": batch_ids}
-        r = c.post(f"{API}/branches/{branch}/enrollments", json=body, headers=h)
+        r = c.post(f"{API}/branches/{branch}/enrollments", json={**body, "academic": ACAD}, headers=h)
         assert r.status_code == 201, r.text
         return r.json()["student_id"]
     S1 = enroll(B1, "Asha", "asha@family.example.com", [A])                 # batch A (Pune)

@@ -132,7 +132,7 @@ with sync_playwright() as pw:
 
     def offer(paper_title):
         def go():
-            page.goto(UI + "/tests/global")
+            page.goto(UI + "/tests/global?tab=tests")   # Provider Admins land on the Schedule tab since the Global Test schedule rework (af85c73)
             row(page, "National Mock").get_by_role("button", name="Offer a paper").click()
             dialog = page.get_by_role("dialog")
             select = dialog.get_by_label("Paper", exact=True)
@@ -260,7 +260,7 @@ with sync_playwright() as pw:
     ctx, page = sign_in(browser, P["pa"])
 
     def schedule_global():
-        page.goto(UI + "/tests/global")
+        page.goto(UI + "/tests/global?tab=tests")   # Provider Admins land on the Schedule tab since the Global Test schedule rework (af85c73)
         page.get_by_role("link", name="National Mock (copy)").click()
         expect(page.get_by_role("heading", level=2, name="National Mock (copy)")).to_be_visible()
         expect(page.get_by_role("button", name="Withdraw")).to_have_count(0)                  # platform-only actions are not offered
