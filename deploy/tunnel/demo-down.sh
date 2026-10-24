@@ -16,6 +16,8 @@ if [ "${1:-}" = "--clear-kv" ]; then
   for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TUNNEL_KV_NAMESPACE_ID; do
     [ -n "${!v:-}" ] || { echo "$v is not set" >&2; exit 1; }
   done
+  export CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
+  export WRANGLER_SEND_METRICS=false
   npx --yes "wrangler@${WRANGLER_VERSION}" kv key delete edge_origin --namespace-id "$TUNNEL_KV_NAMESPACE_ID" --remote >/dev/null
   echo "edge_origin cleared"
 fi
