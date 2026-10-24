@@ -20,9 +20,8 @@ from app.schemas.auth import (
     LoginResponse,
     ResetPasswordRequest,
 )
-from app.services.email import email_enabled, send_password_reset_email
 from app.services.password import hash_password, verify_password
-from app.services.password_reset import generate_reset_token
+from app.services.password_reset import issue_reset_link
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -227,41 +226,7 @@ def forgot_password(
     if not student or student.status != "ACTIVE":
         return generic_response
 
-    now = datetime.now(timezone.utc)
-
-    old_tokens = (
-        db.query(PasswordSetupResetToken)
-        .filter(
-            PasswordSetupResetToken.student_id == student.student_id,
-            PasswordSetupResetToken.token_type == "PASSWORD_RESET",
-            PasswordSetupResetToken.used_at.is_(None),
-            PasswordSetupResetToken.expires_at > now.replace(tzinfo=None),
-        )
-        .all()
-    )
-
-    for token in old_tokens:
-        token.used_at = now.replace(tzinfo=None)
-
-    raw_token, token_hash, expires_at = generate_reset_token()
-
-    reset_token = PasswordSetupResetToken(
-        student_id=student.student_id,
-        token_hash=token_hash,
-        token_type="PASSWORD_RESET",
-        expires_at=expires_at.replace(tzinfo=None),
-    )
-
-    db.add(reset_token)
-    db.commit()
-
-    reset_url = f"{settings.frontend_reset_url}?token={raw_token}"
-
-    if email_enabled():
-        send_password_reset_email(
-            recipient_email=student.email,
-            reset_url=reset_url,
-        )
+    issue_reset_link(db, student)     # shared with the staff-initiated setup link (app/routes/internal.py)
 
     return generic_response
 

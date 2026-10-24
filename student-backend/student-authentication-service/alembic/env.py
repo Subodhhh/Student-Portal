@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from app.config import settings
 from app.database import Base
 from app.models.student import Student  # noqa: F401
+import app.models  # noqa: F401,E402  (every model, incl. tokens and the Student ID allocator)
 
 
 config = context.config
@@ -43,6 +44,10 @@ def run_migrations_online() -> None:
         )
 
         with context.begin_transaction():
+            if connection.dialect.name == "postgresql":
+                # A pooled connection (Neon -pooler) can carry another client's session search_path (pg_dump leaves it empty);
+                # transaction-local so it never leaks back into the pool. Must precede alembic's own version-table lookup.
+                connection.exec_driver_sql("SET LOCAL search_path TO public")
             context.run_migrations()
 
 
