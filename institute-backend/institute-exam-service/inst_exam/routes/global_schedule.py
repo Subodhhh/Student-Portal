@@ -42,6 +42,7 @@ from inst_exam.routes.exams import api_error_detail
 from inst_exam.routes.global_tests import _is_platform, _require_platform, publish_occurrences
 from inst_exam.routes.test_series import occurrences as month_occurrences
 from inst_exam.services import global_generation as gg
+from inst_exam.services import unified
 
 router = APIRouter(prefix="/api/v1", tags=["Global Test schedule"])
 UPLOAD = "paper.upload"
@@ -398,10 +399,19 @@ def get_occurrence(occurrence_id: UUID, p: Principal = Depends(get_principal), d
     out["coverage"] = coverage(db, p, occ, t)
     if occ.generated_at:
         plans = db.scalars(select(ExamPlan).where(ExamPlan.global_occurrence_id == occ.occurrence_id)).all()
-        visible = daily.visible_plans(db, p, plans) if not _is_platform(p) else plans
-        exams = db.scalars(select(Exam).where(Exam.plan_id.in_([x.plan_id for x in visible] or [None]))).all()
-        out["exams"] = [{"exam_id": e.exam_id, "name": e.name, "status": e.status,
-                         "assigned": db.query(StudentExamAssignment).filter_by(exam_id=e.exam_id).count()} for e in exams]
+        visible = {x.plan_id for x in (daily.visible_plans(db, p, plans) if not _is_platform(p) else plans)}
+        out["exams"] = []
+        for e in db.scalars(select(Exam).where(Exam.plan_id.in_([x.plan_id for x in plans] or [None]))):
+            if unified.is_unified_exam(db, e.exam_id):      # by contribution: own subjects' students only, never by anchor
+                s = unified.scope(db, p, "exam.read", e)
+                if s is not None and not s.ids:
+                    continue
+                assigned = len(s.ids) if s is not None else db.query(StudentExamAssignment).filter_by(exam_id=e.exam_id).count()
+            elif e.plan_id in visible:
+                assigned = db.query(StudentExamAssignment).filter_by(exam_id=e.exam_id).count()
+            else:
+                continue
+            out["exams"].append({"exam_id": e.exam_id, "name": e.name, "status": e.status, "assigned": assigned})
     return out
 
 

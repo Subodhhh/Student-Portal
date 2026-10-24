@@ -19,7 +19,7 @@ from institute_common.database import get_db, utcnow
 from institute_common.core.class_levels import LABELS, AcademicYear, check_academic_year, check_profile
 from institute_common.models.academics import (BatchSubject, EnrollmentAcademicProfile, EnrollmentBatchSubject, EnrollmentEvent,
                                                EnrollmentTransfer, Subject)
-from institute_common.models.exams import Exam, ExamVersion, StudentExamAssignment
+from institute_common.models.exams import Exam, ExamVersion, ExamVersionPaper, GlobalPaperSubmission, StudentExamAssignment
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch, Provider
 from institute_common.util import need_reason, paginate
 from institute_common.util import Strict
@@ -431,11 +431,15 @@ def student_detail(student_id: str, p: Principal = Depends(get_principal), db: S
         raise api_error(404, "NOT_FOUND", "Student not found.")
     s = _students(sc, sc.get, student_id)
     # Only assignments made through an enrollment the caller manages: a branch admin never sees a sibling branch's exams.
+    # A unified Global Test exam records one reference enrollment; it is listed to every provider that supplied one of its papers.
+    contributed = (select(ExamVersion.exam_id).join(ExamVersionPaper, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id)
+                   .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+                   .where(GlobalPaperSubmission.provider_id.in_([UUID(e["provider_id"]) for e in enrollments])))
     exams = db.execute(
         select(StudentExamAssignment, Exam, ExamVersion).join(Exam, Exam.exam_id == StudentExamAssignment.exam_id)
         .join(ExamVersion, ExamVersion.exam_version_id == StudentExamAssignment.exam_version_id)
         .where(StudentExamAssignment.student_id == student_id,
-               StudentExamAssignment.enrollment_id.in_([e["enrollment_id"] for e in enrollments]))
+               StudentExamAssignment.enrollment_id.in_([e["enrollment_id"] for e in enrollments]) | StudentExamAssignment.exam_id.in_(contributed))
         .order_by(ExamVersion.start_at.desc()).limit(100)).all()
     return {
         "profile": {"student_id": student_id, "first_name": s.first_name if s else None, "last_name": s.last_name if s else None,

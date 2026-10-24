@@ -88,6 +88,8 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
             select(StudentExamAssignment.student_id).where(StudentExamAssignment.exam_version_id == exam_version_id)
             .order_by(StudentExamAssignment.student_id))],
     }
+    if any(p.source_submission_id for p in papers):       # unified Global Test exam: the student sees it as the occurrence, not a provider's test
+        payload["global_occurrence_id"] = str(plan.global_occurrence_id)
     if operation == "CANCEL":
         return payload
     # Exam-level marking frozen at generation (exam_versions.settings). PER_QUESTION (the default, and every exam generated before

@@ -20,6 +20,7 @@ class ResultRejected(Exception):
 
 class ResultClient(Protocol):
     def exam_results(self, test_id: str) -> list[dict]: ...
+    def exam_subject_results(self, test_id: str) -> list[dict]: ...
     def adjust(self, *, test_id: str, student_id: str, obtained_marks: int, reason: str, actor: str, correction_ref: str) -> dict: ...
     def reevaluate(self, *, test_id: str, reason: str, actor: str, correction_ref: str) -> dict: ...
 
@@ -46,6 +47,13 @@ class HttpResultClient:
         except ResultRejected as exc:
             raise ResultServiceError(f"result service refused the request ({exc.status})") from exc
 
+    def exam_subject_results(self, test_id: str) -> list[dict]:
+        """Per student, the marks of every subject ({"student_id", "subjects": [{"subject", ...}]}), for subject-scoped readers."""
+        try:
+            return self._call("GET", f"/tests/{test_id}/results/subjects")
+        except ResultRejected as exc:
+            raise ResultServiceError(f"result service refused the request ({exc.status})") from exc
+
     def adjust(self, *, test_id, student_id, obtained_marks, reason, actor, correction_ref) -> dict:
         return self._call("POST", "/results/adjust", json={"test_id": test_id, "student_id": student_id, "obtained_marks": obtained_marks,
                                                            "reason": reason, "actor": actor, "correction_ref": correction_ref})
@@ -64,6 +72,9 @@ def _detail(r) -> str:
 
 class UnconfiguredResultClient:
     def exam_results(self, test_id):
+        raise ResultServiceError("Result service is not configured.")
+
+    def exam_subject_results(self, test_id):
         raise ResultServiceError("Result service is not configured.")
 
     def adjust(self, **kw):

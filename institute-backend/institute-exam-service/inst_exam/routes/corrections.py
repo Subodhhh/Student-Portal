@@ -21,6 +21,7 @@ from institute_common.util import Strict
 from institute_common.clients.answer_key_client import AnswerKeyClient, get_answer_key_client
 from institute_common.internal_http import InternalRejected, InternalServiceError
 from institute_common.clients.result_client import ResultClient, ResultRejected, ResultServiceError, get_result_client
+from inst_exam.services import unified
 from inst_exam.services.student_notifications import enqueue as enqueue_student_notification
 
 router = APIRouter(prefix="/api/v1", tags=["Result corrections"])
@@ -66,7 +67,9 @@ def _exam_and_version(db: Session, exam_id: UUID, p: Principal, permission: str,
     e = db.get(Exam, exam_id)
     if not e:
         raise api_error(404, "NOT_FOUND", "Exam not found.")
-    if not p.can(permission, provider_id=e.provider_id, branch_id=e.branch_id, **kw):
+    # a unified Global Test exam: only platform roles act on (or read) the whole result, never the anchor provider
+    if not p.can(permission, provider_id=e.provider_id, branch_id=e.branch_id, **kw) or (unified.is_unified_exam(db, e.exam_id)
+                                                                                         and not unified.is_platform(p, permission)):
         audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
                      details={"permission": permission})
         raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
@@ -233,7 +236,8 @@ def list_corrections(exam_id: UUID, p: Principal = Depends(get_principal), db: S
     e = db.get(Exam, exam_id)
     if not e:
         raise api_error(404, "NOT_FOUND", "Exam not found.")
-    if not p.can("result.read", exclude_roles=(Role.TEACHER,), provider_id=e.provider_id, branch_id=e.branch_id):
+    if not p.can("result.read", exclude_roles=(Role.TEACHER,), provider_id=e.provider_id, branch_id=e.branch_id) or (
+            unified.is_unified_exam(db, e.exam_id) and not unified.is_platform(p, "result.read")):     # overall marks: platform only
         audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
                      details={"permission": "result.read"})
         raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")

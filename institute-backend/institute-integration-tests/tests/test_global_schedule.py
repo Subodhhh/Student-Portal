@@ -252,17 +252,21 @@ def test_each_student_receives_only_their_own_teachers_paper(client, world, gs, 
     assert submit(client, login, gs["tutor"], occ, gs["phy"], gs["paperT"], aud(world, gs, provider="p2", branches=("p2b1",),
                   students=("STU000004", "STU000001"))).status_code == 201
     [run] = run_generation(db_factory, test, occ)
-    assert not run["failed"] and run["students"] == 4, run
+    assert not run["failed"] and run["students"] == 3 and run["conflicts"] == 1, run
     got = exams_of(db_factory, occ["occurrence_id"])
     p1, p2 = world["p1"], world["p2"]
-    assert sorted(got["STU000001"]) == sorted([(p1, [gs["paperA"], gs["paperC"]]), (p2, [gs["paperT"]])])   # both providers, no leakage
+    # STU000001 studies Physics with p1 (paper A, batch A) AND p2 (tutor's paper T): a cross-provider conflict, so neither Physics
+    # paper; Chemistry (only p1) still arrives. ONE unified exam for the date, never one per provider.
+    assert got["STU000001"] == [(p1, [gs["paperC"]])]
     assert got["STU000002"] == [(p1, [gs["paperB"], gs["paperC"]])]
     assert got["STU000004"] == [(p2, [gs["paperT"]])]
     assert "STU000003" not in got                                                    # no submission covers batch C: never another paper
     with db_factory() as db:
         plans = db.query(ExamPlan).filter_by(global_occurrence_id=UUID(occ["occurrence_id"])).count()
-        assert plans == 3 and db.query(ExamOutbox).count() == 3                       # one exam per paper set, each delivered
-        assert any(o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS" for o in db.query(ExamNotificationOutbox))   # batch C students in p1? reported per provider
+        assert plans == 3 and db.query(ExamOutbox).count() == 3                       # one exam per combined paper set, each delivered
+        bodies = {o.payload["provider_id"]: o.payload["body"] for o in db.query(ExamNotificationOutbox)
+                  if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"}
+        assert all("another provider's paper" in bodies[str(p)] for p in (p1, p2)), bodies   # every provider in the conflict is told
     assert run_generation(db_factory, test, occ) == []                               # generated once: a retry does nothing
     assert exams_of(db_factory, occ["occurrence_id"]) == got
 

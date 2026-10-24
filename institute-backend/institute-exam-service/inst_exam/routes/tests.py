@@ -51,7 +51,7 @@ from institute_common.models.papers import Paper, PaperShare, PaperUpload, Paper
 from institute_common.util import Strict
 from inst_exam.routes.exams import api_error_detail
 from inst_exam.services import exam_generation as gen
-from inst_exam.services import teacher_scope
+from inst_exam.services import teacher_scope, unified
 from inst_exam.services.test_policy import can_create_test
 
 router = APIRouter(prefix="/api/v1", tags=["Tests"])
@@ -535,7 +535,10 @@ def visible_plans(db: Session, p: Principal, plans: list[ExamPlan]) -> list[Exam
     least one targeted student in their teaching scope for one of the plan's subjects (services/teacher_scope.py)."""
     visible = []
     for plan in plans:
-        if _manager(p, plan.provider_id, plan.branch_id) or plan.created_by == p.staff_id:
+        if unified.is_unified_plan(db, plan.plan_id):   # a unified Global Test plan belongs to the platform, whatever its anchor branch
+            if unified.is_platform(p, "exam.read"):
+                visible.append(plan)
+        elif _manager(p, plan.provider_id, plan.branch_id) or plan.created_by == p.staff_id:
             visible.append(plan)
         elif p.can("exam.read", provider_id=plan.provider_id, branch_id=plan.branch_id, exclude_roles=(Role.TEACHER,)):
             visible.append(plan)
