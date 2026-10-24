@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import Base
 from app.main import app
 from app.models.student import Student
+from app.models.student_id_allocator import StudentIdAllocator
 from app.routes import internal
 
 KEY = "test-internal-key"
@@ -28,7 +29,11 @@ def _inet_sqlite(type_, compiler, **kw):
 def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Student.__table__.create(engine)
+    StudentIdAllocator.__table__.create(engine)
     Session = sessionmaker(bind=engine, autoflush=False)
+    with Session() as s:          # a fresh database: the migration seeds this row (here: nothing issued yet)
+        s.add(StudentIdAllocator(name="STU", last_value=0))
+        s.commit()
     monkeypatch.setattr(internal, "SessionLocal", Session)
     monkeypatch.setattr(internal, "redis_client", fakeredis.FakeRedis(decode_responses=True))
     monkeypatch.setattr(settings, "institute_service_api_keys", KEY)

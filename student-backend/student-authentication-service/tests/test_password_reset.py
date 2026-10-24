@@ -51,7 +51,8 @@ def env(monkeypatch):
     app.dependency_overrides[auth_routes.get_db] = override
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(settings, "email_backend", "console")
-    monkeypatch.setattr(auth_routes, "send_password_reset_email", lambda recipient_email, reset_url: sent.append((recipient_email, reset_url)))
+    # the link is sent by app.services.password_reset.issue_reset_link, which resolves the sender from app.services.email at call time
+    monkeypatch.setattr("app.services.email.send_password_reset_email", lambda recipient_email, reset_url: sent.append((recipient_email, reset_url)))
     db = Session()
     db.add(Student(student_id="STU000001", first_name="Asha", last_name="Rao", email="asha@example.com",
                    password_hash=hash_password("Old-password-123"), status="ACTIVE"))

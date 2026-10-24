@@ -17,6 +17,8 @@ from app.auth import redis_client
 from app.config import settings
 from app.database import SessionLocal
 from app.models.student import Student
+from app.services import student_ids
+from app.services.password_reset import issue_reset_link
 
 
 def _db():
@@ -93,12 +95,6 @@ def batch_get(body: BatchIn, db: Session = Depends(_db)):
     return [_out(s) for s in rows]
 
 
-def _next_student_id(db: Session) -> str:
-    last = db.scalar(select(Student.student_id).where(Student.student_id.like("STU%")).order_by(Student.student_id.desc()).limit(1))
-    n = int("".join(ch for ch in str(last) if ch.isdigit()) or 0) + 1 if last else 1
-    return f"STU{n:06d}"
-
-
 @router.post("/students", status_code=201)
 def create_student(body: CreateIn, idempotency_key: str | None = Header(default=None), db: Session = Depends(_db)):
     """Creates a global student identity (no password: the student uses the existing
@@ -116,17 +112,45 @@ def create_student(body: CreateIn, idempotency_key: str | None = Header(default=
     if db.scalar(select(Student).where(Student.email == email)):
         raise HTTPException(status_code=409, detail="A student with this email already exists")
     for _ in range(5):
-        student = Student(student_id=_next_student_id(db), first_name=body.first_name, last_name=body.last_name,
+        try:
+            sid = student_ids.allocate(db)      # durable counter: an ID that was ever issued is never issued again
+        except student_ids.AllocatorMissing:
+            db.rollback()
+            raise HTTPException(status_code=503, detail="Student IDs cannot be allocated yet; retry later") from None
+        student = Student(student_id=sid, first_name=body.first_name, last_name=body.last_name,
                           email=email, phone=body.phone, status="ACTIVE")
         db.add(student)
         try:
             db.commit()
             break
         except IntegrityError:
-            db.rollback()
+            db.rollback()                       # the allocation rolls back too: that number was never issued
             if db.scalar(select(Student).where(Student.email == email)):
-                raise HTTPException(status_code=409, detail="A student with this email already exists")
+                raise HTTPException(status_code=409, detail="A student with this email already exists") from None
+            if db.get(Student, sid):            # taken outside the allocator (e.g. inserted by hand): never use it
+                student_ids.skip_past(db, sid)
     else:
         raise HTTPException(status_code=503, detail="Could not allocate a student id; retry")
     redis_client.set(cache_key, json.dumps({"student_id": student.student_id}), ex=24 * 3600)
     return _out(student)
+
+
+SETUP_LINK_LIMIT = 3                 # per STUDENT (staff-initiated); the public forgot-password limit stays per client IP
+SETUP_LINK_WINDOW_SECONDS = 60 * 60
+
+
+@router.post("/students/{student_id}/password-setup-link")
+def send_password_setup_link(student_id: str, db: Session = Depends(_db)):
+    """Staff-initiated (via the Institute enrollment service): email this student a password setup/reset link, the same token
+    mechanism as forgot-password. At most SETUP_LINK_LIMIT per student per hour. The token itself is never returned."""
+    s = db.get(Student, student_id)
+    if not s or s.deleted_at is not None or s.status != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Student not found")
+    key = f"auth_setup_link:{student_id}"
+    count = redis_client.incr(key)
+    if count == 1:
+        redis_client.expire(key, SETUP_LINK_WINDOW_SECONDS)
+    if count > SETUP_LINK_LIMIT:
+        raise HTTPException(status_code=429, detail="A setup link was already sent to this student 3 times in the last hour. Try again later.")
+    expires_at = issue_reset_link(db, s)
+    return {"student_id": student_id, "expires_at": expires_at.isoformat()}
