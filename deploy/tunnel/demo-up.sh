@@ -45,7 +45,7 @@ docker run -d --name portal-tunnel --restart unless-stopped \
 
 url=""
 for _ in $(seq 1 45); do
-  url=$(docker logs portal-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || true)
+  url=$(docker logs portal-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | grep -v '^https://api\.' | tail -1 || true)
   [ -n "$url" ] && break
   sleep 2
 done
