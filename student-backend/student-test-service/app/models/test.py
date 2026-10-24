@@ -26,6 +26,13 @@ class Test(Base):
         nullable=False,
     )
 
+    # Set for a unified Global Test exam (one per student per date, papers from several providers): shown as the Global Test, not as
+    # the provider/branch above, which is only the Institute side's anchor.
+    global_occurrence_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
+
     name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,

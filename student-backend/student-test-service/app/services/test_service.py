@@ -64,6 +64,7 @@ def format_test(row, db: Session):
         "start_at": as_instant(db, row["start_at"]),
         "end_at": as_instant(db, row["end_at"]),
         "status": row["status"],
+        "global_occurrence_id": row.get("global_occurrence_id"),   # set: a unified Global Test (show it as the Global Test, not a provider's)
     }
 
 

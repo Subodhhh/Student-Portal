@@ -57,6 +57,7 @@ class ExamIn(BaseModel):
     end_at: datetime
     questions: list[QuestionIn] = Field(default_factory=list, max_length=1000)
     student_ids: list[str] = Field(default_factory=list, max_length=20000)
+    global_occurrence_id: uuid.UUID | None = None      # a unified Global Test exam
 
     @field_validator("start_at", "end_at")
     @classmethod
@@ -98,7 +99,7 @@ def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
 
     db.add(test_models.Test(
         test_id=body.exam_version_id, provider_id=body.provider_id, branch_id=body.branch_id, name=body.name,
-        description=body.description, duration_minutes=body.duration_minutes, total_questions=len(body.questions),
+        global_occurrence_id=body.global_occurrence_id, description=body.description, duration_minutes=body.duration_minutes, total_questions=len(body.questions),
         total_marks=sum(q.marks for q in body.questions), start_at=_to_session_naive(db, body.start_at),
         end_at=_to_session_naive(db, body.end_at), status="ACTIVE",
     ))

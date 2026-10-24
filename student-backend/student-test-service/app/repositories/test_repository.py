@@ -19,6 +19,7 @@ def get_test_by_id(
             t.start_at,
             t.end_at,
             t.status,
+            t.global_occurrence_id,
 
             p.provider_id,
             p.name AS provider_name,
@@ -102,6 +103,7 @@ def get_test_for_student(
             t.start_at,
             t.end_at,
             t.status,
+            t.global_occurrence_id,
 
             p.provider_id,
             p.name AS provider_name,
@@ -181,6 +183,7 @@ def get_active_tests(
             t.start_at,
             t.end_at,
             t.status,
+            t.global_occurrence_id,
 
             p.provider_id,
             p.name AS provider_name,
@@ -261,6 +264,7 @@ def get_scheduled_tests(
             t.start_at,
             t.end_at,
             t.status,
+            t.global_occurrence_id,
 
             p.provider_id,
             p.name AS provider_name,
@@ -339,6 +343,7 @@ def get_missed_tests(
             t.start_at,
             t.end_at,
             t.status,
+            t.global_occurrence_id,
 
             p.provider_id,
             p.name AS provider_name,

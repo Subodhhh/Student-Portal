@@ -133,3 +133,23 @@ def test_times_are_stored_in_the_session_zone(env):
     with Session() as db:
         t = db.get(test_models.Test, uuid.UUID(body["exam_version_id"]))
         assert t.start_at == datetime(2030, 1, 1, 0, 0) and t.end_at == datetime(2030, 1, 1, 6, 0)
+
+
+def test_a_unified_global_test_is_stored_as_its_date_and_listed_as_the_global_test(env):
+    """One exam per student per Global Test date (papers from several providers): the card shows the Global Test, not the anchor provider."""
+    from app.services.test_service import format_test
+    c, Session = env
+    occurrence = str(uuid.uuid4())
+    unified, ordinary = payload(global_occurrence_id=occurrence, student_ids=["STU000001"]), payload()
+    assert c.post("/internal/v1/exams", json=unified, headers=H).status_code == 201
+    assert c.post("/internal/v1/exams", json=ordinary, headers=H).status_code == 201
+    with Session() as db:
+        u = db.get(test_models.Test, uuid.UUID(unified["exam_version_id"]))
+        o = db.get(test_models.Test, uuid.UUID(ordinary["exam_version_id"]))
+        assert str(u.global_occurrence_id) == occurrence and o.global_occurrence_id is None     # older/ordinary tests unchanged
+        row = {"test_id": u.test_id, "provider_id": u.provider_id, "provider_name": "P", "branch_id": u.branch_id, "branch_name": "B", "city": None,
+               "state": None, "name": u.name, "description": None, "duration_minutes": u.duration_minutes, "total_questions": u.total_questions,
+               "total_marks": u.total_marks, "start_at": u.start_at, "end_at": u.end_at, "status": u.status, "global_occurrence_id": u.global_occurrence_id}
+        assert str(format_test(row, db)["global_occurrence_id"]) == occurrence
+        from app.schemas.test import TestResponse                          # what the student listing endpoints serialise through
+        assert str(TestResponse.model_validate(format_test(row, db)).global_occurrence_id) == occurrence

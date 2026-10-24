@@ -125,14 +125,16 @@ def get_student_results(db: Session, student_id: str):
 
             t.name AS test_name,
             t.duration_minutes,
+            t.global_occurrence_id,
 
             p.provider_id,
-            p.name AS provider_name,
+            -- a unified Global Test (papers from several providers) is shown as the Global Test, not as its anchor provider
+            CASE WHEN t.global_occurrence_id IS NULL THEN p.name ELSE 'Global Test' END AS provider_name,
 
             b.branch_id,
-            b.name AS branch_name,
-            b.city,
-            b.state
+            CASE WHEN t.global_occurrence_id IS NULL THEN b.name ELSE '' END AS branch_name,
+            CASE WHEN t.global_occurrence_id IS NULL THEN b.city END AS city,
+            CASE WHEN t.global_occurrence_id IS NULL THEN b.state END AS state
 
         FROM test_results r
 
