@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -209,6 +209,7 @@ class AssignmentOut(BaseModel):
     student_id: str
     batch_id: UUID | None
     status: str
+    name: str | None = None          # from the Student service (None when it is unreachable)
 
 
 class CancelIn(Strict):
@@ -230,15 +231,33 @@ def _branch(db: Session, branch_id: UUID) -> Branch:
 
 
 def _plan_out(db: Session, plan: ExamPlan) -> PlanOut:
-    batches = [b for (b,) in db.execute(select(ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id))]
-    students = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id).order_by(ExamPlanStudent.student_id))]
-    slots = db.scalars(select(ExamPlanSubject).where(ExamPlanSubject.plan_id == plan.plan_id).order_by(ExamPlanSubject.position)).all()
-    gt = db.get(GlobalTest, plan.global_test_id) if plan.global_test_id else None
-    return PlanOut(**{c: getattr(plan, c) for c in ("plan_id", "provider_id", "branch_id", "name", "description", "duration_minutes",
-                                                     "start_at", "end_at", "generate_at", "auto_publish", "status", "audience_type",
-                                                     "marking_mode", "marks_correct", "marks_wrong", "exam_type", "target_class", "global_test_id")},
-                   batch_ids=batches, student_ids=students, global_test_name=gt.name if gt else None,
-                   slots=[SlotIn(subject_id=s.subject_id, paper_id=s.paper_id, paper_version_id=s.paper_version_id) for s in slots])
+    return _plan_outs(db, [plan])[0]
+
+
+def _plan_outs(db: Session, plans: list[ExamPlan]) -> list[PlanOut]:
+    """PlanOut for each plan: batches, listed students, slots and Global Test names in one statement each for the whole page."""
+    ids = [x.plan_id for x in plans]
+    if not ids:
+        return []
+    batches: dict[UUID, list] = {}
+    for pid, b in db.execute(select(ExamPlanBatch.plan_id, ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id.in_(ids))):
+        batches.setdefault(pid, []).append(b)
+    students: dict[UUID, list] = {}
+    for pid, sid in db.execute(select(ExamPlanStudent.plan_id, ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id.in_(ids))
+                               .order_by(ExamPlanStudent.student_id)):
+        students.setdefault(pid, []).append(sid)
+    slots: dict[UUID, list] = {}
+    for sl in db.scalars(select(ExamPlanSubject).where(ExamPlanSubject.plan_id.in_(ids)).order_by(ExamPlanSubject.position)):
+        slots.setdefault(sl.plan_id, []).append(sl)
+    gt_ids = {x.global_test_id for x in plans if x.global_test_id}
+    gt_names = dict(db.execute(select(GlobalTest.test_id, GlobalTest.name).where(GlobalTest.test_id.in_(gt_ids))).all()) if gt_ids else {}
+    return [PlanOut(**{c: getattr(plan, c) for c in ("plan_id", "provider_id", "branch_id", "name", "description", "duration_minutes",
+                                                      "start_at", "end_at", "generate_at", "auto_publish", "status", "audience_type",
+                                                      "marking_mode", "marks_correct", "marks_wrong", "exam_type", "target_class", "global_test_id")},
+                    batch_ids=batches.get(plan.plan_id, []), student_ids=students.get(plan.plan_id, []),
+                    global_test_name=gt_names.get(plan.global_test_id),
+                    slots=[SlotIn(subject_id=s.subject_id, paper_id=s.paper_id, paper_version_id=s.paper_version_id) for s in slots.get(plan.plan_id, [])])
+            for plan in plans]
 
 
 def require_plan_scope(db: Session, p: Principal, br: Branch, audience_type: str) -> None:
@@ -401,7 +420,7 @@ def list_plans(branch_id: UUID, page: int = 1, page_size: int = 25, p: Principal
     if not unified.is_platform(p, "examplan.manage"):        # a unified plan is never listed under its anchor branch
         stmt = stmt.where(~unified.unified_plan_clause(ExamPlan.plan_id))
     res = paginate(db, stmt.order_by(ExamPlan.start_at.desc()), page, page_size)
-    res["items"] = [_plan_out(db, x) for x in res["items"]]
+    res["items"] = _plan_outs(db, list(res["items"]))
     return res
 
 
@@ -579,15 +598,57 @@ def _in_branches(scope: set[UUID] | OnlyStudents | unified.SubjectScope):
 
 
 def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> ExamOut:
-    ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam.exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
+    return _exam_outs(db, [(exam, branches)])[0]
+
+
+def _prefetch(db: Session, exams) -> None:
+    """Load, in two statements, what exam_access/_exam_outs ask per exam: the plans (then served by the session's identity map) and
+    which exams are unified (cached for this request)."""
+    exams = list(exams)
+    plan_ids = {e.plan_id for e in exams if e.plan_id}
+    if plan_ids:
+        db.scalars(select(ExamPlan).where(ExamPlan.plan_id.in_(plan_ids))).all()
+    unified.prefetch_unified_exams(db, [e.exam_id for e in exams])
+
+
+def _exam_outs(db: Session, rows: list[tuple[Exam, object]]) -> list[ExamOut]:
+    """ExamOut for each (exam, caller's scope), loading versions, papers, deliveries and whole-exam assignment counts for all of them in
+    one statement each (a list page used to run ~7 statements per exam). Scoped counts stay per exam (they depend on the scope)."""
+    if not rows:
+        return []
+    _prefetch(db, [e for e, _s in rows])
+    ids = [e.exam_id for e, _s in rows]
+    latest = (select(ExamVersion.exam_id, func.max(ExamVersion.version_no).label("v")).where(ExamVersion.exam_id.in_(ids))
+              .group_by(ExamVersion.exam_id).subquery())
+    versions = {ev.exam_id: ev for ev in db.scalars(select(ExamVersion).join(latest, (latest.c.exam_id == ExamVersion.exam_id)
+                                                                              & (latest.c.v == ExamVersion.version_no)))}
+    vids = [ev.exam_version_id for ev in versions.values()]
+    papers: dict[UUID, list[ExamVersionPaper]] = {}
+    outboxes: dict[UUID, ExamOutbox] = {}
+    whole: dict[UUID, dict] = {}
+    if vids:
+        for x in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id.in_(vids)).order_by(ExamVersionPaper.position)):
+            papers.setdefault(x.exam_version_id, []).append(x)
+        for ob in db.scalars(select(ExamOutbox).where(ExamOutbox.exam_version_id.in_(vids), ExamOutbox.operation == "PUBLISH")):
+            outboxes.setdefault(ob.exam_version_id, ob)
+        unscoped = [versions[e.exam_id].exam_version_id for e, sc in rows if sc is None and e.exam_id in versions]
+        if unscoped:
+            for vid, status, n in db.execute(select(StudentExamAssignment.exam_version_id, StudentExamAssignment.status, func.count())
+                                             .where(StudentExamAssignment.exam_version_id.in_(unscoped))
+                                             .group_by(StudentExamAssignment.exam_version_id, StudentExamAssignment.status)):
+                whole.setdefault(vid, {})[status] = n
+    return [_build_exam_out(db, exam, branches, versions.get(exam.exam_id), papers, outboxes, whole) for exam, branches in rows]
+
+
+def _build_exam_out(db: Session, exam: Exam, branches, ev: ExamVersion | None, papers_of: dict, outboxes: dict, whole: dict) -> ExamOut:
     out = ExamOut(exam_id=exam.exam_id, plan_id=exam.plan_id, provider_id=exam.provider_id, branch_id=exam.branch_id,
                   name=exam.name, status=exam.status, institute_wide=is_institute_wide(db, exam), unified_global=unified.is_unified_exam(db, exam.exam_id))
     if ev:
-        papers = db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == ev.exam_version_id).order_by(ExamVersionPaper.position)).all()
+        papers = papers_of.get(ev.exam_version_id, [])
         subject_view = isinstance(branches, unified.SubjectScope)
         if subject_view:       # a provider's view of a unified exam: never another provider's subject, nor the whole exam's totals
             papers = [x for x in papers if x.subject_id in branches.subject_ids]
-        ob = db.scalar(select(ExamOutbox).where(ExamOutbox.exam_version_id == ev.exam_version_id, ExamOutbox.operation == "PUBLISH"))
+        ob = outboxes.get(ev.exam_version_id)
         out.exam_version_id, out.start_at, out.end_at = ev.exam_version_id, ev.start_at, ev.end_at
         out.duration_minutes, out.total_questions, out.total_marks = ev.duration_minutes, ev.total_questions, ev.total_marks
         out.missing_subjects = ev.missing_subjects or []
@@ -599,10 +660,12 @@ def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> Exa
         out.papers = [{"subject_id": str(x.subject_id), "paper_version_id": str(x.paper_version_id),
                        "source_provider_id": str(x.source_provider_id) if x.source_provider_id else None,
                        "platform_paper": x.source_provider_id is None, "question_count": x.question_count} for x in papers]
-        counts = select(StudentExamAssignment.status, func.count()).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
-        if branches is not None:
-            counts = counts.where(_in_branches(branches))
-        out.assignment_status = {k: v for k, v in db.execute(counts.group_by(StudentExamAssignment.status)).all()}
+        if branches is None:
+            out.assignment_status = dict(whole.get(ev.exam_version_id, {}))
+        else:
+            counts = (select(StudentExamAssignment.status, func.count()).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
+                      .where(_in_branches(branches)))
+            out.assignment_status = {k: v for k, v in db.execute(counts.group_by(StudentExamAssignment.status)).all()}
         out.assigned_students = sum(out.assignment_status.values())
         out.settings = ev.settings
         out.delivery_status = ob.status if ob else "NOT_PUBLISHED"
@@ -615,36 +678,43 @@ def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> Exa
 
 
 @router.get("/branches/{branch_id}/exams", response_model=Page[ExamOut])
-def list_exams(branch_id: UUID, status: str | None = None, page: int = 1, page_size: int = 25,
+def list_exams(branch_id: UUID, status: str | None = None, q: str | None = Query(default=None, max_length=100), page: int = 1, page_size: int = 25,
                p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     br = _branch(db, branch_id)
+    term = (q or "").strip().lower()
+    named = (lambda stmt: stmt.where(func.lower(Exam.name).contains(term))) if term else (lambda stmt: stmt)   # optional name search
     p.require(db, "exam.read", provider_id=br.provider_id, branch_id=branch_id)
     if not p.can("exam.read", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
         # teachers: the provider's exams with a targeted student they teach in this branch (wherever the exam was planned)
-        stmt = select(Exam).where(Exam.provider_id == br.provider_id, ~unified.unified_exam_clause(Exam.exam_id))
+        stmt = named(select(Exam).where(Exam.provider_id == br.provider_id, ~unified.unified_exam_clause(Exam.exam_id)))
         if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
             stmt = stmt.where(Exam.status == status)
-        mine = [(e, exam_access(db, p, "exam.read", e)) for e in db.scalars(stmt.order_by(Exam.created_at.desc()))
-                if teacher_scope.exam_students(db, p, e, branch_id)]
-        return _page_of(db, sorted(mine + _unified_in_branch(db, p, br, status), key=lambda x: x[0].created_at, reverse=True), page, page_size)
+        candidates = db.scalars(stmt.order_by(Exam.created_at.desc())).all()
+        _prefetch(db, candidates)
+        mine = [(e, exam_access(db, p, "exam.read", e)) for e in candidates if teacher_scope.exam_students(db, p, e, branch_id)]
+        extra = [x for x in _unified_in_branch(db, p, br, status) if term in x[0].name.lower()]
+        return _page_of(db, sorted(mine + extra, key=lambda x: x[0].created_at, reverse=True), page, page_size)
     # + whole-institute exams of the provider planned in another branch (one exam, never copied per branch)
     institute = select(ExamPlan.plan_id).where(ExamPlan.provider_id == br.provider_id, ExamPlan.audience_type == "INSTITUTE")
-    stmt = select(Exam).where((Exam.branch_id == branch_id) | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute)),
-                              ~unified.unified_exam_clause(Exam.exam_id))
+    stmt = named(select(Exam).where((Exam.branch_id == branch_id) | ((Exam.provider_id == br.provider_id) & Exam.plan_id.in_(institute)),
+                                    ~unified.unified_exam_clause(Exam.exam_id)))
     if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
         stmt = stmt.where(Exam.status == status)
-    extra = _unified_in_branch(db, p, br, status)
+    extra = [x for x in _unified_in_branch(db, p, br, status) if term in x[0].name.lower()]
     if extra:
-        rows = [(e, exam_access(db, p, "exam.read", e)) for e in db.scalars(stmt)] + extra
+        exams = db.scalars(stmt).all()
+        _prefetch(db, exams)
+        rows = [(e, exam_access(db, p, "exam.read", e)) for e in exams] + extra
         return _page_of(db, sorted(rows, key=lambda x: x[0].created_at, reverse=True), page, page_size)
     res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
-    res["items"] = [_exam_out(db, e, exam_access(db, p, "exam.read", e)) for e in res["items"]]
+    _prefetch(db, res["items"])
+    res["items"] = _exam_outs(db, [(e, exam_access(db, p, "exam.read", e)) for e in res["items"]])
     return res
 
 
 def _page_of(db: Session, rows: list[tuple[Exam, object]], page: int, page_size: int) -> dict:
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
-    return {"items": [_exam_out(db, e, s) for e, s in rows[(page - 1) * page_size: page * page_size]],
+    return {"items": _exam_outs(db, rows[(page - 1) * page_size: page * page_size]),
             "total": len(rows), "page": page, "page_size": page_size}
 
 
@@ -658,10 +728,16 @@ def _unified_in_branch(db: Session, p: Principal, br: Branch, status: str | None
     if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
         stmt = stmt.where(Exam.status == status)
     out = []
-    for e in db.scalars(stmt):
-        here = set(db.scalars(select(StudentExamAssignment.student_id).join(Enrollment, Enrollment.student_id == StudentExamAssignment.student_id)
-                              .where(StudentExamAssignment.exam_id == e.exam_id, Enrollment.provider_id == br.provider_id,
-                                     Enrollment.branch_id == br.branch_id)))
+    exams = db.scalars(stmt).all()
+    _prefetch(db, exams)
+    here_by_exam: dict[UUID, set[str]] = {}
+    for exam_id, sid in db.execute(select(StudentExamAssignment.exam_id, StudentExamAssignment.student_id)
+                                   .join(Enrollment, Enrollment.student_id == StudentExamAssignment.student_id)
+                                   .where(StudentExamAssignment.exam_id.in_([e.exam_id for e in exams] or [None]),
+                                          Enrollment.provider_id == br.provider_id, Enrollment.branch_id == br.branch_id)):
+        here_by_exam.setdefault(exam_id, set()).add(sid)
+    for e in exams:
+        here = here_by_exam.get(e.exam_id, set())
         s = unified.scope(db, p, "exam.read", e)
         if s is None:
             if here:
@@ -711,13 +787,22 @@ def cancel_exam(exam_id: UUID, body: CancelIn, p: Principal = Depends(get_princi
 
 
 @router.get("/exams/{exam_id}/assignments", response_model=Page[AssignmentOut])
-def exam_assignments(exam_id: UUID, page: int = 1, page_size: int = 50, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+def exam_assignments(exam_id: UUID, page: int = 1, page_size: int = 50, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+                     sc: StudentClient = Depends(get_student_client)):
+    """The students an exam is assigned to, limited to those the caller may see (the same scope as the exam's assigned count)."""
     e = _exam(db, exam_id)
     branches = exam_access(db, p, "exam.read", e)
     stmt = select(StudentExamAssignment).where(StudentExamAssignment.exam_id == exam_id)
     if branches is not None:
         stmt = stmt.where(_in_branches(branches))
-    return paginate(db, stmt.order_by(StudentExamAssignment.student_id), page, page_size)
+    res = paginate(db, stmt.order_by(StudentExamAssignment.student_id), page, page_size)
+    try:
+        names = sc.get_many([a.student_id for a in res["items"]])
+    except StudentServiceError:
+        names = {}
+    res["items"] = [AssignmentOut.model_validate(a).model_copy(update={"name": f"{names[a.student_id].first_name} {names[a.student_id].last_name}".strip()
+                                                                       if a.student_id in names else None}) for a in res["items"]]
+    return res
 
 
 # ------------------------------------------------------------------ results & analytics
@@ -761,6 +846,9 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
     subject_view = isinstance(branches, unified.SubjectScope)
     try:
         rows = _subject_rows(db, rc, ev, branches) if subject_view else rc.exam_results(str(ev.exam_version_id))
+        if not subject_view:                    # the subject-wise breakdown of each official result (the provider view already has its own)
+            by_student = {r["student_id"]: r["subjects"] for r in rc.exam_subject_results(str(ev.exam_version_id))}
+            rows = [{**r, "subjects": by_student.get(r["student_id"], [])} for r in rows]
     except ResultServiceError:
         raise api_error(503, "RESULT_SERVICE_UNAVAILABLE", "Results are temporarily unavailable.")
 

@@ -359,13 +359,41 @@ def _enrollment_rows(db: Session, student_ids: list[str], visible) -> dict[str, 
     for eid, name in batches:
         by_e.setdefault(eid, []).append(name)
     profiles = _profiles(db, [e.enrollment_id for e, _, _ in rows])
+    subjects = _enrollment_subjects(db, [e.enrollment_id for e, _, _ in rows])
     out: dict[str, list[dict]] = {}
     for e, prov_name, br_name in rows:
         ac = _academic(profiles.get(e.enrollment_id))
         out.setdefault(e.student_id, []).append({
             "enrollment_id": e.enrollment_id, "provider_id": str(e.provider_id), "provider_name": prov_name, "branch_id": str(e.branch_id),
             "branch_name": br_name, "status": e.status, "enrolled_at": e.enrolled_at.isoformat(), "batches": sorted(by_e.get(e.enrollment_id, [])),
-            "academic": ac.model_dump(mode="json") if ac else None})
+            "subjects": subjects.get(e.enrollment_id, []), "academic": ac.model_dump(mode="json") if ac else None})
+    return out
+
+
+def _enrollment_subjects(db: Session, enrollment_ids: list[str]) -> dict[str, list[dict]]:
+    """The subjects each enrollment takes, from its batch memberships (the rule `_check_subjects` / `_set_subjects` enforce): the subjects
+    chosen in a membership, or every subject its batch offers when nothing was chosen. An enrollment in no batch takes no subject here.
+    Each entry names the batch it comes from and whether it was chosen; nothing is inferred from other data."""
+    if not enrollment_ids:
+        return {}
+    links = db.execute(select(EnrollmentBatch.enrollment_batch_id, EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id, Batch.name)
+                       .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id).where(EnrollmentBatch.enrollment_id.in_(enrollment_ids))).all()
+    chosen: dict = {}
+    for ebid, sid in db.execute(select(EnrollmentBatchSubject.enrollment_batch_id, EnrollmentBatchSubject.subject_id)
+                                .where(EnrollmentBatchSubject.enrollment_batch_id.in_([x[0] for x in links] or [None]))):
+        chosen.setdefault(ebid, set()).add(sid)
+    offered: dict = {}
+    for bid, sid in db.execute(select(BatchSubject.batch_id, BatchSubject.subject_id).where(BatchSubject.batch_id.in_({x[2] for x in links} or {None}))):
+        offered.setdefault(bid, set()).add(sid)
+    wanted = set().union(*chosen.values(), *offered.values()) if (chosen or offered) else set()
+    names = dict(db.execute(select(Subject.subject_id, Subject.name).where(Subject.subject_id.in_(wanted or {None}))).all())
+    out: dict[str, list[dict]] = {}
+    for ebid, eid, bid, batch_name in links:
+        picked = ebid in chosen
+        for sid in chosen.get(ebid) or offered.get(bid, set()):
+            out.setdefault(eid, []).append({"subject_id": str(sid), "subject": names.get(sid), "batch": batch_name, "chosen": picked})
+    for eid in out:
+        out[eid].sort(key=lambda x: (x["subject"] or "", x["batch"]))
     return out
 
 

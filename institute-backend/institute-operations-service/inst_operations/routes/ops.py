@@ -16,7 +16,8 @@ from institute_common.core.security import Principal, api_error, can_see_provide
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import EnrollmentTransfer, ProviderSubject, Subject, TeacherSubjectAssignment
 from institute_common.models.exams import (
-    CompositeRequest, Exam, ExamGenerationJob, GlobalTest, ExamNotificationOutbox, ExamOutbox, ExamVersion, ExamVersionPaper, Notification, ResultCorrection,
+    CompositeRequest, Exam, ExamGenerationJob, GlobalTest, GlobalTestStudent, ExamNotificationOutbox, ExamOutbox, ExamVersion, ExamVersionPaper,
+    Notification, ResultCorrection,
     StudentNotificationOutbox,
 )
 from institute_common.models.ops import (
@@ -559,6 +560,34 @@ def _count(db: Session, stmt) -> int:
     return db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
 
+class _Counts:
+    """Independent counts of one response, run as ONE statement (a scalar subquery each) instead of one round trip per count. add()
+    returns a placeholder; resolve() runs the statement and replaces every placeholder in the (nested) result with its number."""
+
+    def __init__(self, db: Session):
+        self.db, self.stmts = db, []
+
+    def add(self, stmt) -> "_Pending":
+        self.stmts.append(select(func.count()).select_from(stmt.subquery()).scalar_subquery())
+        return _Pending(len(self.stmts) - 1)
+
+    def resolve(self, out):
+        values = list(self.db.execute(select(*[q.label(f"c{i}") for i, q in enumerate(self.stmts)])).one()) if self.stmts else []
+
+        def walk(v):
+            if isinstance(v, _Pending):
+                return values[v.index] or 0
+            if isinstance(v, dict):
+                return {k: walk(x) for k, x in v.items()}
+            return v
+        return walk(out)
+
+
+class _Pending:
+    def __init__(self, index: int):
+        self.index = index
+
+
 def _paper_status_counts(db: Session, p: Principal) -> dict:
     stmt = (select(PaperVersion.status, func.count()).join(Paper, Paper.paper_id == PaperVersion.paper_id)
             .where(scope_clause(p, "paper.read", Paper.provider_id, Paper.branch_id)))
@@ -573,15 +602,16 @@ def _paper_status_counts(db: Session, p: Principal) -> dict:
 def _unified(exam_id_column):
     """A unified Global Test exam (several providers' papers, inst_exam/services/unified.py): it belongs to the platform, never to the
     provider/branch it is anchored on."""
-    return exists().where(ExamVersion.exam_id == exam_id_column, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id,
-                          ExamVersionPaper.source_submission_id.is_not(None))
+    return or_(exists().where(GlobalTestStudent.exam_id == exam_id_column),
+               exists().where(ExamVersion.exam_id == exam_id_column, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id,
+                              ExamVersionPaper.source_submission_id.is_not(None)))
 
 
 def false_():
     return ~true()
 
 
-def _platform_overview(db: Session, now: datetime) -> dict[str, Any]:
+def _platform_overview(db: Session, now: datetime, counts: _Counts) -> dict[str, Any]:
     """Platform-wide counts for the global (Super Admin / Admin) dashboard. Read-only; every number comes from a table."""
     by_status = lambda col, stmt: {k: v for k, v in db.execute(stmt.group_by(col)).all()}  # noqa: E731
     latest = (select(ExamVersion.exam_id, func.max(ExamVersion.version_no).label("v")).group_by(ExamVersion.exam_id).subquery())
@@ -597,21 +627,21 @@ def _platform_overview(db: Session, now: datetime) -> dict[str, Any]:
     return {
         "providers_by_status": by_status(Provider.status, select(Provider.status, func.count()).where(Provider.deleted_at.is_(None))),
         "branches_by_status": by_status(Branch.status, select(Branch.status, func.count()).where(Branch.deleted_at.is_(None))),
-        "students": _count(db, select(Enrollment.student_id).where(Enrollment.status == "ACTIVE").distinct()),
-        "active_enrollments": _count(db, select(Enrollment).where(Enrollment.status == "ACTIVE")),
+        "students": counts.add(select(Enrollment.student_id).where(Enrollment.status == "ACTIVE").distinct()),
+        "active_enrollments": counts.add(select(Enrollment).where(Enrollment.status == "ACTIVE")),
         # people (not assignments) per role: one person can hold several roles
         "staff_by_role": by_status(StaffRoleAssignment.role, select(StaffRoleAssignment.role, func.count(func.distinct(StaffRoleAssignment.staff_id)))
                                    .join(Staff, Staff.staff_id == StaffRoleAssignment.staff_id)
                                    .where(StaffRoleAssignment.status == "ACTIVE", Staff.status == "ACTIVE")),
-        "subjects": _count(db, select(Subject).where(Subject.status == "ACTIVE")),
-        "subjects_offered": _count(db, select(ProviderSubject.subject_id).join(Subject, Subject.subject_id == ProviderSubject.subject_id)
+        "subjects": counts.add(select(Subject).where(Subject.status == "ACTIVE")),
+        "subjects_offered": counts.add(select(ProviderSubject.subject_id).join(Subject, Subject.subject_id == ProviderSubject.subject_id)
                                    .where(Subject.status == "ACTIVE").distinct()),
-        "questions": _count(db, select(Question)),
+        "questions": counts.add(select(Question)),
         "composite_by_status": by_status(CompositeRequest.status, select(CompositeRequest.status, func.count())),
-        "recent_exams_30d": _count(db, current.where(ExamVersion.end_at < now, ExamVersion.end_at >= now - timedelta(days=30))),
-        "papers_awaiting_approval": _count(db, select(PaperVersion).where(PaperVersion.status == "VALIDATED")),
-        "rejected_uploads_7d": _count(db, select(PaperUpload).where(PaperUpload.status == "REJECTED", PaperUpload.created_at >= now - timedelta(days=7))),
-        "global_tests_published": _count(db, select(GlobalTest).where(GlobalTest.status == "PUBLISHED")),
+        "recent_exams_30d": counts.add(current.where(ExamVersion.end_at < now, ExamVersion.end_at >= now - timedelta(days=30))),
+        "papers_awaiting_approval": counts.add(select(PaperVersion).where(PaperVersion.status == "VALIDATED")),
+        "rejected_uploads_7d": counts.add(select(PaperUpload).where(PaperUpload.status == "REJECTED", PaperUpload.created_at >= now - timedelta(days=7))),
+        "global_tests_published": counts.add(select(GlobalTest).where(GlobalTest.status == "PUBLISHED")),
         "upcoming_exam_list": [
             {"exam_id": str(e.exam_id), "name": e.name, "status": e.status, "start_at": v.start_at.isoformat(),
              "provider_name": None if e.exam_id in unified else providers.get(e.provider_id),
@@ -628,52 +658,53 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
     if role not in GLOBAL_ROLES:
         exam_scope = exam_scope & ~_unified(Exam.exam_id)
     out: dict[str, Any] = {"role": role.value}
+    counts = _Counts(db)
     upcoming = (select(Exam).join(ExamVersion, ExamVersion.exam_id == Exam.exam_id)
                 .where(exam_scope, Exam.status != "CANCELLED", ExamVersion.start_at >= now))
-    out["upcoming_exams"] = _count(db, upcoming)
+    out["upcoming_exams"] = counts.add(upcoming)
     out["papers_by_status"] = _paper_status_counts(db, p)
-    out["unread_notifications"] = db.scalar(select(func.count()).select_from(Notification).where(
-        Notification.recipient_staff_id == p.staff_id, Notification.read_at.is_(None))) or 0
+    out["unread_notifications"] = counts.add(select(Notification).where(
+        Notification.recipient_staff_id == p.staff_id, Notification.read_at.is_(None)))
 
     if role in GLOBAL_ROLES:
-        out["providers"] = _count(db, select(Provider).where(Provider.status == "ACTIVE", Provider.deleted_at.is_(None)))
-        out["branches"] = _count(db, select(Branch).where(Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
-        out["staff"] = _count(db, select(Staff).where(Staff.status == "ACTIVE"))
+        out["providers"] = counts.add(select(Provider).where(Provider.status == "ACTIVE", Provider.deleted_at.is_(None)))
+        out["branches"] = counts.add(select(Branch).where(Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
+        out["staff"] = counts.add(select(Staff).where(Staff.status == "ACTIVE"))
         out["exams_by_status"] = dict(db.execute(select(Exam.status, func.count()).group_by(Exam.status)).all())
-        out["open_tickets"] = _count(db, select(SupportTicket).where(SupportTicket.status.in_(("OPEN", "IN_PROGRESS"))))
+        out["open_tickets"] = counts.add(select(SupportTicket).where(SupportTicket.status.in_(("OPEN", "IN_PROGRESS"))))
         out["security"] = {
-            "denied_events_24h": _count(db, select(AuditLog).where(AuditLog.outcome == "DENIED", AuditLog.occurred_at >= now - timedelta(hours=24))),
-            "failed_logins_24h": _count(db, select(AuditLog).where(AuditLog.action == "auth.login", AuditLog.outcome == "FAILURE",
+            "denied_events_24h": counts.add(select(AuditLog).where(AuditLog.outcome == "DENIED", AuditLog.occurred_at >= now - timedelta(hours=24))),
+            "failed_logins_24h": counts.add(select(AuditLog).where(AuditLog.action == "auth.login", AuditLog.outcome == "FAILURE",
                                                                     AuditLog.occurred_at >= now - timedelta(hours=24))),
         }
         out["operations"] = {
-            "failed_deliveries": _count(db, select(ExamOutbox).where(ExamOutbox.status == "FAILED")),
-            "pending_deliveries": _count(db, select(ExamOutbox).where(ExamOutbox.status == "PENDING")),
-            "failed_generation_jobs": _count(db, select(ExamGenerationJob).where(ExamGenerationJob.status == "FAILED")),
-            "failed_student_notifications": _count(db, select(StudentNotificationOutbox).where(StudentNotificationOutbox.status == "FAILED")),
-            "unfinished_corrections": _count(db, select(ResultCorrection).where(ResultCorrection.status != "APPLIED")),
+            "failed_deliveries": counts.add(select(ExamOutbox).where(ExamOutbox.status == "FAILED")),
+            "pending_deliveries": counts.add(select(ExamOutbox).where(ExamOutbox.status == "PENDING")),
+            "failed_generation_jobs": counts.add(select(ExamGenerationJob).where(ExamGenerationJob.status == "FAILED")),
+            "failed_student_notifications": counts.add(select(StudentNotificationOutbox).where(StudentNotificationOutbox.status == "FAILED")),
+            "unfinished_corrections": counts.add(select(ResultCorrection).where(ResultCorrection.status != "APPLIED")),
         }
-        out["unpaid_invoices"] = _count(db, select(Invoice).where(Invoice.status.in_(("ISSUED", "PARTIALLY_PAID"))))
-        out.update(_platform_overview(db, now))
+        out["unpaid_invoices"] = counts.add(select(Invoice).where(Invoice.status.in_(("ISSUED", "PARTIALLY_PAID"))))
+        out.update(_platform_overview(db, now, counts))
     elif role == Role.PROVIDER_ADMIN:
         provs = {a.provider_id for a in p.assignments if Role(a.role) == Role.PROVIDER_ADMIN}
-        out["branches"] = _count(db, select(Branch).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
-        out["teachers"] = _count(db, select(StaffRoleAssignment).where(StaffRoleAssignment.provider_id.in_(provs), StaffRoleAssignment.role == "TEACHER",
+        out["branches"] = counts.add(select(Branch).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
+        out["teachers"] = counts.add(select(StaffRoleAssignment).where(StaffRoleAssignment.provider_id.in_(provs), StaffRoleAssignment.role == "TEACHER",
                                                                        StaffRoleAssignment.status == "ACTIVE"))
-        out["students"] = _count(db, select(Enrollment.student_id).where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE").distinct())
-        out["pending_transfers"] = _count(db, select(EnrollmentTransfer).where(EnrollmentTransfer.provider_id.in_(provs), EnrollmentTransfer.status == "PENDING"))
-        out["open_tickets"] = _count(db, select(SupportTicket).where(SupportTicket.provider_id.in_(provs), SupportTicket.status.in_(("OPEN", "IN_PROGRESS"))))
-        out["unpaid_invoices"] = _count(db, select(Invoice).where(Invoice.provider_id.in_(provs), Invoice.status.in_(("ISSUED", "PARTIALLY_PAID"))))
+        out["students"] = counts.add(select(Enrollment.student_id).where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE").distinct())
+        out["pending_transfers"] = counts.add(select(EnrollmentTransfer).where(EnrollmentTransfer.provider_id.in_(provs), EnrollmentTransfer.status == "PENDING"))
+        out["open_tickets"] = counts.add(select(SupportTicket).where(SupportTicket.provider_id.in_(provs), SupportTicket.status.in_(("OPEN", "IN_PROGRESS"))))
+        out["unpaid_invoices"] = counts.add(select(Invoice).where(Invoice.provider_id.in_(provs), Invoice.status.in_(("ISSUED", "PARTIALLY_PAID"))))
     elif role == Role.BRANCH_ADMIN:
         brs = {a.branch_id for a in p.assignments if Role(a.role) == Role.BRANCH_ADMIN}
-        out["batches"] = _count(db, select(Batch).where(Batch.branch_id.in_(brs), Batch.status == "ACTIVE"))
-        out["students"] = _count(db, select(Enrollment.student_id).where(Enrollment.branch_id.in_(brs), Enrollment.status == "ACTIVE").distinct())
-        out["pending_transfers"] = _count(db, select(EnrollmentTransfer).where(EnrollmentTransfer.from_branch_id.in_(brs), EnrollmentTransfer.status == "PENDING"))
-        out["teachers"] = _count(db, select(TeacherSubjectAssignment.staff_id).where(TeacherSubjectAssignment.branch_id.in_(brs),
+        out["batches"] = counts.add(select(Batch).where(Batch.branch_id.in_(brs), Batch.status == "ACTIVE"))
+        out["students"] = counts.add(select(Enrollment.student_id).where(Enrollment.branch_id.in_(brs), Enrollment.status == "ACTIVE").distinct())
+        out["pending_transfers"] = counts.add(select(EnrollmentTransfer).where(EnrollmentTransfer.from_branch_id.in_(brs), EnrollmentTransfer.status == "PENDING"))
+        out["teachers"] = counts.add(select(TeacherSubjectAssignment.staff_id).where(TeacherSubjectAssignment.branch_id.in_(brs),
                                                                                      TeacherSubjectAssignment.status == "ACTIVE").distinct())
     else:
         subjects = db.scalars(select(Subject).where(Subject.subject_id.in_({t.subject_id for t in p.teaching}))).all() if p.teaching else []
         out["teaching"] = [{"subject": s.name, "branch_id": str(t.branch_id), "batch_id": str(t.batch_id) if t.batch_id else None}
                            for t in p.teaching for s in subjects if s.subject_id == t.subject_id]
-        out["my_papers"] = _count(db, select(Paper).where(Paper.created_by == p.staff_id))
-    return out
+        out["my_papers"] = counts.add(select(Paper).where(Paper.created_by == p.staff_id))
+    return counts.resolve(out)

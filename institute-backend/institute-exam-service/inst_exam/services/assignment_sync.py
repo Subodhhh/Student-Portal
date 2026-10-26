@@ -35,8 +35,8 @@ def sync_exam(db: Session, exam_id, client: AttemptClient | None = None, now: da
     exam = db.get(Exam, UUID(str(exam_id)))
     out = {"started": 0, "completed": 0, "missed": 0}
     ev = _latest_version(db, exam.exam_id) if exam else None
-    if not exam or exam.status != "PUBLISHED" or not ev:
-        return out
+    if not exam or exam.status != "PUBLISHED" or not ev or ev.total_questions == 0:
+        return out          # a Global Test card without any paper cannot be started: never "missed"
     attempts = {a["student_id"]: a for a in (client or get_attempt_client()).exam_attempts(str(ev.exam_version_id))}
     for a in db.scalars(select(StudentExamAssignment).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)):
         att = attempts.get(a.student_id)
@@ -60,7 +60,8 @@ def sync_open_exams(db: Session, client: AttemptClient | None = None, now: datet
     exam_ids = db.scalars(
         select(StudentExamAssignment.exam_id).join(ExamVersion, ExamVersion.exam_version_id == StudentExamAssignment.exam_version_id)
         .join(Exam, Exam.exam_id == StudentExamAssignment.exam_id)
-        .where(Exam.status == "PUBLISHED", ExamVersion.start_at <= now, StudentExamAssignment.status.in_(("ASSIGNED", "STARTED")))
+        .where(Exam.status == "PUBLISHED", ExamVersion.start_at <= now, ExamVersion.total_questions > 0,
+               StudentExamAssignment.status.in_(("ASSIGNED", "STARTED")))
         .distinct().limit(200)
     ).all()
     for eid in exam_ids:

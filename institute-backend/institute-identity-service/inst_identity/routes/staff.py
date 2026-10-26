@@ -75,22 +75,35 @@ class Reason(Strict):
 
 
 def _out(db: Session, s: Staff, viewer: Principal) -> StaffOut:
-    rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == s.staff_id)).all()
+    return _outs(db, [s], viewer)[0]
+
+
+def _outs(db: Session, people: list[Staff], viewer: Principal) -> list[StaffOut]:
+    """StaffOut for each person: assignments, the provider/branch names the viewer may see and the last sign-in, loaded for the whole page
+    in one statement each (a list used to run 4 statements per person)."""
+    ids = [s.staff_id for s in people]
+    if not ids:
+        return []
+    rows_by: dict = {}
+    for r in db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id.in_(ids))):
+        rows_by.setdefault(r.staff_id, []).append(r)
+    every = [r for rows in rows_by.values() for r in rows]
     # Names of the provider/branch an assignment is scoped to, only for providers the viewer may see: a teacher who also
     # works for another provider must not reveal that provider's name to a scoped admin.
-    provider_ids = {r.provider_id for r in rows if r.provider_id and can_see_provider(viewer, r.provider_id)}
-    branch_ids = {r.branch_id for r in rows if r.branch_id and r.provider_id in provider_ids}
+    provider_ids = {r.provider_id for r in every if r.provider_id and can_see_provider(viewer, r.provider_id)}
+    branch_ids = {r.branch_id for r in every if r.branch_id and r.provider_id in provider_ids}
     providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_(provider_ids))).all()) if provider_ids else {}
     branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids))).all()) if branch_ids else {}
-    return StaffOut(
+    last_login = dict(db.execute(select(AuditLog.actor_staff_id, func.max(AuditLog.occurred_at)).where(
+        AuditLog.actor_staff_id.in_(ids), AuditLog.action == "auth.login", AuditLog.outcome == "SUCCESS").group_by(AuditLog.actor_staff_id)).all())
+    return [StaffOut(
         staff_id=s.staff_id, staff_code=s.staff_code, full_name=s.full_name, email=s.email, phone=s.phone,
         status=s.status, email_verified=s.email_verified_at is not None,
         assignments=[AssignmentOut.model_validate(r).model_copy(update={
-            "provider_name": providers.get(r.provider_id), "branch_name": branches.get(r.branch_id)}) for r in rows],
+            "provider_name": providers.get(r.provider_id), "branch_name": branches.get(r.branch_id)}) for r in rows_by.get(s.staff_id, [])],
         created_at=s.created_at,
-        last_login_at=db.scalar(select(func.max(AuditLog.occurred_at)).where(
-            AuditLog.actor_staff_id == s.staff_id, AuditLog.action == "auth.login", AuditLog.outcome == "SUCCESS")),
-    )
+        last_login_at=last_login.get(s.staff_id),
+    ) for s in people]
 
 
 def _target_roles(db: Session, staff_id: UUID) -> set[Role]:
@@ -243,7 +256,7 @@ def list_staff(q: str | None = Query(default=None, max_length=100), role: Role |
             Staff.staff_id.in_(select(TeacherSubjectAssignment.staff_id).where(
                 TeacherSubjectAssignment.branch_id == branch_id, TeacherSubjectAssignment.status == "ACTIVE"))))
     res = paginate(db, stmt.order_by(Staff.staff_code), page, page_size)
-    res["items"] = [_out(db, s, p) for s in res["items"]]
+    res["items"] = _outs(db, list(res["items"]), p)
     return res
 
 

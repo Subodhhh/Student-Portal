@@ -230,11 +230,12 @@ def student_candidates(db: Session, p: Principal, provider_id: UUID, branch_ids:
 
 
 def resolve(db: Session, a: TestAudienceIn, subject_ids=(), class_level: str | None = None,
-            report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
+            report: dict | None = None, unselected_takes_batch_subjects: bool = False) -> list[tuple[str, str, UUID | None]]:
     """`subject_ids`: the test's subjects; batch-based selections then reach only students who take all of them in that batch.
     `class_level`: the test's Class code (core/class_levels); batch-based selections then reach only enrollments of that Class."""
     return gen.resolve_audience(db, a.provider_id, a.branch_ids[0], "TARGETED", a.batch_ids, a.student_ids, branch_ids=a.whole_branch_ids,
-                                subject_ids=subject_ids, class_level=class_level, report=report)
+                                subject_ids=subject_ids, class_level=class_level, report=report,
+                                unselected_takes_batch_subjects=unselected_takes_batch_subjects)
 
 
 def class_note(report: dict, rows) -> str:
@@ -385,9 +386,11 @@ def _plan_summary(db: Session, plan: ExamPlan) -> dict:
     return _summaries(db, [plan])[0]
 
 
-def _summaries(db: Session, plans: list[ExamPlan]) -> list[dict]:
+def _summaries(db: Session, plans: list[ExamPlan], viewer: Principal | None = None) -> list[dict]:
     """Summaries of many plans in a fixed number of bulk queries (independent of how many plans: a remote database answers each
-    round trip in tens of milliseconds, so per-plan queries made the Scheduled Tests list take most of a minute)."""
+    round trip in tens of milliseconds, so per-plan queries made the Scheduled Tests list take most of a minute). With a viewer, each
+    exam's assigned count is limited to the students that viewer may see (the same scope as GET /exams/{id}/assignments, so a count
+    always matches the list behind it)."""
     if not plans:
         return []
     ids = [pl.plan_id for pl in plans]
@@ -416,8 +419,24 @@ def _summaries(db: Session, plans: list[ExamPlan]) -> list[dict]:
     students = dict(db.execute(select(ExamPlanStudent.plan_id, func.count()).where(ExamPlanStudent.plan_id.in_(ids)).group_by(ExamPlanStudent.plan_id)).all())
     assigned = dict(db.execute(select(StudentExamAssignment.exam_id, func.count()).where(StudentExamAssignment.exam_id.in_(exam_ids or [None]))
                                .group_by(StudentExamAssignment.exam_id)).all())
+    if viewer is not None:
+        from fastapi import HTTPException
+        from inst_exam.routes.exams import _in_branches, _prefetch, exam_access
+        _prefetch(db, exams.values())
+        for e in exams.values():
+            try:
+                scope = exam_access(db, viewer, "exam.read", e)
+            except HTTPException:
+                scope = frozenset()
+            if scope == frozenset():
+                assigned[e.exam_id] = 0
+            elif scope is not None:
+                assigned[e.exam_id] = db.scalar(select(func.count()).select_from(StudentExamAssignment)
+                                                .where(StudentExamAssignment.exam_id == e.exam_id, _in_branches(scope))) or 0
     providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({pl.provider_id for pl in plans}))).all())
     homes = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({pl.branch_id for pl in plans}))).all())
+    # a unified Global Test plan is filed under an anchor provider/branch that does not own it: shown as the Global Test instead
+    unified_ids = set(db.scalars(select(ExamPlan.plan_id).where(ExamPlan.plan_id.in_(ids), unified.unified_plan_clause(ExamPlan.plan_id))))
     out = []
     for plan in plans:
         exam, job = exams.get(plan.plan_id), jobs.get(plan.plan_id)
@@ -435,10 +454,14 @@ def _summaries(db: Session, plans: list[ExamPlan]) -> list[dict]:
             state = "NOT_PUBLISHED"
         out.append({"plan_id": plan.plan_id, "test_type": test_type(plan), "series_id": plan.series_id, "global_test_id": plan.global_test_id,
                     "exam_id": exam.exam_id if exam else None, "exam_version_id": ev.exam_version_id if ev else None,
-                    "name": plan.name, "state": state, "exam_status": exam.status if exam else None, "delivery_status": ob.status if ob else None,
+                    "name": plan.name, "state": state, "plan_status": plan.status,
+                    "exam_status": exam.status if exam else None, "delivery_status": ob.status if ob else None,
                     "job_status": job.status if job else None,
                     "error": (job.error if job and job.status != "SUCCEEDED" else None) or (exam.cancelled_reason if exam else None),
-                    "provider_id": plan.provider_id, "provider_name": providers.get(plan.provider_id), "home_branch": homes.get(plan.branch_id),
+                    "unified_global": plan.plan_id in unified_ids,
+                    "provider_id": None if plan.plan_id in unified_ids else plan.provider_id,
+                    "provider_name": "Global Test" if plan.plan_id in unified_ids else providers.get(plan.provider_id),
+                    "home_branch": None if plan.plan_id in unified_ids else homes.get(plan.branch_id),
                     "start_at": ev.start_at if ev else plan.start_at, "end_at": ev.end_at if ev else plan.end_at, "duration_minutes": plan.duration_minutes,
                     "subjects": subjects.get(plan.plan_id, []),
                     "audience": {"type": plan.audience_type, "branches": sorted(branches.get(plan.plan_id, [])), "batches": sorted(batches.get(plan.plan_id, [])),
@@ -578,7 +601,7 @@ def list_tests(provider_id: UUID | None = None, test_type: str | None = Query(de
     visible = visible_plans(db, p, db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all())
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
     chunk = visible[(page - 1) * page_size: page * page_size]
-    return {"items": _summaries(db, chunk), "total": len(visible), "page": page, "page_size": page_size}
+    return {"items": _summaries(db, chunk, viewer=p), "total": len(visible), "page": page, "page_size": page_size}
 
 
 @router.get("/tests/papers")

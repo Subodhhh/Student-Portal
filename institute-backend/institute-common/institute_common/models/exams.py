@@ -2,7 +2,8 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import (Boolean, CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, Text,
+                        UniqueConstraint, text)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from institute_common.core.taxonomy import sql_in
@@ -598,3 +599,48 @@ class GlobalPaperSubmission(Base):
     withdrawn_by: Mapped[UUID | None] = mapped_column()
     withdrawn_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     withdraw_reason: Mapped[str | None] = mapped_column(String(1000))
+
+
+GLOBAL_SUBJECT_STATUSES = ("PAPER", "NOT_ENROLLED", "NO_SUBMISSION", "NOT_APPROVED", "NOT_COVERED", "CONFLICT")
+
+
+class GlobalTestStudent(Base):
+    """One eligible student of one Global Test date: at most ONE row per (occurrence, student), so at most one unified exam per student
+    and date (the database enforces it). plan_id/exam_id point at the unified plan and exam the student was given; enrollment_id is a
+    reference enrollment for the assignment row only (it grants nothing)."""
+
+    __tablename__ = "global_test_students"
+    __table_args__ = (PrimaryKeyConstraint("occurrence_id", "student_id", name="pk_global_test_students"),
+                      Index("ix_global_test_students_plan", "plan_id"))
+
+    occurrence_id: Mapped[UUID] = mapped_column(ForeignKey("global_test_occurrences.occurrence_id"), nullable=False)
+    student_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    enrollment_id: Mapped[str | None] = mapped_column(String(64))
+    plan_id: Mapped[UUID | None] = mapped_column(ForeignKey("exam_plans.plan_id"))
+    exam_id: Mapped[UUID | None] = mapped_column(ForeignKey("exams.exam_id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GlobalTestStudentSubject(Base):
+    """What one student gets for one CONFIGURED subject of a Global Test date, in the configured order: the paper (status PAPER, with
+    its submission, version and provider) or the reason there is none. Every configured subject has a row for every eligible student."""
+
+    __tablename__ = "global_test_student_subjects"
+    __table_args__ = (
+        PrimaryKeyConstraint("occurrence_id", "student_id", "subject_id", name="pk_global_test_student_subjects"),
+        ForeignKeyConstraint(["occurrence_id", "student_id"], ["global_test_students.occurrence_id", "global_test_students.student_id"],
+                             name="fk_global_test_student_subjects_student"),
+        CheckConstraint(f"status IN ({sql_in(GLOBAL_SUBJECT_STATUSES)})", name="global_test_student_subjects_status_check"),
+        CheckConstraint("(status = 'PAPER') = (submission_id IS NOT NULL)", name="global_test_student_subjects_paper_check"),
+    )
+
+    occurrence_id: Mapped[UUID] = mapped_column(nullable=False)
+    student_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    submission_id: Mapped[UUID | None] = mapped_column(ForeignKey("global_paper_submissions.submission_id"))
+    paper_version_id: Mapped[UUID | None] = mapped_column()
+    provider_id: Mapped[UUID | None] = mapped_column()          # the paper's provider (PAPER only)
+    detail: Mapped[dict | None] = mapped_column(JSONType)        # internal: e.g. {"providers": [...]} of a conflict; never shown to students
+

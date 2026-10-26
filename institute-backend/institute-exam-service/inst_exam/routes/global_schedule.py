@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from institute_common.clients.student_client import StudentClient, get_student_client
+from institute_common.clients.student_client import StudentClient, StudentServiceError, get_student_client
 from institute_common.core import audit
 from institute_common.core.class_levels import class_target
 from institute_common.core.roles import GLOBAL_ROLES, Role
@@ -124,8 +124,11 @@ def _occurrence(db: Session, p: Principal, occurrence_id: UUID, *, lock: bool = 
 
 
 def _subjects(db: Session, test_id: UUID) -> list[tuple[UUID, str]]:
-    return list(db.execute(select(GlobalTestSubject.subject_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
-                           .where(GlobalTestSubject.test_id == test_id).order_by(GlobalTestSubject.position)))
+    cache = db.info.setdefault("gs_subjects", {})           # per request: a list asks once per date of the same test
+    if test_id not in cache:
+        cache[test_id] = list(db.execute(select(GlobalTestSubject.subject_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
+                                         .where(GlobalTestSubject.test_id == test_id).order_by(GlobalTestSubject.position)))
+    return cache[test_id]
 
 
 def _provider_staff(p: Principal) -> bool:
@@ -138,7 +141,10 @@ def _my_providers(p: Principal) -> set[UUID]:
 
 def _my_subjects(db: Session, p: Principal, provider_id: UUID) -> set[UUID]:
     """Subjects the caller may submit for at this provider: all the provider offers (its admins), the taught ones (teachers)."""
-    offered = {s for (s,) in db.execute(select(ProviderSubject.subject_id).where(ProviderSubject.provider_id == provider_id))}
+    cache = db.info.setdefault("gs_offered", {})            # per request: asked for every date of a list
+    if provider_id not in cache:
+        cache[provider_id] = {s for (s,) in db.execute(select(ProviderSubject.subject_id).where(ProviderSubject.provider_id == provider_id))}
+    offered = cache[provider_id]
     if p.can(UPLOAD, provider_id=provider_id, exclude_roles=(Role.TEACHER, Role.BRANCH_ADMIN)) or any(
             Role(a.role) == Role.BRANCH_ADMIN and a.provider_id == provider_id for a in p.assignments):
         return offered
@@ -175,9 +181,11 @@ def _open(test: GlobalTest, occ: GlobalTestOccurrence) -> bool:
     return test.status == "PUBLISHED" and occ.status == "PUBLISHED" and occ.generated_at is None and utcnow() < gg.deadline(test, occ)
 
 
-def _occ_out(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalTest, *, detail: bool = False) -> dict:
-    subs = [s for s in db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id)
-                                  .order_by(GlobalPaperSubmission.submitted_at)) if _may_see(p, s)]
+def _occ_out(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalTest, *, detail: bool = False, all_subs=None) -> dict:
+    if all_subs is None:
+        all_subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id)
+                              .order_by(GlobalPaperSubmission.submitted_at)).all()
+    subs = [s for s in all_subs if _may_see(p, s)]
     subjects = _subjects(db, test.test_id)
     mine = set()
     if _provider_staff(p):
@@ -388,7 +396,13 @@ def global_schedule(when: str = Query(default="upcoming", pattern="^(upcoming|pa
         if applies[test.test_id]:
             rows.append((occ, test))
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
-    return {"items": [_occ_out(db, p, o, t) for o, t in rows[(page - 1) * page_size: page * page_size]], "total": len(rows), "page": page,
+    shown = rows[(page - 1) * page_size: page * page_size]
+    subs: dict[UUID, list] = {o.occurrence_id: [] for o, _t in shown}
+    if shown:                                  # the page's submissions in one statement, not one per date
+        for sub in db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id.in_(list(subs)))
+                              .order_by(GlobalPaperSubmission.submitted_at)):
+            subs[sub.occurrence_id].append(sub)
+    return {"items": [_occ_out(db, p, o, t, all_subs=subs[o.occurrence_id]) for o, t in shown], "total": len(rows), "page": page,
             "page_size": page_size}
 
 
@@ -413,6 +427,71 @@ def get_occurrence(occurrence_id: UUID, p: Principal = Depends(get_principal), d
                 continue
             out["exams"].append({"exam_id": e.exam_id, "name": e.name, "status": e.status, "assigned": assigned})
     return out
+
+
+@router.get("/global-occurrences/{occurrence_id}/student-subjects")
+def student_subjects(occurrence_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+                     sc: StudentClient = Depends(get_student_client)):
+    """Per eligible student of a generated date: every configured subject in order, with the paper's institute or the reason there is
+    none, and the student's one exam. Platform roles see everything. Provider and branch admins see only students enrolled with them
+    (in their branches) and only the subjects attributable to their institute: its own papers, and missing/conflicting subjects it is
+    involved in; never another institute's papers. Teachers are refused (they see their students' results on the exam pages)."""
+    from institute_common.models.exams import Exam, GlobalTestStudent, GlobalTestStudentSubject
+    from institute_common.models.org import Enrollment
+    from inst_exam.services.global_layout import message
+    occ, t = _occurrence(db, p, occurrence_id)
+    platform = _is_platform(p)
+    mine: dict[UUID, set[UUID] | None] = {}                       # provider -> branches the caller sees (None = all of them)
+    if not platform:
+        for a in p.assignments:
+            role = Role(a.role)
+            if a.provider_id and role in (Role.PROVIDER_ADMIN, Role.BRANCH_ADMIN) and p.can("exam.read", provider_id=a.provider_id, branch_id=a.branch_id):
+                if role == Role.PROVIDER_ADMIN:
+                    mine[a.provider_id] = None
+                elif mine.get(a.provider_id, set()) is not None:
+                    mine.setdefault(a.provider_id, set()).add(a.branch_id)
+        if not mine:
+            audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": "exam.read", "occurrence_id": str(occurrence_id)})
+            raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
+    subjects = _subjects(db, t.test_id)
+    rows = db.execute(select(GlobalTestStudent, Exam.status).outerjoin(Exam, Exam.exam_id == GlobalTestStudent.exam_id)
+                      .where(GlobalTestStudent.occurrence_id == occurrence_id).order_by(GlobalTestStudent.student_id)).all()
+    if not platform:
+        enrolled: dict[str, set[UUID]] = {}
+        for sid, prov, br in db.execute(select(Enrollment.student_id, Enrollment.provider_id, Enrollment.branch_id)
+                                        .where(Enrollment.student_id.in_([r.student_id for r, _ in rows] or [""]), Enrollment.provider_id.in_(list(mine)))):
+            if mine[prov] is None or br in mine[prov]:
+                enrolled.setdefault(sid, set()).add(prov)
+        rows = [(r, st) for r, st in rows if r.student_id in enrolled]
+    cells: dict[str, list] = {}
+    for c in db.scalars(select(GlobalTestStudentSubject).where(GlobalTestStudentSubject.occurrence_id == occurrence_id,
+                                                               GlobalTestStudentSubject.student_id.in_([r.student_id for r, _ in rows] or [""]))
+                        .order_by(GlobalTestStudentSubject.position)):
+        cells.setdefault(c.student_id, []).append(c)
+    names = dict(subjects)
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name)).all())
+    try:
+        people = daily._names(sc, [r.student_id for r, _ in rows][:200])
+    except Exception:  # noqa: BLE001  (names are a convenience; IDs are enough)
+        people = {}
+
+    def visible(c, sid) -> bool:
+        if platform:
+            return True
+        involved = {UUID(x) for x in (c.detail or {}).get("providers", [])}
+        return (c.status == "PAPER" and c.provider_id in enrolled[sid]) or (c.status != "PAPER" and bool(involved & enrolled[sid]))
+    out = []
+    for r, exam_status in rows:
+        st = people.get(r.student_id)
+        out.append({"student_id": r.student_id, "name": f"{st.first_name} {st.last_name}".strip() if st else None, "exam_id": r.exam_id,
+                    "exam_status": exam_status,
+                    "subjects": [{"subject_id": c.subject_id, "subject": names.get(c.subject_id), "position": c.position, "status": c.status,
+                                  "message": message(c.status, names.get(c.subject_id)) if c.status != "PAPER" else None,
+                                  "provider_name": providers.get(c.provider_id) if c.status == "PAPER" else None}
+                                 for c in cells.get(r.student_id, []) if visible(c, r.student_id)]})
+    return {"occurrence_id": occurrence_id, "generated": occ.generated_at is not None, "scope": "ALL" if platform else "PROVIDER",
+            "subjects": [{"subject_id": sid, "subject": name, "position": i} for i, (sid, name) in enumerate(subjects, start=1)],
+            "students": out}
 
 
 def coverage(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalTest) -> list[dict]:
@@ -442,6 +521,45 @@ def coverage(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
                         "students_covered": covered, "ambiguous": sum(1 for (_st, sj) in a["ambiguous"] if sj == sid),
                         "missing": not subs})
     return out
+
+
+def _named_page(sc, student_ids: list[str], page: int, page_size: int) -> dict:
+    ids = sorted(set(student_ids))
+    page, page_size = max(page, 1), min(max(page_size, 1), 200)
+    chunk = ids[(page - 1) * page_size: page * page_size]
+    try:
+        people = sc.get_many(chunk)
+    except StudentServiceError:
+        people = {}
+    return {"items": [{"student_id": sid, "name": f"{people[sid].first_name} {people[sid].last_name}".strip() if sid in people else None} for sid in chunk],
+            "total": len(ids), "page": page, "page_size": page_size}
+
+
+@router.get("/global-paper-submissions/{submission_id}/students")
+def submission_reach(submission_id: UUID, page: int = 1, page_size: int = 50, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+                        sc: StudentClient = Depends(get_student_client)):
+    """The students a submission reaches now: exactly the list behind its "N student(s) now" (same resolution, same visibility)."""
+    sub = db.get(GlobalPaperSubmission, submission_id)
+    if not sub or not _may_see(p, sub):
+        raise api_error(404, "NOT_FOUND", "Submission not found.")
+    ids = [sid for sid, _e, _b in gg.resolve_submission(db, sub)] if sub.status == "ACTIVE" else []
+    return {"submission_id": submission_id, **_named_page(sc, ids, page, page_size)}
+
+
+@router.get("/global-occurrences/{occurrence_id}/coverage/students")
+def coverage_students(occurrence_id: UUID, provider_id: UUID, subject_id: UUID, page: int = 1, page_size: int = 50,
+                      p: Principal = Depends(get_principal), db: Session = Depends(get_db), sc: StudentClient = Depends(get_student_client)):
+    """The students behind one coverage row's "students covered now" (same computation and the same provider/subject scope)."""
+    occ, test = _occurrence(db, p, occurrence_id)
+    if not _is_platform(p) and provider_id not in _my_providers(p):
+        raise api_error(404, "NOT_FOUND", "Coverage not found.")
+    offered = {s for (s,) in db.execute(select(ProviderSubject.subject_id).where(ProviderSubject.provider_id == provider_id))}
+    allowed = offered if _is_platform(p) else _my_subjects(db, p, provider_id)
+    if subject_id not in offered or subject_id not in allowed or subject_id not in {s for s, _ in _subjects(db, test.test_id)}:
+        raise api_error(404, "NOT_FOUND", "Coverage not found.")
+    a = gg.assignments(db, occ, provider_id)
+    ids = [sid for sid, per in a["papers"].items() if subject_id in per and _may_see(p, per[subject_id][0])]
+    return {"occurrence_id": occurrence_id, "provider_id": provider_id, "subject_id": subject_id, **_named_page(sc, ids, page, page_size)}
 
 
 # ------------------------------------------------------------------ provider staff: submit papers

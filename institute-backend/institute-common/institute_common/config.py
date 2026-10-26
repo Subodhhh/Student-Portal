@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     service_name: str = "institute"
     database_url: str
+    # a pooled connection idle longer than this is checked (one round trip) before reuse; recently used ones are reused directly
+    db_ping_after_idle_seconds: int = 30
     redis_url: str = ""                      # only the identity service uses Redis (sessions, MFA, rate limits)
     cors_origins: str = ""
     frontend_base_url: str = "http://localhost:5174"
