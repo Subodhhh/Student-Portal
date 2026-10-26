@@ -415,3 +415,5 @@
 .results-error {
   color: #dc2626;
 }
+.result-attempt-label { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #dbeafe; color: #1e40af; font-size: 0.75rem; }
+.result-attempt-label.superseded { background: #f1f5f9; color: #475569; }

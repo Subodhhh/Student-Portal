@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -10,6 +10,7 @@ import {
 } from "../../services/api";
 
 import "../../styles/test-attempt.css";
+import { enterFullscreen, useExamIntegrity, type IntegrityState } from "./examIntegrity";
 
 type QuestionStatus =
   | "not-visited"
@@ -52,7 +53,17 @@ type TestResponse = {
   start_at: string | null;
   end_at: string | null;
   status: string;
+  global_occurrence_id?: string | null;  // a unified Global Test
+  sections?: TestSection[] | null;       // every configured subject, in order (unified Global Test only)
   questions: ApiQuestion[];
+};
+
+type TestSection = {
+  position: number;
+  subject: string;
+  status: string;                // PAPER, or why there is no paper for this student
+  message: string | null;
+  question_count: number;
 };
 
 type AttemptResponse = {
@@ -115,6 +126,19 @@ function TestAttemptPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // Exam integrity: the rules are accepted (and fullscreen offered) before the attempt starts or resumes; warnings are counted by the
+  // server, which submits the attempt automatically at its threshold.
+  const [rulesAccepted, setRulesAccepted] = useState(false);
+  const [autoSubmitted, setAutoSubmitted] = useState<IntegrityState | null>(null);
+  const [reviewMessage, setReviewMessage] = useState("");
+  const [reviewSent, setReviewSent] = useState<string>("");
+  const onAutoSubmitted = useCallback((s: IntegrityState) => {
+    setAutoSubmitted(s);
+    setSubmitted(true);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => { /* already left */ });
+  }, []);
+  const integrity = useExamIntegrity(ATTEMPT_API_URL, attemptId, rulesAccepted && !submitted, onAutoSubmitted);
+
   /*
    * Subjects come directly from the questions returned by the API.
    *
@@ -134,6 +158,10 @@ function TestAttemptPage() {
    * If DB has one subject, only that one appears.
    */
   const sections = useMemo(() => {
+    // A unified Global Test shows every configured subject in the configured order, with or without a paper.
+    if (test?.sections?.length) {
+      return ["All Sections", ...[...test.sections].sort((a, b) => a.position - b.position).map((section) => section.subject)];
+    }
     const subjects = Array.from(
       new Set(
         questions
@@ -143,7 +171,12 @@ function TestAttemptPage() {
     );
 
     return ["All Sections", ...subjects];
-  }, [questions]);
+  }, [questions, test]);
+
+  // the selected subject has no paper for this student: its tab explains why instead of showing a question
+  const emptySection = test?.sections?.find(
+    (section) => section.subject === selectedSection && section.status !== "PAPER"
+  );
 
   const questionStatusCounts = useMemo(() => {
    return {
@@ -188,6 +221,10 @@ function TestAttemptPage() {
    */
   useEffect(() => {
     async function loadTestAndAttempt() {
+      if (!rulesAccepted) {
+        return;                                   // nothing starts (no timer) before the student accepts the exam rules
+      }
+
       if (!currentTestId) {
         setError("Invalid test.");
         setLoading(false);
@@ -310,6 +347,17 @@ function TestAttemptPage() {
         );
 
         if (!attemptResponse.ok) {
+          // already finished (e.g. submitted automatically after warnings, then the page was reloaded): show that state, never an error
+          const finished = await fetch(`${ATTEMPT_API_URL}/attempts/test/${currentTestId}`, { credentials: "include" });
+          const last: AttemptResponse | null = finished.ok ? await finished.json() : null;
+          if (last && last.status !== "IN_PROGRESS") {
+            setAttemptId(last.attempt_id);
+            const st = await fetch(`${ATTEMPT_API_URL}/attempts/${last.attempt_id}/integrity`, { credentials: "include" });
+            const integrityState: IntegrityState | null = st.ok ? await st.json() : null;
+            if (integrityState?.submit_reason === "WARNING_THRESHOLD") setAutoSubmitted(integrityState);
+            setSubmitted(true);
+            return;
+          }
           throw new Error(
             `Failed to start attempt: ${attemptResponse.status}`
           );
@@ -399,7 +447,7 @@ function TestAttemptPage() {
     }
 
     loadTestAndAttempt();
-  }, [currentTestId]);
+  }, [currentTestId, rulesAccepted]);
 
   /*
    * Mark current question as visited.
@@ -725,9 +773,9 @@ function TestAttemptPage() {
     return;
   }
 
-  const confirmed = window.confirm(
+  const confirmed = integrity.withoutWarnings(() => window.confirm(
     "Are you sure you want to submit the test?"
-  );
+  ));
 
   if (!confirmed) {
     return;
@@ -778,6 +826,77 @@ function TestAttemptPage() {
     );
   }
 }
+
+  if (!rulesAccepted) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card test-attempt-rules">
+          <h2>Before you begin</h2>
+          <ul>
+            <li>The test opens in fullscreen. Stay on this page until you submit.</li>
+            <li>Leaving the test is recorded as a warning: switching to another tab or window, minimising, or leaving fullscreen.</li>
+            <li>
+              Several browser signals from one action count as one warning. When the warning limit is reached (shown at the top of the
+              test) the test is <strong>submitted automatically</strong> with the answers you have saved.
+            </li>
+            <li>Reloading the page or a short network interruption does not end your attempt; you continue where you left off.</li>
+            <li>Warnings are a record of what the browser reported, not a finding of cheating. An automatic submission can be reviewed by your institute.</li>
+          </ul>
+          <button
+            type="button"
+            onClick={() => {
+              enterFullscreen();
+              setRulesAccepted(true);
+            }}
+          >
+            I understand, start in fullscreen
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (autoSubmitted) {
+    const review = autoSubmitted.review;
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>Test submitted automatically</h2>
+          <p role="status">
+            Your test was submitted automatically because {autoSubmitted.warnings} warnings were recorded (leaving the test tab or
+            window, or leaving fullscreen). Your saved answers were submitted and are evaluated as usual. The submission is under
+            review: this is a record of browser activity, not a finding of cheating.
+          </p>
+          {review || reviewSent ? (
+            <p className="test-attempt-review-status">
+              Review requested{review ? ` (${review.status === "OPEN" ? "waiting for your institute" : review.status === "RETAKE_AUTHORIZED" ? "a retake was authorized" : "the submission was upheld"})` : ""}.
+              {review?.decision_reason ? ` Reason: ${review.decision_reason}` : ""}
+            </p>
+          ) : (
+            <form
+              className="test-attempt-review-form"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const r = await fetch(`${ATTEMPT_API_URL}/attempts/${autoSubmitted.attempt_id}/review`, {
+                  method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ message: reviewMessage }),
+                });
+                setReviewSent(r.ok ? "sent" : "");
+                if (!r.ok) setError("The review request could not be sent. Please try again.");
+              }}
+            >
+              <label htmlFor="review-message">If you believe this was unjustified, tell your institute what happened:</label>
+              <textarea id="review-message" value={reviewMessage} minLength={10} maxLength={2000} required
+                        onChange={(event) => setReviewMessage(event.target.value)} />
+              <button type="submit" disabled={reviewMessage.trim().length < 10}>Request a review</button>
+              {error && <p className="test-attempt-error">{error}</p>}
+            </form>
+          )}
+          <button type="button" onClick={() => navigate("/results")}>Go to Results</button>
+        </div>
+      </section>
+    );
+  }
 
   if (loading) {
     return (
@@ -879,14 +998,16 @@ function TestAttemptPage() {
       <header className="test-attempt-header">
         <div className="test-attempt-header-left">
           <span className="test-attempt-provider">
-            {test.provider.name}
+            {test.global_occurrence_id ? "Global Test" : test.provider.name}
           </span>
 
           <h1>{test.name}</h1>
 
-          <span>
-            {test.branch.name}
-          </span>
+          {!test.global_occurrence_id && (
+            <span>
+              {test.branch.name}
+            </span>
+          )}
         </div>
 
         <div className="test-attempt-header-right">
@@ -907,6 +1028,18 @@ function TestAttemptPage() {
           </strong>
         </div>
       </header>
+
+      {integrity.state && (
+        <div className={integrity.state.warnings > 0 ? "test-attempt-warnings active" : "test-attempt-warnings"} role="status">
+          Warnings: {integrity.state.warnings} / {integrity.state.threshold}.{" "}
+          {integrity.state.warnings > 0
+            ? `Leaving the test again counts as another warning; at ${integrity.state.threshold} the test is submitted automatically.`
+            : "Stay on this page; leaving the test or fullscreen is recorded."}
+          {!document.fullscreenElement && (
+            <button type="button" className="test-attempt-fullscreen" onClick={() => enterFullscreen()}>Return to fullscreen</button>
+          )}
+        </div>
+      )}
 
       <div className="test-attempt-sections">
         {sections.map((section) => (
@@ -929,6 +1062,13 @@ function TestAttemptPage() {
 
       <div className="test-attempt-content">
         <main className="test-attempt-question-area">
+          {emptySection ? (
+            <div className="test-attempt-empty-section" role="status">
+              <h2>{emptySection.subject}</h2>
+              <p>{emptySection.message ?? "No paper is available to you for this subject."}</p>
+            </div>
+          ) : (
+          <>
           <div className="test-attempt-question-header">
             <div>
               <span>
@@ -1059,6 +1199,8 @@ function TestAttemptPage() {
               </button>
             </div>
           </div>
+          </>
+          )}
         </main>
 
         <aside className="test-attempt-sidebar">

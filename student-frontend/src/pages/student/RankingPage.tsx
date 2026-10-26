@@ -14,16 +14,29 @@ type RankingItem = {
   student_id: string;
   student_name: string;
   obtained_marks: number;
+  max_marks?: number | null;    // Global Test: the marks delivered to that student
+  percentage?: number | null;   // Global Test: what the ranking is based on
 };
 
-type RankingResponse = {
-  test_id: string;
-  my_student_id: string;
-  my_rank: number | null;
+type Board = {
   total_students: number;
+  my_rank: number | null;
   my_score: number | null;
+  my_max_marks?: number | null;
+  my_percentage?: number | null;
   leaderboard: RankingItem[];
 };
+
+type SubjectRanking = Board & { subject: string };
+
+type RankingResponse = Board & {
+  test_id: string;
+  my_student_id: string;
+  occurrence_id?: string | null;      // a Global Test: one ranking for the whole occurrence
+  subjects?: SubjectRanking[] | null; // one ranking per configured subject, in order
+};
+
+const OVERALL = "Overall";
 
 const RESULT_API_URL =
   import.meta.env.VITE_RESULT_API_URL ||
@@ -37,6 +50,7 @@ function RankingPage() {
   const [tests, setTests] = useState<Result[]>([]);
   const [selectedTestId, setSelectedTestId] = useState("");
   const [ranking, setRanking] = useState<RankingResponse | null>(null);
+  const [tab, setTab] = useState(OVERALL);
 
   const [loadingTests, setLoadingTests] = useState(true);
   const [loadingRanking, setLoadingRanking] = useState(false);
@@ -104,6 +118,7 @@ function RankingPage() {
         const data: RankingResponse = await response.json();
 
         setRanking(data);
+        setTab(OVERALL);
       } catch (err) {
         setRanking(null);
         setError(
@@ -153,6 +168,12 @@ function RankingPage() {
   const selectedTest = tests.find(
     (test) => test.test_id === selectedTestId
   );
+
+  const global = Boolean(ranking?.occurrence_id);
+  const board: Board | null =
+    ranking && tab !== OVERALL
+      ? ranking.subjects?.find((s) => s.subject === tab) ?? ranking
+      : ranking;
 
   if (!selectedTest) {
     return (
@@ -210,17 +231,21 @@ function RankingPage() {
             </div>
 
             <div>
-              <span>Your Score</span>
+              <span>Your Score{global && tab !== OVERALL ? ` (${tab})` : ""}</span>
               <strong>
-                {ranking.my_score ?? 0} / {selectedTest.total_marks}
+                {global
+                  ? board?.my_score === null || board?.my_score === undefined
+                    ? "No paper"
+                    : `${board.my_score} / ${board.my_max_marks} (${board.my_percentage}%)`
+                  : `${ranking.my_score ?? 0} / ${selectedTest.total_marks}`}
               </strong>
             </div>
 
             <div>
               <span>Your Rank</span>
               <strong>
-                {ranking.my_rank
-                  ? `#${ranking.my_rank}`
+                {board?.my_rank
+                  ? `#${board.my_rank}`
                   : "Not ranked"}
               </strong>
             </div>
@@ -228,17 +253,38 @@ function RankingPage() {
             <div>
               <span>Participants</span>
               <strong>
-                {ranking.total_students}
+                {board?.total_students ?? 0}
               </strong>
             </div>
           </section>
 
+          {global && ranking.subjects && (
+            <div className="ranking-tabs" role="tablist" aria-label="Ranking">
+              {[OVERALL, ...ranking.subjects.map((s) => s.subject)].map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === name}
+                  className={tab === name ? "ranking-tab active" : "ranking-tab"}
+                  onClick={() => setTab(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
+
           <section className="ranking-panel">
             <div className="ranking-panel-header">
               <div>
-                <h3>Test Ranking</h3>
+                <h3>{global ? (tab === OVERALL ? "Overall Ranking" : `${tab} Ranking`) : "Test Ranking"}</h3>
                 <p>
-                  Global ranking for {selectedTest.test_name}
+                  {global
+                    ? tab === OVERALL
+                      ? "Every student who submitted this Global Test date, ranked by percentage of the marks delivered to them."
+                      : `Students who received a ${tab} paper, ranked by their ${tab} percentage.`
+                    : `Global ranking for ${selectedTest.test_name}`}
                 </p>
               </div>
             </div>
@@ -250,11 +296,18 @@ function RankingPage() {
                     <th>Rank</th>
                     <th>Student</th>
                     <th>Score</th>
+                    {global && <th>Max</th>}
+                    {global && <th>%</th>}
                   </tr>
                 </thead>
 
                 <tbody>
-                  {ranking.leaderboard.map((student) => (
+                  {board && board.leaderboard.length === 0 && (
+                    <tr>
+                      <td colSpan={global ? 5 : 3}>Nobody who submitted this test received a {tab} paper.</td>
+                    </tr>
+                  )}
+                  {board?.leaderboard.map((student) => (
                     <tr
                       key={student.student_id}
                       className={
@@ -267,6 +320,8 @@ function RankingPage() {
                       <td>#{student.rank}</td>
                       <td>{student.student_name}</td>
                       <td>{student.obtained_marks}</td>
+                      {global && <td>{student.max_marks}</td>}
+                      {global && <td>{student.percentage}%</td>}
                     </tr>
                   ))}
                 </tbody>

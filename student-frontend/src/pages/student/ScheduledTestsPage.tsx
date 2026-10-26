@@ -8,6 +8,14 @@ import {
 
 import "../../styles/scheduled-tests.css";
 
+type TestSection = {
+  position: number;
+  subject: string;
+  status: string;                // PAPER, or why there is no paper for this student
+  message: string | null;
+  question_count: number;
+};
+
 type Test = {
   test_id: string;
   name: string;
@@ -19,6 +27,7 @@ type Test = {
   end_at: string | null;
   status: string;
   global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
+  sections?: TestSection[] | null;       // every configured subject, in order (unified Global Test only)
 
   provider: {
     provider_id: string;
@@ -551,7 +560,7 @@ function ScheduledTestsPage() {
                     <span
                       className={`scheduled-test-status scheduled-test-status-${activeFilter.toLowerCase()}`}
                     >
-                      {activeFilter}
+                      {test.total_questions === 0 && activeFilter !== "Upcoming" ? "Unavailable" : activeFilter}
                     </span>
                   </div>
 
@@ -592,7 +601,17 @@ function ScheduledTestsPage() {
                 </div>
 
                 <div className="scheduled-test-action">
-                  {activeFilter === "Active" && (
+                  {activeFilter === "Active" && test.total_questions === 0 && (
+                    // a Global Test card without any paper for this student: it explains each subject, nothing to start
+                    <>
+                      <span className="scheduled-test-unavailable">No paper available</span>
+                      <button type="button" className="scheduled-test-details-button" onClick={() => openDetails(test.test_id)}>
+                        View Details
+                      </button>
+                    </>
+                  )}
+
+                  {activeFilter === "Active" && test.total_questions > 0 && (
                     <button
                       type="button"
                       className={

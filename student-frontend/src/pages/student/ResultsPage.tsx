@@ -13,6 +13,8 @@ type Result = {
   student_id: string;
   test_name: string;
   global_occurrence_id?: string | null;  // a unified Global Test: papers from several of your institutes, owned by none of them alone
+  is_retake?: boolean;                   // an attempt your institute authorized after a review
+  superseded?: boolean;                  // replaced by that authorized retake (kept for the record; not your official result)
   provider_id: string;
   provider_name: string;
   branch_id: string;
@@ -225,6 +227,8 @@ function ResultsPage() {
                 </div>
 
                 <h3>{result.test_name}</h3>
+                {result.is_retake && <span className="result-attempt-label">Authorized retake</span>}
+                {result.superseded && <span className="result-attempt-label superseded">Superseded by an authorized retake (not official)</span>}
 
                 <p>
                   {result.branch_name}
