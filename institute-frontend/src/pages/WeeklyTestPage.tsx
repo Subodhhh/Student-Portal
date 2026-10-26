@@ -9,6 +9,7 @@ import { Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, Field
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import { audienceBody, audienceReady, emptyAudience, newRequestKey, subjectsInAll, type AudienceState, type CheckError, type ScheduledTest, type ScopeResponse } from "../services/createTest";
+import { StudentCount } from "../components/StudentCount";
 
 // Test -> Weekly Test: one month of recurring tests planned at once. Same configuration as a Daily Test (audience, subjects and papers,
 // duration, marking) plus the recurrence. The server computes the dates, schedules one test per date (never twice, even on retry) and
@@ -283,7 +284,7 @@ export function WeeklyTestDetailPage() {
           { header: "Test", render: (t) => (t.exam_id ? <Link to={`/exams/${t.exam_id}`}>{t.name}</Link> : t.name) },
           { header: "State", render: (t) => <span title={t.error ?? undefined}><StatusBadge status={t.state} />{t.error && <div className="muted small">{t.error}</div>}</span> },
           { header: "Subjects", render: (t) => t.subjects.join(", ") },
-          { header: "Assigned", render: (t) => (t.exam_id ? t.assigned_students : "at generation") },
+          { header: "Assigned", render: (t) => (t.exam_id ? <StudentCount count={t.assigned_students} url={`/api/v1/exams/${t.exam_id}/assignments`} title={`Students assigned to ${t.name}`} context="The students this exam is assigned to that you may see, with their attempt status." /> : "at generation") },
         ]} />
       {cancelling && (
         <ConfirmDialog title={`Cancel the remaining tests of “${d.name}”?`} danger confirmLabel="Cancel remaining tests" busy={act.busy}

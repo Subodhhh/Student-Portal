@@ -115,4 +115,30 @@ describe("Global Tests for provider staff", () => {
     expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
     expect(screen.getByRole("link", { name: "National Mock (2030-01-05)" }).getAttribute("href")).toBe("/exams/e1");
   });
+
+  const generated = { ...occ({ submissions_open: false, generated_at: "2030-01-05T02:31:00Z" }), submission_list: [], coverage: [], exams: [] };
+  const LAYOUT = { scope: "ALL", subjects: [{ subject_id: "phy", subject: "Physics", position: 1 }, { subject_id: "chem", subject: "Chemistry", position: 2 }],
+    students: [{ student_id: "STU000010", name: "Asha K", exam_id: "e1", exam_status: "PUBLISHED", subjects: [
+      { subject_id: "phy", subject: "Physics", status: "PAPER", message: null, provider_name: "Alpha" },
+      { subject_id: "chem", subject: "Chemistry", status: "NOT_ENROLLED", message: "You are not enrolled in Chemistry with any of your institutes.", provider_name: null }] }] };
+
+  it("shows each student's subjects in the configured order with their paper or the reason", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-occurrences/o1": generated,
+      "/api/v1/global-occurrences/o1/student-subjects": LAYOUT });
+    renderApp("/tests/global/occurrences/o1");
+    const card = (await screen.findByRole("heading", { name: "Students" })).closest(".card") as HTMLElement;
+    const headers = within(card).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Student", "Physics", "Chemistry", "Exam"]);
+    expect(within(card).getByText("Alpha")).toBeTruthy();
+    expect(within(card).getByText("Not enrolled").closest("[title]")?.getAttribute("title")).toMatch(/not enrolled in Chemistry/);
+  });
+
+  it("never asks the layout for a teacher", async () => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["paper.read", "paper.upload", "exam.read"]), "/api/v1/global-occurrences/o1": generated,
+      "/api/v1/global-occurrences/o1/student-subjects": LAYOUT });
+    renderApp("/tests/global/occurrences/o1");
+    await screen.findByText(/every student received their own paper/);
+    expect(calls.some((c) => c.path.endsWith("/student-subjects"))).toBe(false);
+    expect(screen.queryByRole("heading", { name: "Students" })).toBeNull();
+  });
 });

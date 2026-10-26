@@ -28,11 +28,13 @@ export const ROUTE_TITLES: RouteTitle[] = [
   { path: "/tests/global/occurrences/:occurrenceId", title: "Global Tests" },
   { path: "/tests/global/:testId/schedule", title: "Global Tests" },
   { path: "/tests", title: "Scheduled Tests" },
-  { path: "/exam-plans", title: "Exam Plans" },
-  { path: "/exam-plans/new", title: "Exam Plans" },
+  { path: "/exam-plans", title: "Scheduled Tests" },        // redirects to /tests
+  { path: "/exam-plans/new", title: "Scheduled Tests" },    // the test-creation wizard
   { path: "/composite", title: "Composite Tests" },
-  { path: "/exams", title: "Exams & Results" },
-  { path: "/exams/:examId", title: "Exams & Results" },
+  { path: "/exams", title: "Exams" },
+  { path: "/exams/:examId", title: "Exams" },
+  { path: "/results", title: "Results" },
+  { path: "/results/:examId", title: "Results" },
   { path: "/audit", title: "Audit Log" },
   { path: "/settings", title: (role) => (role === "SUPER_ADMIN" ? "Platform Settings" : "Settings") },
   { path: "/support", title: "Support" },

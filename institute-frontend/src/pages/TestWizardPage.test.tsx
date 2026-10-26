@@ -43,7 +43,7 @@ describe("test creation wizard", () => {
   it("follows Choose test -> Audience -> Source -> Configure -> Review and schedules a new test from bank questions", async () => {
     const calls = stubApi(routes());
     renderApp("/exam-plans/new");
-    expect(await screen.findByRole("heading", { level: 1, name: "Exam Plans" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Scheduled Tests" })).toBeTruthy();
     const steps = within(await screen.findByRole("list", { name: "Steps" })).getAllByRole("listitem").map((li) => li.textContent?.replace(/^\d\s*/, ""));
     expect(steps).toEqual(["Choose test", "Audience", "Question source", "Configure", "Review & schedule"]);
     await next();                                                                       // Create a new test (default)

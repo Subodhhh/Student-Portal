@@ -27,7 +27,9 @@ describe("dashboard", () => {
     expect(within(card("Active providers")).getByText("4")).toBeTruthy();
     expect(within(card("Active providers")).getByText("1 inactive")).toBeTruthy();
     expect(card("Active providers").getAttribute("href")).toBe("/providers");
-    expect(within(card("Enrolled students")).getByText("130 active enrollments")).toBeTruthy();
+    const enrolled = screen.getByText("Enrolled students").closest(".stat") as HTMLElement;          // the count opens the list; the directory is a link
+    expect(within(enrolled).getByText(/130 active enrollments/)).toBeTruthy();
+    expect(within(enrolled).getByRole("link", { name: "Open the directory" }).getAttribute("href")).toBe("/students");
     expect(within(card("Platform subjects")).getByText("5 offered by providers")).toBeTruthy();
     expect(card("Unread notifications").getAttribute("href")).toBe("/notifications");
     expect(screen.getByText("Weekly Physics")).toBeTruthy();

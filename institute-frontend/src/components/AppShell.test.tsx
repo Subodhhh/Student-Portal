@@ -5,7 +5,7 @@ import { renderApp } from "../test/renderApp";
 
 const PROVIDERS = [{ provider_id: "p1", name: "Alpha Institute", status: "ACTIVE", email: "a@x.io" }, { provider_id: "p2", name: "Beta Classes", status: "ACTIVE", email: "b@x.io" }];
 const BRANCHES = [{ branch_id: "b1", provider_id: "p1", name: "Main", city: null, status: "ACTIVE" }, { branch_id: "b2", provider_id: "p1", name: "North", city: null, status: "ACTIVE" }];
-const SA_PERMS = ["provider.read", "staff.read", "enrollment.manage", "subject.manage", "batch.manage", "paper.read", "examplan.manage", "exam.read", "audit.read", "settings.platform", "billing.read"];
+const SA_PERMS = ["provider.read", "staff.read", "enrollment.manage", "subject.manage", "batch.manage", "paper.read", "examplan.manage", "exam.read", "result.read", "audit.read", "settings.platform", "billing.read"];
 
 function base(role: string, permissions: string[], extra: Record<string, unknown> = {}) {
   return stubApi({
@@ -59,7 +59,7 @@ describe("shared header", () => {
     const nav = await screen.findByRole("complementary", { name: "Primary" });
     const links = within(nav).getAllByRole("link").map((a) => a.textContent);
     expect(links).toEqual(["Dashboard", "Providers & Branches", "Role Management", "Students & Enrollments", "Subjects", "Question Bank & Papers",
-      "Global Tests", "Scheduled Tests", "Exam Plans", "Exams & Results", "Audit Log", "Platform Settings", "Support", "Billing", "My Account"]);
+      "Global Tests", "Scheduled Tests", "Exams", "Results", "Audit Log", "Platform Settings", "Support", "Billing", "My Account"]);
   });
 });
 

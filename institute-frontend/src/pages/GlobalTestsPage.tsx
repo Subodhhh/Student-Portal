@@ -8,6 +8,7 @@ import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import type { ScheduledTest } from "../services/createTest";
 import { GlobalScheduleList, GlobalTestDates, GlobalTestDefinition } from "./GlobalSchedulePages";
+import { StudentCount } from "../components/StudentCount";
 
 // Test -> Global Tests. The platform defines Global Tests (subjects, duration, marking) and schedules and publishes their dates centrally;
 // provider staff see the published dates that concern them and submit their own papers per date, subject and audience
@@ -238,7 +239,7 @@ export function GlobalTestDetailPage() {
             { header: "Provider / branch", render: (x) => [x.provider_name, x.home_branch].filter(Boolean).join(" · ") },
             { header: "Window", render: (x) => `${fmt(x.start_at)} – ${fmt(x.end_at)}` },
             { header: "State", render: (x) => <span title={x.error ?? undefined}><StatusBadge status={x.state} /></span> },
-            { header: "Assigned", render: (x) => (x.exam_id ? x.assigned_students : "at generation") },
+            { header: "Assigned", render: (x) => (x.exam_id ? <StudentCount count={x.assigned_students} url={`/api/v1/exams/${x.exam_id}/assignments`} title={`Students assigned to ${x.name}`} context="The students this exam is assigned to that you may see, with their attempt status." /> : "at generation") },
             { header: "", render: (x) => (!x.exam_id && x.state !== "CANCELLED" && can("exam.generate") && g.status === "PUBLISHED"
               ? <Button small variant="secondary" busy={act.busy} onClick={() => void generate(x)}>Generate now</Button> : null) },
           ]} />

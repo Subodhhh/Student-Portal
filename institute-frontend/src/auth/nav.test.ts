@@ -6,7 +6,7 @@ const labels = (permissions: string[], role?: Parameters<typeof visibleNav>[1]) 
 
 const ALL = [
   "provider.read", "staff.read", "enrollment.manage", "subject.manage", "batch.manage", "teaching.assign", "paper.read",
-  "examplan.manage", "exam.read", "audit.read", "settings.platform", "billing.read",
+  "examplan.manage", "exam.read", "result.read", "audit.read", "settings.platform", "billing.read",
 ];
 
 describe("navigation", () => {
@@ -20,8 +20,8 @@ describe("navigation", () => {
       "Question Bank & Papers",
       "Global Tests",
       "Scheduled Tests",
-      "Exam Plans",
-      "Exams & Results",
+      "Exams",
+      "Results",
       "Audit Log",
       "Platform Settings",
       "Support",
@@ -53,9 +53,10 @@ describe("navigation", () => {
   });
 
   it("shows teacher pages without unrelated admin pages", () => {
-    const result = labels(["paper.read", "exam.read", "question.read", "provider.read"], "TEACHER");
+    const result = labels(["paper.read", "exam.read", "result.read", "question.read", "provider.read"], "TEACHER");
     expect(result).toContain("Question Bank & Papers");
-    expect(result).toContain("Exams & Results");
+    expect(result).toContain("Exams");
+    expect(result).toContain("Results");
     expect(result).not.toContain("Role Management");
     expect(result).not.toContain("Billing");
     expect(result).not.toContain("Audit Log");

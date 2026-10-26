@@ -27,7 +27,7 @@ export type TestPaper = {
   published_version: { paper_version_id: string; version_no: number; question_count: number; total_marks: string } | null;
 };
 export type ScheduledTest = {
-  plan_id: string; test_type: TestType; series_id: string | null; global_test_id: string | null; exam_id: string | null; exam_version_id: string | null; name: string; state: string; exam_status: string | null; delivery_status: string | null;
+  plan_id: string; test_type: TestType; series_id: string | null; global_test_id: string | null; exam_id: string | null; exam_version_id: string | null; name: string; state: string; plan_status?: string; exam_status: string | null; delivery_status: string | null;
   error: string | null; provider_name: string | null; home_branch: string | null; start_at: string; end_at: string; duration_minutes: number; subjects: string[];
   audience: { type: string; branches: string[]; batches: string[]; students: number }; assigned_students: number; question_count: number | null; total_marks: string | null;
   marking: { mode: string; correct?: number; wrong?: number } | null; created_at: string;

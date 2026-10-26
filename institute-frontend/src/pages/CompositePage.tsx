@@ -63,7 +63,7 @@ function Requests({ providerId, branchId, subjectName }: { providerId: string; b
                   <ul className="plain">{r.slots.map((s) => <li key={s.slot_id}>{subjectName(s.subject_id)} · {providerName(s.provider_id)} <StatusBadge status={s.status} />{s.decline_reason ? <span className="small muted"> — {s.decline_reason}</span> : null}</li>)}</ul>) },
                 { header: "Status", render: (r) => <><StatusBadge status={r.status} />{r.respond_by && r.status === "OPEN" ? <div className="small muted">Respond by {new Date(r.respond_by).toLocaleString()}</div> : null}</> },
                 { header: "", render: (r) => (<div className="row">
-                  {r.status !== "CANCELLED" && r.slots.some((s) => s.status === "CONTRIBUTED") && <Link to="/exam-plans">Build exam plan</Link>}
+                  {r.status !== "CANCELLED" && r.slots.some((s) => s.status === "CONTRIBUTED") && <Link to="/exam-plans/new">Build a test</Link>}
                   {r.status === "OPEN" && <Button variant="secondary" small onClick={() => setCancelling(r)}>Cancel</Button>}</div>) },
               ]} />
             <Pagination page={page} pageSize={10} total={list.data?.total ?? 0} onChange={setPage} />
