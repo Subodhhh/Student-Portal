@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.official import OFFICIAL_SQL
 from app.models.test_result import TestResult
 
 
@@ -107,7 +108,7 @@ def create_result(db: Session, result: TestResult):
 
 
 def get_student_results(db: Session, student_id: str):
-    query = text("""
+    query = text(f"""
         SELECT
             r.result_id,
             r.attempt_id,
@@ -122,6 +123,9 @@ def get_student_results(db: Session, student_id: str):
             r.obtained_marks,
             r.accuracy,
             r.created_at,
+            -- exam integrity: an authorized retake, and an original whose retake was evaluated (kept, no longer official)
+            EXISTS (SELECT 1 FROM test_attempts ta WHERE ta.attempt_id = r.attempt_id AND ta.retake_of_attempt_id IS NOT NULL) AS is_retake,
+            NOT ({OFFICIAL_SQL}) AS superseded,
 
             t.name AS test_name,
             t.duration_minutes,

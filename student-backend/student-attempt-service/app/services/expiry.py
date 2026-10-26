@@ -19,7 +19,7 @@ def finalize_expired() -> int:
     try:
         n = db.execute(text("""
             UPDATE test_attempts
-               SET status = 'AUTO_SUBMITTED', submitted_at = expires_at
+               SET status = 'AUTO_SUBMITTED', submitted_at = expires_at, submit_reason = 'TIME_EXPIRED'
              WHERE status = 'IN_PROGRESS' AND expires_at <= NOW()
         """)).rowcount
         db.commit()

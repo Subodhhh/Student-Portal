@@ -19,6 +19,8 @@ H = {"X-Service-Key": "k-res"}
 def env(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:   # owned by the attempt service; the official-result rule reads it
+        conn.exec_driver_sql("CREATE TABLE test_attempts (attempt_id CHAR(32) PRIMARY KEY, retake_of_attempt_id CHAR(32))")
     Session = sessionmaker(bind=engine, autoflush=False)
 
     def override():
@@ -71,7 +73,7 @@ def test_subject_results_score_each_subject_with_the_evaluation_rules(env, monke
     c, Session = env
     t = uuid.uuid4()
     seed(Session, t, [("STU000001", 7)])
-    q = lambda subject, right, chosen: {"subject": subject, "marks": 4, "negative_marks": 1, "correct_answer": right, "selected_answer": chosen}  # noqa: E731
+    q = lambda subject, right, chosen: {"subject": subject, "marks": 4, "negative_marks": 1, "correct_answer": right, "selected_answer": chosen}
     answers = [q("Physics", "A", " a "), q("Physics", "B", "C"), q("Physics", "C", None), q("Chemistry", "D", "d"), q(None, "A", "A")]
     monkeypatch.setattr(internal, "get_questions_with_answers", lambda db, attempt_id: answers)
     [row] = c.get(f"/internal/v1/tests/{t}/results/subjects", headers=H).json()
@@ -81,3 +83,30 @@ def test_subject_results_score_each_subject_with_the_evaluation_rules(env, monke
             by["Physics"]["unanswered_questions"]) == (3, 12, 1, 1, 1)
     assert by["Chemistry"]["obtained_marks"] == 4 and by["Other"]["obtained_marks"] == 4
     assert c.get(f"/internal/v1/tests/{t}/results/subjects").status_code == 401             # service key required
+
+
+def test_result_details_list_every_configured_subject_in_order_and_reconcile(monkeypatch):
+    """A unified Global Test result: subjects in the configured order, a subject without a paper shown as unavailable with no
+    questions and no marks, per-subject marks (+4 right, -1 wrong, 0 unanswered) adding up to the overall result."""
+    from app.services import result_service as rs
+    test_id, attempt_id = uuid.uuid4(), uuid.uuid4()
+    q = lambda i, subject, right, chosen: {"question_id": uuid.UUID(int=i), "question_order": i, "subject": subject, "question_text": f"Q{i}",
+                                          "question_type": "MCQ", "option_a": "a", "option_b": "b", "option_c": "c", "option_d": "d",
+                                          "correct_answer": right, "selected_answer": chosen, "marks": 4, "negative_marks": 1, "image_reference": None}
+    questions = [q(1, "Chemistry", "A", "A"), q(2, "Chemistry", "B", "C"), q(3, "Physics", "A", "A"), q(4, "Physics", "D", None), q(5, "Physics", "C", "C")]
+    sections = [{"position": 1, "subject": "Physics", "status": "PAPER", "message": None, "question_count": 3},
+                {"position": 2, "subject": "Chemistry", "status": "PAPER", "message": None, "question_count": 2},
+                {"position": 3, "subject": "Biology", "status": "NO_SUBMISSION", "message": "Your institute has not submitted a Biology paper.",
+                 "question_count": 0}]
+    monkeypatch.setattr(rs, "get_result", lambda db, attempt_id, student_id: {"test_id": test_id, "obtained_marks": 11, "total_marks": 20})
+    monkeypatch.setattr(rs, "get_review_window", lambda db, test_id: None)
+    monkeypatch.setattr(rs, "get_questions_with_answers", lambda db, attempt_id: questions)
+    monkeypatch.setattr(rs, "_sections", lambda db, tid: sections)
+    out = rs.get_result_details(db=None, attempt_id=attempt_id, student_id="STU000001")
+    subjects = [(s["subject"], s["status"], s["total_questions"], s["obtained_marks"], s["total_marks"]) for s in out["subjects"]]
+    assert subjects == [("Physics", "PAPER", 3, 8, 12), ("Chemistry", "PAPER", 2, 3, 8), ("Biology", "NO_SUBMISSION", 0, 0, 0)]
+    assert sum(s["obtained_marks"] for s in out["subjects"]) == 11 and sum(s["total_marks"] for s in out["subjects"]) == 20   # reconciles
+    assert out["subjects"][2]["message"].startswith("Your institute has not submitted")
+    assert [r["subject"] for r in out["questions"]] == ["Physics"] * 3 + ["Chemistry"] * 2                # review in the configured order
+    again = rs.get_result_details(db=None, attempt_id=attempt_id, student_id="STU000001")
+    assert [r["question_id"] for r in again["questions"]] == [r["question_id"] for r in out["questions"]]   # the same order every time

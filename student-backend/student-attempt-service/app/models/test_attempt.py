@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum as SQLEnum
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,4 +56,16 @@ class TestAttempt(Base):
         ),
         nullable=False,
         default=AttemptStatus.IN_PROGRESS,
+    )
+
+    # Exam integrity (see the attempt_integrity_reviews migration): why the attempt was submitted, the review state of a warning
+    # auto-submission, and the original attempt of an authorized retake. NULL for attempts made before.
+    submit_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    retake_of_attempt_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_attempts.attempt_id"),
+        nullable=True,
     )

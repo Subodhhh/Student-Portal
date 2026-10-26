@@ -18,6 +18,14 @@ class BranchResponse(BaseModel):
     state: str | None
 
 
+class SectionResponse(BaseModel):
+    position: int
+    subject: str
+    status: str                       # PAPER, or NOT_ENROLLED / NO_SUBMISSION / NOT_APPROVED / NOT_COVERED / CONFLICT
+    message: str | None = None        # why there is no paper (None for PAPER)
+    question_count: int = 0
+
+
 class TestResponse(BaseModel):
     test_id: UUID
     provider: ProviderResponse
@@ -31,6 +39,7 @@ class TestResponse(BaseModel):
     end_at: datetime | None
     status: str
     global_occurrence_id: UUID | None = None      # a unified Global Test (shown as the Global Test, not as the provider above)
+    sections: list[SectionResponse] | None = None  # unified Global Test: every configured subject in order (None for other tests)
 
 
 class TestStartResponse(TestResponse):

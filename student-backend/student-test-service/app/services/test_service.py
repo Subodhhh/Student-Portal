@@ -7,15 +7,15 @@ from sqlalchemy.orm import Session
 from app.repositories.question_repository import (
     get_questions_by_test,
 )
-
 from app.repositories.test_repository import (
     get_active_tests,
-    get_scheduled_tests,
     get_missed_tests,
+    get_scheduled_tests,
     get_test_by_id,
     get_test_for_student,
     has_running_attempt,
 )
+from app.services.question_order import section_order
 
 
 def session_zone(db: Session):
@@ -65,6 +65,7 @@ def format_test(row, db: Session):
         "end_at": as_instant(db, row["end_at"]),
         "status": row["status"],
         "global_occurrence_id": row.get("global_occurrence_id"),   # set: a unified Global Test (show it as the Global Test, not a provider's)
+        "sections": row.get("sections"),        # unified Global Test: every configured subject in order (None for other tests)
     }
 
 
@@ -166,10 +167,8 @@ def get_test_for_start(
 
     test = format_test(row, db)
 
-    questions = get_questions_by_test(
-        db=db,
-        test_id=test_id,
-    )
+    questions = section_order(get_questions_by_test(db=db, test_id=test_id), test.get("sections"), student_id, test_id,
+                              subject_of=lambda q: q.subject, id_of=lambda q: q.question_id)
 
     test["questions"] = [
         {
