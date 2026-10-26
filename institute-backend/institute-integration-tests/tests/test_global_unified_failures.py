@@ -68,15 +68,15 @@ def test_a_failed_group_is_retried_and_nothing_is_duplicated(client, world, gs, 
     [first] = run(db_factory, t, occ)
     assert first["failed"] and occurrence(db_factory, occ)[0] is None                   # the date stays open for the next pass
     got = exams_by_student(db_factory, occ["occurrence_id"])
-    assert set(got) == {"STU000001", "STU000002"}                                         # the other groups were generated
+    assert set(got) == {"STU000001", "STU000002", "STU000003"}                            # the other groups were generated
     notes_after_first = len(notifications(db_factory))
     [second] = run(db_factory, t, occ)
     assert not second["failed"] and occurrence(db_factory, occ) [0] is not None and occurrence(db_factory, occ)[1] is None
     got = exams_by_student(db_factory, occ["occurrence_id"])
-    assert {s: len(x) for s, x in got.items()} == {"STU000001": 1, "STU000002": 1, "STU000004": 1}
+    assert {s: len(x) for s, x in got.items()} == {"STU000001": 1, "STU000002": 1, "STU000003": 1, "STU000004": 1}
     deliver(db_factory)
     c = counts(db_factory)
-    assert (c["ExamPlan"], c["Exam"], c["StudentExamAssignment"], c["ExamOutbox"]) == (3, 3, 3, 3), c
+    assert (c["ExamPlan"], c["Exam"], c["StudentExamAssignment"], c["ExamOutbox"]) == (4, 4, 4, 4), c
     assert len(notifications(db_factory)) == notes_after_first                           # provider notices are not repeated
     assert run(db_factory, t, occ) == [] and counts(db_factory) == c
 
@@ -157,9 +157,9 @@ def test_two_workers_on_the_same_date_generate_it_once(client, world, gs, uni, d
     assert not errors, errors
     run(db_factory, t, occ)                                                               # a later pass finishes anything a loser left open
     got = exams_by_student(db_factory, occ["occurrence_id"])
-    assert {s: len(x) for s, x in got.items()} == {"STU000001": 1, "STU000002": 1, "STU000004": 1}, got
+    assert {s: len(x) for s, x in got.items()} == {"STU000001": 1, "STU000002": 1, "STU000003": 1, "STU000004": 1}, got
     deliver(db_factory)
     c = counts(db_factory)
-    assert (c["ExamPlan"], c["Exam"], c["StudentExamAssignment"], c["ExamOutbox"]) == (3, 3, 3, 3), c
+    assert (c["ExamPlan"], c["Exam"], c["StudentExamAssignment"], c["ExamOutbox"]) == (4, 4, 4, 4), c
     keys = [n["dedupe"] + ",".join(n["staff_ids"]) for n in notifications(db_factory)]
     assert len(keys) == len(set(keys))                                                    # no notification twice

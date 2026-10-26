@@ -444,14 +444,25 @@ with sync_playwright() as pw:
         ctx, page = student_sign_in(P["s3"])
 
         def chitra():
-            page.goto(SUI + "/tests")
-            page.wait_for_load_state("networkidle")
-            expect(page.get_by_text("National Mock")).to_have_count(0)
             page.goto(SUI + "/scheduled-tests")
-            page.wait_for_load_state("networkidle")
-            expect(page.get_by_text("National Mock")).to_have_count(0)
-            shot(page, "chitra-none")
-        step("a student with no paper for the date gets no Global Test (nothing guessed or borrowed)", page, chitra)
+            card = page.locator("article").filter(has_text="National Mock")
+            expect(card).to_have_count(1)                                                        # one card, nothing guessed or borrowed
+            expect(card.get_by_text("No paper available")).to_be_visible()
+            expect(card.get_by_role("button", name=re.compile("Start Test|Resume Test"))).to_have_count(0)
+            page.goto(SUI + "/tests")
+            card = page.locator("article").filter(has_text="National Mock")
+            expect(card.get_by_role("button", name=re.compile("Start Test|Resume Test"))).to_have_count(0)
+            card.get_by_role("button", name=re.compile("No paper available")).click()
+            page.wait_for_url(re.compile(r"/tests/[0-9a-f-]+$"))
+            items = page.locator(".test-details-sections li")
+            expect(items).to_have_count(len(P["subject_order"]))
+            check("her card lists every configured subject in order, each with the reason she has no paper",
+                  [items.nth(i).locator("strong").inner_text() for i in range(items.count())] == P["subject_order"]
+                  and "not approved in time" in page.locator(".test-details-sections").inner_text(), page.locator(".test-details-sections").inner_text(), page)
+            expect(page.get_by_text(re.compile("cannot be started"))).to_be_visible()
+            expect(page.get_by_role("button", name="Take Test")).to_have_count(0)
+            shot(page, "chitra-card")
+        step("a student with no paper for the date gets ONE Global Test card that explains each subject and cannot be started", page, chitra)
         ctx.close()
 
         print("Eligible student (Asha)")
@@ -490,8 +501,13 @@ with sync_playwright() as pw:
             tab = opened.value
             tab.set_default_timeout(20000)
             tab.wait_for_url(re.compile(rf"/tests/{P['asha_test']}/attempt"))
+            expect(tab.get_by_text("Before you begin")).to_be_visible()                          # exam rules before anything starts
+            tab.get_by_role("button", name="I understand, start in fullscreen").click()
             header = tab.locator(".test-attempt-question-header strong")
             expect(tab.locator(".test-attempt-question h2")).to_be_visible()
+            expect(tab.locator(".test-attempt-header h1")).to_have_text("National Mock")       # the canonical name, no provider or date
+            tabs = [t.strip() for t in tab.locator(".test-attempt-section").all_inner_texts()]
+            check("tabs: every configured subject, in the configured order", tabs == ["All Sections", *P["subject_order"]], tabs, tab)
 
             def index():
                 return int(re.search(r"Question (\d+) of", header.inner_text()).group(1))
@@ -499,10 +515,12 @@ with sync_playwright() as pw:
             check("one exam with the 9 questions of her three papers (4 Physics photo paper + 3 Chemistry from North, 2 Biology from the tutor)",
                   total == 9, total, tab)
             subjects_seen = []
+            stems = []
             answered = 0
             for i in range(1, total + 1):
                 expect(header).to_contain_text(f"Question {i} of")
                 stem = tab.locator(".test-attempt-question h2").inner_text().strip()
+                stems.append(stem)
                 subjects_seen.append("Biology" if stem.startswith("Ravi Biology") else "Chemistry" if stem.startswith("Pune Chemistry") else "Physics")
                 want = P["answers"].get(stem)
                 if want:
@@ -512,16 +530,20 @@ with sync_playwright() as pw:
                     tab.get_by_role("button", name="Save & Next").click()
                 if i == 2:                                                                       # resume: reload in the middle of the attempt
                     tab.reload()
+                    tab.get_by_role("button", name="I understand, start in fullscreen").click()     # resuming: rules again, same attempt
                     expect(tab.locator(".test-attempt-question h2")).to_be_visible()
                     while index() > 1:
                         tab.get_by_role("button", name="Previous").click()
                     for q in (1, 2):
                         stem_q = tab.locator(".test-attempt-question h2").inner_text().strip()
+                        check(f"after the reload question {q} is the same question as before", stem_q == stems[q - 1], (stem_q, stems[:2]), tab)
                         if P["answers"].get(stem_q):
                             expect(tab.locator(".test-attempt-option.selected")).to_have_count(1)   # the saved answer survived the reload
                         tab.get_by_role("button", name="Save & Next").click()
                         del q
-            groups = [x for i, x in enumerate(subjects_seen) if i == 0 or subjects_seen[i - 1] != x]   # the Student portal orders subjects by name
+            groups = [x for i, x in enumerate(subjects_seen) if i == 0 or subjects_seen[i - 1] != x]
+            check("subjects in the configured order; inside each, her own stable order (the one computed for her alone)",
+                  groups == P["subject_order"] and [x.strip() for x in P["expected_order"]] == stems, (groups, stems, P["expected_order"]), tab)
             check("answered 7 of 9 questions as planned, questions grouped by subject (4 Physics, 3 Chemistry, 2 Biology, each subject together)",
                   answered == 7 and len(groups) == 3 and {x: subjects_seen.count(x) for x in groups} == {"Physics": 4, "Chemistry": 3, "Biology": 2},
                   (answered, subjects_seen), tab)

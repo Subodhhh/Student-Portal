@@ -301,6 +301,10 @@ NEW_ROUTES = {
     ("DELETE", f"{API}/global-occurrences/{{occurrence_id}}"), ("POST", f"{API}/global-occurrences/{{occurrence_id}}/cancel"),
     ("GET", f"{API}/global-occurrences/{{occurrence_id}}/scope"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/students"),
     ("GET", f"{API}/global-occurrences/{{occurrence_id}}/papers"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/submissions"),
+    ("GET", f"{API}/global-occurrences/{{occurrence_id}}/student-subjects"),
+    ("GET", f"{API}/exams/{{exam_id}}/integrity"), ("GET", f"{API}/exams/{{exam_id}}/integrity/{{attempt_id}}"),
+    ("POST", f"{API}/exams/{{exam_id}}/integrity/{{attempt_id}}/decision"),
+    ("GET", f"{API}/global-paper-submissions/{{submission_id}}/students"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/coverage/students"),
     ("POST", f"{API}/global-occurrences/{{occurrence_id}}/submissions"), ("POST", f"{API}/global-paper-submissions/{{submission_id}}/withdraw"),
     ("GET", f"{API}/global-schedule"),
     # photo papers: drafts from mobile photos with a separate answer key, previewed and confirmed before import

@@ -15,10 +15,10 @@ m = re.match(r"^postgresql(\+\w+)?://[^@/]*@(?P<host>[^:/]+)(:\d+)?$", sys.argv[
 if not m or m["host"] not in {"127.0.0.1", "localhost", "::1"}:
     sys.exit("PGBASE must look like postgresql+psycopg://user@127.0.0.1:port (local servers only)")
 PY
-ROOT="$(git rev-parse --show-toplevel)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"      # the repository this script belongs to, wherever it is run from
 PSQL_BASE="${PGBASE/postgresql+psycopg/postgresql}"
 SERVICES=(identity organization academics enrollment paper exam operations)
-NEW_TABLES='^(inst_.*_audit_spool|exam_notification_outbox|composite_.*|enrollment_batch_subjects|enrollment_academic_profiles|batch_academic_defaults|.*_alembic_version)$'
+NEW_TABLES='^(inst_.*_audit_spool|global_test_students|global_test_student_subjects|exam_notification_outbox|composite_.*|enrollment_batch_subjects|enrollment_academic_profiles|batch_academic_defaults|.*_alembic_version)$'
 
 prep() {   # $1 = database name: baseline students table + the real Student chains
   psql "$PSQL_BASE/postgres" -q -c "drop database if exists $1" -c "create database $1 encoding 'UTF8' template template0"

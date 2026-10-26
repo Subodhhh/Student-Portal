@@ -265,7 +265,11 @@ def test_a_class_change_affects_only_future_generation(client, world, cls, login
 
 def test_a_global_test_occurrence_uses_its_class(client, world, cls, login, db_factory):
     from inst_exam.services.global_generation import resolve_submission
+    from institute_common.models.academics import BatchSubject
     audience = aud(world, cls, batches=("batch_a",))
+    with db_factory() as db:                          # Global Tests: a membership without a selection takes its batch's subjects
+        db.add(BatchSubject(batch_id=cls["batch_a"], subject_id=cls["phy"]))
+        db.commit()
     with db_factory() as db:
         eleven = resolve_submission(db, SimpleNamespace(audience=audience, subject_id=cls["phy"]), "11TH")
         unmatchable = resolve_submission(db, SimpleNamespace(audience=audience, subject_id=cls["phy"]), "!unmatchable")
