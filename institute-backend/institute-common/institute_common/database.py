@@ -62,6 +62,9 @@ def _ping_if_idle(dbapi_connection, record, _proxy):
             cursor.execute("SELECT 1")
         finally:
             cursor.close()
+        # the driver opened a transaction for the ping: end it, so the connection is handed out idle like any other (a session that
+        # then switches to AUTOCOMMIT, e.g. the identity check, cannot do that inside a transaction)
+        dbapi_connection.rollback()
     except Exception as e:  # noqa: BLE001 - any failure means the connection cannot be trusted
         raise exc.DisconnectionError() from e
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
