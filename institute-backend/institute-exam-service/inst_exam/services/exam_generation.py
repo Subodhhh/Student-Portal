@@ -244,6 +244,40 @@ def batch_subjects(db: Session, batch_ids) -> dict[UUID, set[UUID]]:
     return out
 
 
+def _snapshot(db: Session, provider_id: UUID) -> dict | None:
+    """One provider's resolution inputs in 6 statements, when the request opted in (db.info["audience_snapshot"]): a page that resolves
+    many submissions of the same providers (the Global date page) then applies resolve_audience's rules in memory instead of ~5 round
+    trips per submission. Generation and every other caller keep the query path."""
+    if not db.info.get("audience_snapshot"):
+        return None
+    cache = db.info.setdefault("audience_snapshot_data", {})
+    if provider_id not in cache:
+        # every provider the page announced (db.info["audience_snapshot_providers"]) in the same 6 statements
+        provs = sorted({provider_id, *db.info.get("audience_snapshot_providers", ())} - set(cache), key=str)
+        rows = db.execute(select(Enrollment.provider_id, Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id, EnrollmentBatch.batch_id)
+                          .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
+                          .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
+                          .where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE", Batch.status == "ACTIVE",
+                                 Batch.branch_id == Enrollment.branch_id)).all()
+        eids, bids = {r[2] for r in rows}, {r[4] for r in rows}
+        batch_branch: dict = {}
+        for prov, bid, br in db.execute(select(Branch.provider_id, Batch.batch_id, Batch.branch_id).join(Branch, Branch.branch_id == Batch.branch_id)
+                                        .where(Branch.provider_id.in_(provs))):
+            batch_branch.setdefault(prov, {})[bid] = br
+        active: dict = {}
+        for prov, br in db.execute(select(Branch.provider_id, Branch.branch_id).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE",
+                                                                                     Branch.deleted_at.is_(None))):
+            active.setdefault(prov, set()).add(br)
+        chosen, offered = subjects_taken(db, eids), batch_subjects(db, bids)      # keyed by enrollment/batch: shared safely
+        classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
+                                  .where(EnrollmentAcademicProfile.enrollment_id.in_(eids or {None}))).all())
+        for prov in provs:
+            cache[prov] = {"members": sorted(((s, e, br, b) for p, s, e, br, b in rows if p == prov), key=lambda r: (r[0], r[3])),
+                           "batch_branch": batch_branch.get(prov, {}), "active_branches": active.get(prov, set()),
+                           "chosen": chosen, "offered": offered, "classes": classes}
+    return cache[provider_id]
+
+
 def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_type: str, batch_ids: list[UUID],
                      student_ids: list[str], *, branch_ids: list[UUID] = (), subject_ids=(), class_level: str | None = None,
                      report: dict | None = None, unselected_takes_batch_subjects: bool = False) -> list[tuple[str, str, UUID | None]]:
@@ -268,7 +302,10 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
             rows += resolve_audience(db, provider_id, b, "BRANCH", [], [], subject_ids=subject_ids, class_level=class_level, report=report,
                                      unselected_takes_batch_subjects=unselected_takes_batch_subjects)
         by_branch: dict[UUID, list[UUID]] = {}
-        for bid, br in db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))):
+        snap = _snapshot(db, provider_id)
+        pairs = ([(b, snap["batch_branch"][b]) for b in batch_ids if b in snap["batch_branch"]] if snap is not None
+                 else db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))).all())
+        for bid, br in pairs:
             by_branch.setdefault(br, []).append(bid)
         for br, bids in by_branch.items():
             rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [], subject_ids=subject_ids, class_level=class_level, report=report,
@@ -294,6 +331,9 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
                 best[sid] = (sid, eid, None)
         return [best[sid] for sid in sorted(best)]
 
+    snap = _snapshot(db, provider_id)
+    if snap is not None:
+        return _resolve_from_snapshot(snap, branch_id, audience_type, batch_ids, subject_ids, class_level, report, unselected_takes_batch_subjects)
     stmt = (select(Enrollment.student_id, Enrollment.enrollment_id, EnrollmentBatch.batch_id)
             .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
             .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
@@ -320,6 +360,37 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
     if class_level:
         classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
                                   .where(EnrollmentAcademicProfile.enrollment_id.in_({eid for _sid, eid, _bid in rows} or {None}))).all())
+        if report is not None:
+            for key, cond in (("excluded_no_class", lambda c: c is None), ("excluded_other_class", lambda c: c is not None and c != class_level)):
+                report.setdefault(key, set()).update(sid for sid, eid, _bid in rows if cond(classes.get(eid)))
+        rows = [r for r in rows if classes.get(r[1]) == class_level]
+    seen, out = set(), []
+    for sid, eid, bid in rows:
+        if sid not in seen:
+            seen.add(sid)
+            out.append((sid, eid, bid))
+    return out
+
+
+def _resolve_from_snapshot(snap: dict, branch_id, audience_type: str, batch_ids, subject_ids, class_level, report, unselected_takes_batch_subjects: bool):
+    """resolve_audience's batch-based rules (BATCHES / BRANCH / INSTITUTE) applied to a provider snapshot: the same filters and order."""
+    if audience_type == "BATCHES":
+        if not batch_ids:
+            return []
+        wanted = set(batch_ids)
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br == branch_id and b in wanted]
+    elif audience_type == "BRANCH":
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br == branch_id]
+    else:  # INSTITUTE
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br in snap["active_branches"]]
+    if subject_ids:
+        needed, chosen = set(subject_ids), snap["chosen"]
+        if unselected_takes_batch_subjects:
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), snap["offered"].get(r[2], set()))]
+        else:
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), needed)]
+    if class_level:
+        classes = snap["classes"]
         if report is not None:
             for key, cond in (("excluded_no_class", lambda c: c is None), ("excluded_other_class", lambda c: c is not None and c != class_level)):
                 report.setdefault(key, set()).update(sid for sid, eid, _bid in rows if cond(classes.get(eid)))

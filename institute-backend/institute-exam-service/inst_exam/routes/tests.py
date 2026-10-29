@@ -557,6 +557,7 @@ def visible_plans(db: Session, p: Principal, plans: list[ExamPlan]) -> list[Exam
     """Plans the caller may see: admins of the plan's branch (platform, provider, branch admin), its creator, and teachers with at
     least one targeted student in their teaching scope for one of the plan's subjects (services/teacher_scope.py)."""
     visible = []
+    unified.prefetch_unified_plans(db, [plan.plan_id for plan in plans])
     for plan in plans:
         if unified.is_unified_plan(db, plan.plan_id):   # a unified Global Test plan belongs to the platform, whatever its anchor branch
             if unified.is_platform(p, "exam.read"):

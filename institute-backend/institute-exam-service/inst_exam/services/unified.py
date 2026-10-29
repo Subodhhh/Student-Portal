@@ -44,7 +44,20 @@ def unified_exam_clause(exam_id_column):
 
 
 def is_unified_plan(db: Session, plan_id: UUID) -> bool:
-    return bool(db.scalar(select(unified_plan_clause(plan_id))))
+    cache = db.info.setdefault("unified_plan", {})           # per session (one request): a plan never changes kind once generated
+    if plan_id not in cache:
+        cache[plan_id] = bool(db.scalar(select(unified_plan_clause(plan_id))))
+    return cache[plan_id]
+
+
+def prefetch_unified_plans(db: Session, plan_ids) -> None:
+    """Which of these plans are unified, in one statement (list pages ask for every plan)."""
+    from institute_common.models.exams import ExamPlan
+    cache = db.info.setdefault("unified_plan", {})
+    wanted = [i for i in plan_ids if i not in cache]
+    if wanted:
+        found = set(db.scalars(select(ExamPlan.plan_id).where(ExamPlan.plan_id.in_(wanted), unified_plan_clause(ExamPlan.plan_id))))
+        cache.update({i: i in found for i in wanted})
 
 
 def is_unified_exam(db: Session, exam_id: UUID) -> bool:

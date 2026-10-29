@@ -87,3 +87,24 @@ def test_generation_gives_each_student_only_their_eligible_papers_with_accurate_
     assert lay["STU000011"] == {"Physics": "NOT_ENROLLED", "Chemistry": "PAPER"}
     assert lay.get("STU000012") in (None, {"Physics": "NOT_ENROLLED", "Chemistry": "NOT_ENROLLED"})   # inactive batch: no paper either way
     assert lay["STU000013"] == {"Physics": "PAPER", "Chemistry": "PAPER"}                          # p1 Physics + p2 Chemistry
+
+
+def test_the_occurrence_pages_snapshot_resolves_exactly_like_the_queries(world, gs, be, db_factory):
+    """GET /global-occurrences/{id} resolves every submission from one snapshot per provider (db.info["audience_snapshot"]); the result
+    must equal the query path for every audience shape, subject and class."""
+    from inst_exam.services.exam_generation import resolve_audience
+    audiences = [aud(world, gs, whole=("p1b1",)), aud(world, gs, batches=("batch_a",)), aud(world, gs, batches=("batch_d", "batch_e")),
+                 aud(world, gs, branches=("p1b1", "p1b2"), whole=("p1b2",)), p2_batch(world, gs, "batch_f")]
+    for a in audiences:
+        for subject in ("phy", "chem", "bio"):
+            for class_level in (None, "11TH"):
+                sub = SimpleNamespace(audience=a, subject_id=gs[subject])
+                with db_factory() as db:
+                    plain = resolve_submission(db, sub, class_level)
+                with db_factory() as db:
+                    db.info["audience_snapshot"] = True
+                    snap = resolve_submission(db, sub, class_level)
+                assert snap == plain, (a, subject, class_level)
+    with db_factory() as db:                                   # Daily/Weekly (no opt-in) never use the snapshot
+        resolve_audience(db, world["p1"], world["p1b1"], "INSTITUTE", [], [])
+        assert "audience_snapshot_data" not in db.info

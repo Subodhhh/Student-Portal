@@ -69,17 +69,30 @@ def resolve_submission(db: Session, sub: GlobalPaperSubmission, class_level=_LOO
     from inst_exam.routes.tests import TestAudienceIn, resolve
     if class_level is _LOOKUP:
         class_level, _problem = submission_class(db, sub)
-    # Global Tests: a batch membership without a subject selection takes the subjects its batch offers (not every subject)
-    return resolve(db, TestAudienceIn.model_validate(sub.audience), [sub.subject_id], class_level, unselected_takes_batch_subjects=True)
+    # once per request (session): a page resolves the same submission for its "students now" and again for coverage, and each
+    # resolution is several database round trips; a submission's audience never changes once submitted
+    cache = db.info.setdefault("resolved_submissions", {})
+    key = (getattr(sub, "submission_id", None), class_level)
+    if key[0] is None or key not in cache:
+        # Global Tests: a batch membership without a subject selection takes the subjects its batch offers (not every subject)
+        rows = resolve(db, TestAudienceIn.model_validate(sub.audience), [sub.subject_id], class_level, unselected_takes_batch_subjects=True)
+        if key[0] is None:
+            return rows                                       # an unsaved audience (previews, tests): never cached
+        cache[key] = rows
+    return cache[key]
 
 
 def assignments(db: Session, occ: GlobalTestOccurrence, provider_id: UUID) -> dict:
     """Who gets which paper for one provider: {"papers": {student: {subject: (submission, enrollment_id)}}, "ambiguous": {(student,
     subject)}, "not_ready": [submission]}. Pure computation, writes nothing (also used for coverage before the deadline)."""
-    subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id,
-                                                          GlobalPaperSubmission.provider_id == provider_id,
-                                                          GlobalPaperSubmission.status == "ACTIVE")
-                      .order_by(GlobalPaperSubmission.submitted_at)).all()
+    loaded = db.info.get("occurrence_submissions", {}).get(occ.occurrence_id)       # the page already read the date's submissions
+    if loaded is not None:
+        subs = sorted((s for s in loaded if s.provider_id == provider_id and s.status == "ACTIVE"), key=lambda s: s.submitted_at)
+    else:
+        subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id,
+                                                              GlobalPaperSubmission.provider_id == provider_id,
+                                                              GlobalPaperSubmission.status == "ACTIVE")
+                          .order_by(GlobalPaperSubmission.submitted_at)).all()
     papers: dict[str, dict[UUID, tuple[GlobalPaperSubmission, str]]] = defaultdict(dict)
     ambiguous: set[tuple[str, UUID]] = set()
     not_ready = []
