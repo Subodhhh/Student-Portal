@@ -3,9 +3,10 @@
 
   * The GitHub Pages workflow (deploy-pages.yml) is disabled; if its push trigger is ever restored it must again be
     path-filtered to the Student frontend (an Institute-only change must not trigger it, every Student change must).
-  * The Cloudflare Pages demo workflow (cloudflare-pages-demo.yml) runs only for feature/* pushes and pull requests, may
-    deploy only for a push to feature/cloudflare-demo-release, only through the protected "cloudflare-demo" environment,
-    and only that job may see the two Cloudflare secrets. Nothing in it may target main, QA or dev.
+  * The Cloudflare Pages demo workflow (cloudflare-pages-demo.yml) runs only for feature/* and Institute-Student-Portal
+    pushes and pull requests, may deploy only for a push to Institute-Student-Portal, only through the protected
+    "cloudflare-demo" environment, and only that job may see the two Cloudflare secrets. Nothing in it may target main,
+    QA or dev.
   * No Institute workflow may deploy anything, reference repository secrets, or use a database URL that is not a
     local/throwaway one, so CI can never reach production credentials.
 """
@@ -121,7 +122,8 @@ def check() -> list:
 
 CLOUDFLARE_WORKFLOW = "cloudflare-pages-demo.yml"
 CLOUDFLARE_SECRETS = {"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"}
-RELEASE_REF = "refs/heads/feature/cloudflare-demo-release"
+RELEASE_BRANCH = "Institute-Student-Portal"
+RELEASE_REF = f"refs/heads/{RELEASE_BRANCH}"
 # The ONLY condition under which a job may deploy or read a secret. Compared exactly (whitespace-normalised), so an
 # added `|| ...` or a different event/branch can never widen it.
 DEPLOY_CONDITION = f"github.event_name == 'push' && github.ref == '{RELEASE_REF}'"
@@ -144,14 +146,14 @@ def check_cloudflare_demo() -> list:
     text = (WORKFLOWS / name).read_text()
     on = triggers_of(data)
     if set(on) - ALLOWED_TRIGGERS:
-        errors.append(f"{name} may only run on push (feature/*) and pull_request, found {sorted(set(on) - ALLOWED_TRIGGERS)}")
+        errors.append(f"{name} may only run on push (feature/*, {RELEASE_BRANCH}) and pull_request, found {sorted(set(on) - ALLOWED_TRIGGERS)}")
     if re.search(r"pull_request_target", text):
         errors.append(f"{name} uses pull_request_target (would run untrusted code with secrets)")
     push = on.get("push") if isinstance(on.get("push"), dict) else {}
     branches = push.get("branches") or []
-    if "push" in on and (not branches or any(not str(b).startswith("feature/") for b in branches)
+    if "push" in on and (not branches or any(not (str(b).startswith("feature/") or b == RELEASE_BRANCH) for b in branches)
                          or push.get("branches-ignore") or push.get("tags") or push.get("tags-ignore")):
-        errors.append(f"{name}: push must be limited to feature/* branches (no tags, no branches-ignore)")
+        errors.append(f"{name}: push must be limited to feature/* branches and {RELEASE_BRANCH} (no tags, no branches-ignore)")
     if data.get("permissions") != {"contents": "read"}:
         errors.append(f"{name} must declare top-level `permissions: {{contents: read}}`")
     for job_name, job in (data.get("jobs") or {}).items():
