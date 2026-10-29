@@ -172,11 +172,6 @@ function FilesCard({ title, kind, draft, files, open, onChange, onView, hint }: 
     await api(`/api/v1/photo-drafts/${draft.draft_id}/files/${f.draft_file_id}`, { method: "DELETE" });
     onChange();
   });
-  // OCR the stored photo again: automatically, or turned upright by the uploader (the photo itself is not changed).
-  const readAgain = (f: DraftFile, rotate: number | null) => void act.run(async () => {
-    await api(`/api/v1/photo-drafts/${draft.draft_id}/files/${f.draft_file_id}/read-again`, { method: "POST", body: rotate === null ? {} : { rotate } });
-    onChange();
-  });
   return (
     <Card>
       <h2>{title}</h2>
@@ -192,11 +187,6 @@ function FilesCard({ title, kind, draft, files, open, onChange, onView, hint }: 
             {open && <span className="row">
               <Button small variant="secondary" disabled={i === 0 || act.busy} onClick={() => move(f, -1)} aria-label={`Move ${f.position} up`}>↑</Button>
               <Button small variant="secondary" disabled={i === files.length - 1 || act.busy} onClick={() => move(f, 1)} aria-label={`Move ${f.position} down`}>↓</Button>
-              <Button small variant="secondary" disabled={act.busy} onClick={() => readAgain(f, null)} aria-label={`Read ${f.position} again`}>Read again</Button>
-              <select className="small" disabled={act.busy} value="" aria-label={`Turn ${f.position} upright and read again`}
-                onChange={(e) => e.target.value && readAgain(f, Number(e.target.value))}>
-                <option value="">Turn…</option><option value="90">Turn right ↻</option><option value="180">Upside down</option><option value="270">Turn left ↺</option>
-              </select>
               <Button small variant="danger" disabled={act.busy} onClick={() => remove(f)} aria-label={`Remove ${f.position}`}>Remove</Button>
             </span>}
           </li>))}
@@ -292,20 +282,13 @@ function Preview({ draft, pages, open, onChange, onView, refusal, onRefusal }: {
                 <div className="row between">
                   <strong>Question {q.number}</strong>
                   <span className="row">
-                    <span title="Tesseract's score for the least clear line of this question. A heuristic, not a probability."><Badge tone={q.confidence >= 0.98 ? "ok" : q.confidence >= 0.8 ? "warn" : "danger"}>OCR score {Math.round(q.confidence * 100)}/100</Badge></span>
+                    <Badge tone={q.confidence >= 0.98 ? "ok" : q.confidence >= 0.8 ? "warn" : "danger"}>read with {Math.round(q.confidence * 100)}% confidence</Badge>
                     {page && <Button small variant="secondary" onClick={() => onView(page)}>Photo of page {page.position}</Button>}
                     {open && <><Button small variant="secondary" disabled={i === 0} onClick={() => moveQ(i, -1)} aria-label={`Move question ${q.number} up`}>↑</Button>
                       <Button small variant="secondary" disabled={i === edits.length - 1} onClick={() => moveQ(i, 1)} aria-label={`Move question ${q.number} down`}>↓</Button></>}
                   </span>
                 </div>
                 {q.issues.map((m, k) => <Alert key={k} kind="warn">{m}</Alert>)}
-                {q.needs_review && !!q.source?.length && (
-                  <details className="small">
-                    <summary>What was read from the photo</summary>
-                    <ul className="ocr-source">{q.source.map((s, k) => <li key={k}><span className="muted">p{s.page} · {s.confidence}</span> {s.text}</li>)}
-                      {q.answer_source && <li><span className="muted">answer key</span> {q.answer_source}</li>}</ul>
-                  </details>
-                )}
                 <TextAreaField label={`Question ${q.number} text`} value={q.question} disabled={!open} onChange={(e) => set(i, { question: e.target.value })} />
                 <div className="grid cols-2">
                   {(["a", "b", "c", "d"] as const).map((o) => (

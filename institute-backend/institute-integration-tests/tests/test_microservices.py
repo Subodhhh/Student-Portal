@@ -309,7 +309,7 @@ NEW_ROUTES = {
     ("PUT", f"{API}/photo-drafts/{{draft_id}}/files/order"), ("DELETE", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}"),
     ("GET", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}/content"), ("POST", f"{API}/photo-drafts/{{draft_id}}/extract"),
     ("PUT", f"{API}/photo-drafts/{{draft_id}}/questions"), ("POST", f"{API}/photo-drafts/{{draft_id}}/accept"),
-    ("POST", f"{API}/photo-drafts/{{draft_id}}/discard"), ("POST", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}/read-again"),
+    ("POST", f"{API}/photo-drafts/{{draft_id}}/discard"),
 }
 
 

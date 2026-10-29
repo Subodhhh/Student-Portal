@@ -27,7 +27,6 @@ class FakeOcr:
 
     def __init__(self):
         self.pages: dict[str, list[list]] = {}
-        self.unreadable: set[str] = set()      # photos refused unless the uploader turns them (read again with a rotation)
         self.calls = 0
 
     def page(self, seed: int, lines: list[str], low: set[int] = frozenset()) -> bytes:
@@ -35,13 +34,9 @@ class FakeOcr:
         self.pages[hashlib.sha256(data).hexdigest()] = [[t, 40.0 if i in low else 99.0, 60.0 if i in low else 99.5] for i, t in enumerate(lines)]
         return data
 
-    def read_lines(self, image: bytes, mime: str, purpose: str = "page", rotate: int | None = None) -> list[list]:
+    def read_lines(self, image: bytes, mime: str) -> list[list]:
         self.calls += 1
-        self.last = (purpose, rotate)
-        digest = hashlib.sha256(image).hexdigest()
-        if digest in self.unreadable and rotate is None:
-            raise extraction.OcrUnreadable("No writing was found in this photo. Photograph the whole page, flat and well lit.")
-        return self.pages.get(digest, [])
+        return self.pages.get(hashlib.sha256(image).hexdigest(), [])
 
     def read_questions(self, image, mime):  # pragma: no cover - not used by photo papers
         return []
@@ -242,52 +237,3 @@ def test_two_teachers_photo_papers_reach_only_their_own_students(client, world, 
     run_generation(db_factory, test, occ)
     got = exams_of(db_factory, occ["occurrence_id"])
     assert got["STU000001"] == [(world["p1"], [versions["tA"]])] and got["STU000002"] == [(world["p1"], [versions["tB"]])]
-
-
-def test_a_refused_photo_says_what_to_retake_and_reading_it_again_turned_upright_recovers_it(client, world, gs, login, ocr):
-    h = login(gs["tA"])
-    d = new_draft(client, h, world, gs)
-    sideways = ocr.page(900, PAGE1)
-    ocr.unreadable.add(hashlib.sha256(sideways).hexdigest())
-    f = put_file(client, h, d, "PAGE", 1, sideways).json()
-    assert f["lines"] == 0 and "No writing was found" in f["ocr_error"] and ocr.last == ("page", None)
-    r = client.post(f"{API}/photo-drafts/{d}/extract", headers=h)
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAGES_UNREADABLE"             # nothing is extracted from it
-    for bad in ({"rotate": 45}, {"rotate": "x"}, {"other": 1}):
-        assert client.post(f"{API}/photo-drafts/{d}/files/{f['draft_file_id']}/read-again", json=bad, headers=h).status_code == 422
-    again = client.post(f"{API}/photo-drafts/{d}/files/{f['draft_file_id']}/read-again", json={"rotate": 90}, headers=h)
-    assert again.status_code == 200 and again.json()["ocr_error"] is None and again.json()["lines"] == len(PAGE1) and ocr.last == ("page", 90)
-    assert put_file(client, h, d, "ANSWER_KEY", 1, ocr.page(901, KEY), name="key.jpg").status_code == 201 and ocr.last == ("key", None)
-    qs = client.post(f"{API}/photo-drafts/{d}/extract", headers=h).json()["questions"]
-    assert [q["number"] for q in qs] == [1, 2]
-    img = client.get(f"{API}/photo-drafts/{d}/files/{f['draft_file_id']}/content", headers=h)
-    assert img.content == sideways                                                            # the original is kept as uploaded
-
-
-def test_read_again_follows_draft_access_and_refuses_typed_keys(client, world, gs, login, ocr):
-    h = login(gs["tA"])
-    d = new_draft(client, h, world, gs)
-    f = put_file(client, h, d, "PAGE", 1, ocr.page(910, PAGE1)).json()
-    key = put_file(client, h, d, "ANSWER_KEY", 1, b"1,A\n2,B\n", name="key.csv", mime="text/csv").json()
-    r = client.post(f"{API}/photo-drafts/{d}/files/{key['draft_file_id']}/read-again", json={}, headers=h)
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "NOT_A_PHOTO"
-    for who in ("tB", "tutor"):                                      # another teacher's draft; another provider
-        r = client.post(f"{API}/photo-drafts/{d}/files/{f['draft_file_id']}/read-again", json={}, headers=login(gs[who]))
-        assert r.status_code == 404, who
-    h = login(gs["tA"])
-    assert client.post(f"{API}/photo-drafts/{d}/files/{uuid.uuid4()}/read-again", json={}, headers=h).status_code == 404
-
-
-def test_the_same_photo_twice_and_an_unreadable_key_photo_are_reported(client, world, gs, login, ocr):
-    h = login(gs["tA"])
-    d = new_draft(client, h, world, gs)
-    same = ocr.page(920, PAGE1)
-    assert put_file(client, h, d, "PAGE", 1, same).status_code == 201
-    assert put_file(client, h, d, "PAGE", 2, same).status_code == 201
-    blurred = ocr.page(921, KEY)
-    ocr.unreadable.add(hashlib.sha256(blurred).hexdigest())
-    assert put_file(client, h, d, "ANSWER_KEY", 1, blurred, name="key.jpg").status_code == 201
-    r = client.post(f"{API}/photo-drafts/{d}/extract", headers=h).json()
-    assert any("Page 2 is the same photo as page 1" in i for i in r["issues"])
-    assert any("Answer-key photo 1 could not be read" in i for i in r["issues"])
-    assert all(q["correct"] == "" and q["needs_review"] for q in r["questions"])               # no key read -> no answers guessed

@@ -68,30 +68,12 @@ describe("Photo papers", () => {
     await waitFor(() => expect(posts(calls, "/api/v1/photo-drafts/d1/extract")).toHaveLength(1));
   });
 
-  it("reads a photo again, automatically or turned upright by the uploader", async () => {
-    let files: { draft_file_id: string; kind: string; position: number; file_id: string; lines: number; ocr_error: string | null }[] =
-      [{ draft_file_id: "f1", kind: "PAGE", position: 1, file_id: "x", lines: 0, ocr_error: "No writing was found in this photo. Photograph the whole page, flat and well lit." }];
-    const calls = stubApi({ ...common, "/api/v1/photo-drafts/d1": () => draft({ files }),
-      "POST /api/v1/photo-drafts/d1/files/f1/read-again": () => { files = [{ ...files[0], lines: 9, ocr_error: null }]; return files[0]; } });
-    renderApp("/papers/photo/d1");
-    expect(await screen.findByText(/No writing was found in this photo/, {}, { timeout: 5000 })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Turn 1 upright and read again"), { target: { value: "90" } });
-    await waitFor(() => expect(posts(calls, "/api/v1/photo-drafts/d1/files/f1/read-again")).toHaveLength(1));
-    expect(posts(calls, "/api/v1/photo-drafts/d1/files/f1/read-again")[0].body).toEqual({ rotate: 90 });
-    expect(await screen.findByText(/9 line\(s\) read/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Read 1 again" }));
-    await waitFor(() => expect(posts(calls, "/api/v1/photo-drafts/d1/files/f1/read-again")).toHaveLength(2));
-    expect(posts(calls, "/api/v1/photo-drafts/d1/files/f1/read-again")[1].body).toEqual({});
-  }, 15000);
-
   it("highlights uncertain questions, saves corrections and imports only after an explicit confirmation", async () => {
     let accepted = false;
     const calls = stubApi({ ...common,
       "/api/v1/photo-drafts/d1": () => (accepted ? draft({ status: "ACCEPTED", accepted_paper_version_id: "pv9", extracted_at: "2030-01-01", questions: [q(1), q(2)] })
         : draft({ extracted_at: "2030-01-01", files: [{ draft_file_id: "f1", kind: "PAGE", position: 1, file_id: "x", lines: 9, ocr_error: null }],
-          questions: [q(1, { source: [{ page: 1, text: "1. Question text 1", confidence: 96 }] }), q(2, { confidence: 0.61, needs_review: true,
-            issues: ["Option D could not be read."], option_d: "", source: [{ page: 1, text: "2. Question text 2", confidence: 95 }, { page: 1, text: "D) ~~", confidence: 61 }],
-            answer_source: "2. A" })],
+          questions: [q(1), q(2, { confidence: 0.61, needs_review: true, issues: ["Option D could not be read."], option_d: "" })],
           issues: ["1 answer-key line(s) were read with low confidence: check every answer in the preview."] })),
       "PUT /api/v1/photo-drafts/d1/questions": (_u: URL, init: RequestInit) => draft({ extracted_at: "2030-01-01", questions: JSON.parse(String(init.body)).questions, corrections: 2 }),
       "POST /api/v1/photo-drafts/d1/accept": (_u: URL, init: RequestInit) => {
@@ -104,11 +86,7 @@ describe("Photo papers", () => {
     const flagged = await screen.findByRole("region", { name: "Question 2" });
     expect(flagged.className).toContain("needs-review");
     expect(within(flagged).getByText("Option D could not be read.")).toBeTruthy();
-    expect(within(flagged).getByText("OCR score 61/100")).toBeTruthy();
-    expect(within(flagged).getByText("What was read from the photo")).toBeTruthy();                  // the OCR text, for comparison
-    expect(within(flagged).getByText("D) ~~")).toBeTruthy();
-    expect(within(flagged).getByText("2. A")).toBeTruthy();
-    expect(within(await screen.findByRole("region", { name: "Question 1" })).queryByText("What was read from the photo")).toBeNull();
+    expect(within(flagged).getByText("read with 61% confidence")).toBeTruthy();
     expect(screen.getByText(/answer-key line\(s\) were read with low confidence/)).toBeTruthy();
     expect(screen.getByText("1 highlighted question(s) still to check.")).toBeTruthy();
     fireEvent.change(within(flagged).getByLabelText("Question 2 option D"), { target: { value: "1500 m/s" } });

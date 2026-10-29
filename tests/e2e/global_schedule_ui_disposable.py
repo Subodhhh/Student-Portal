@@ -123,10 +123,7 @@ for name, service_app in SERVICES.items():
 
 # ------------------------------------------------------------------ real Tesseract (this revision's code) inside the paper-service image
 OCR_SNIPPET = ("import sys, json\nfrom inst_paper.services.ocr_tesseract import TesseractBackend\n"
-               "from inst_paper.services.extraction import OcrUnreadable\n"
-               "data = sys.stdin.buffer.read()\nrotate = int(sys.argv[3]) if sys.argv[3] else None\n"
-               "try:\n    print(json.dumps({'lines': TesseractBackend().read_lines(data, sys.argv[1], sys.argv[2], rotate)}))\n"
-               "except OcrUnreadable as exc:\n    print(json.dumps({'unreadable': str(exc)}))\n")
+               "data = sys.stdin.buffer.read()\nprint(json.dumps(TesseractBackend().read_lines(data, sys.argv[1])))\n")
 subprocess.run(["docker", "rm", "-f", "gs-ocr"], capture_output=True)
 subprocess.run(["docker", "run", "-d", "--name", "gs-ocr", "-w", "/", "-v", f"{ROOT / 'institute-backend'}:/src:ro", "-e", "DATABASE_URL=sqlite://",
                 "-e", "PYTHONPATH=/src/institute-paper-service:/src/institute-common", "institute-paper-service:latest", "sleep", "infinity"],
@@ -136,16 +133,11 @@ subprocess.run(["docker", "run", "-d", "--name", "gs-ocr", "-w", "/", "-v", f"{R
 class DockerTesseract:
     """The paper service's OCR backend, executed by the real TesseractBackend in the paper-service image."""
 
-    def read_lines(self, data: bytes, mime: str, purpose: str = "page", rotate: int | None = None) -> list[list]:
-        from inst_paper.services.extraction import OcrUnreadable
-        r = subprocess.run(["docker", "exec", "-i", "gs-ocr", "python", "-c", OCR_SNIPPET, mime, purpose, "" if rotate is None else str(rotate)],
-                           input=data, capture_output=True, timeout=120)
+    def read_lines(self, data: bytes, mime: str) -> list[list]:
+        r = subprocess.run(["docker", "exec", "-i", "gs-ocr", "python", "-c", OCR_SNIPPET, mime], input=data, capture_output=True, timeout=120)
         if r.returncode:
             raise RuntimeError(r.stderr.decode()[-300:])
-        out = json.loads(r.stdout)
-        if "unreadable" in out:
-            raise OcrUnreadable(out["unreadable"])
-        return out["lines"]
+        return json.loads(r.stdout)
 
     def extract_text(self, data: bytes, mime: str) -> str:
         return "\n".join(t for t, *_ in self.read_lines(data, mime))

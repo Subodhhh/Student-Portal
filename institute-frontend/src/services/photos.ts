@@ -4,7 +4,6 @@ export type DraftFile = { draft_file_id: string; kind: "PAGE" | "ANSWER_KEY"; po
 export type DraftQuestion = {
   number: number; question: string; option_a: string; option_b: string; option_c: string; option_d: string; correct: string; marks: string;
   negative_marks: string; explanation: string; topic: string; confidence: number; page: number | null; issues: string[]; needs_review: boolean;
-  source?: { page: number; text: string; confidence: number }[]; answer_source?: string | null;
   reviewed: boolean; has_diagram: boolean;
 };
 export type PhotoDraft = {
