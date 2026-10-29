@@ -20,6 +20,9 @@ H = {"X-Service-Key": "k-att"}
 def env(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     AttemptRow.__table__.create(engine)
+    from app.models.integrity import AttemptReview, IntegrityEvent
+    IntegrityEvent.__table__.create(engine)
+    AttemptReview.__table__.create(engine)
     Session = sessionmaker(bind=engine, autoflush=False)
 
     def override():
@@ -62,5 +65,6 @@ def test_lists_only_this_tests_attempts_with_status_and_no_answers(env):
     add(Session, b, "STU000009", AttemptStatus.SUBMITTED)
     rows = c.get(f"/internal/v1/tests/{a}/attempts", headers=H).json()
     assert sorted((r["student_id"], r["status"]) for r in rows) == [("STU000001", "SUBMITTED"), ("STU000002", "IN_PROGRESS"), ("STU000003", "AUTO_SUBMITTED")]
-    assert set(rows[0]) == {"student_id", "attempt_id", "status", "started_at", "submitted_at", "expires_at"}       # no answers / marks
+    assert set(rows[0]) == {"student_id", "attempt_id", "status", "started_at", "submitted_at", "expires_at",        # no answers / marks
+                            "submit_reason", "review_status", "warnings", "retake_of_attempt_id"}
     assert c.get(f"/internal/v1/tests/{uuid.uuid4()}/attempts", headers=H).json() == []

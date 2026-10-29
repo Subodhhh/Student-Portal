@@ -88,7 +88,8 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
             select(StudentExamAssignment.student_id).where(StudentExamAssignment.exam_version_id == exam_version_id)
             .order_by(StudentExamAssignment.student_id))],
     }
-    if any(p.source_submission_id for p in papers):       # unified Global Test exam: the student sees it as the occurrence, not a provider's test
+    sections = (ev.settings or {}).get("sections") or []
+    if sections or any(p.source_submission_id for p in papers):   # unified Global Test exam: the student sees it as the date, not a provider's
         payload["global_occurrence_id"] = str(plan.global_occurrence_id)
     if operation == "CANCEL":
         return payload
@@ -120,6 +121,14 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
             })
     payload["total_questions"] = len(payload["questions"])
     payload["total_marks"] = sum(q["marks"] for q in payload["questions"])
+    if sections:     # every configured subject, in order: its delivered question count, or why the student has no paper for it
+        from inst_exam.services.global_layout import message
+        delivered: dict[str, int] = {}
+        for q in payload["questions"]:
+            delivered[q["subject"]] = delivered.get(q["subject"], 0) + 1
+        payload["sections"] = [{"position": c["position"], "subject": c["subject"], "status": c["status"],
+                                "message": None if c["status"] == "PAPER" else message(c["status"], c["subject"]),
+                                "question_count": delivered.get(c["subject"], 0) if c["status"] == "PAPER" else 0} for c in sections]
     return payload
 
 

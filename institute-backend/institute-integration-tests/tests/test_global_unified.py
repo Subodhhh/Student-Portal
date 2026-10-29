@@ -78,7 +78,7 @@ def deliver(db_factory):
 def test_each_student_gets_one_unified_exam_with_all_and_only_their_authorized_papers(client, world, gs, uni, db_factory):
     t, occ = uni
     [run] = run_generation(db_factory, t, occ)
-    assert not run["failed"] and run["students"] == 3 and run["conflicts"] == 0, run
+    assert not run["failed"] and run["students"] == 4 and run["conflicts"] == 0 and run["without_paper"] == 1, run
     got = exams_by_student(db_factory, occ["occurrence_id"])
     p1, p2 = world["p1"], world["p2"]
     # the multi-provider student: ONE exam, each subject from the provider it is taught by, in the test's subject order
@@ -86,8 +86,8 @@ def test_each_student_gets_one_unified_exam_with_all_and_only_their_authorized_p
     assert got["STU000001"][0][1] == [(gs["phy"], gs["paperA"], p1), (gs["chem"], gs["paperC"], p1), (gs["bio"], gs["paperBio"], p2)]
     assert [x[1] for x in got["STU000002"]] == [[(gs["chem"], gs["paperC"], p1)]]            # batch B: no Physics paper was submitted
     assert [x[1] for x in got["STU000004"]] == [[(gs["bio"], gs["paperBio"], p2)]]            # single-provider student: one exam too
-    assert "STU000003" not in got
-    assert len({e for rows in got.values() for e, _ in rows}) == 3                           # one exam per distinct combined paper set
+    assert [x[1] for x in got["STU000003"]] == [[]]            # batch C: no paper at all, still ONE card (that cannot be started)
+    assert len({e for rows in got.values() for e, _ in rows}) == 4                           # one exam per distinct layout
 
     sent = deliver(db_factory)
     per_student = {}
@@ -95,11 +95,21 @@ def test_each_student_gets_one_unified_exam_with_all_and_only_their_authorized_p
         assert payload["global_occurrence_id"] == occ["occurrence_id"]                       # the Student side shows it as the Global Test
         for sid in payload["student_ids"]:
             per_student.setdefault(sid, []).append(payload)
-    assert {k: len(v) for k, v in per_student.items()} == {"STU000001": 1, "STU000002": 1, "STU000004": 1}   # one card each
+    assert {k: len(v) for k, v in per_student.items()} == {"STU000001": 1, "STU000002": 1, "STU000003": 1, "STU000004": 1}   # one card each
+    sec = {sid: [(x["position"], x["subject"], x["status"], x["question_count"]) for x in v[0]["sections"]] for sid, v in per_student.items()}
+    assert sec == {                                          # every configured subject, in the configured order, with its outcome
+        "STU000001": [(1, "Physics", "PAPER", 3), (2, "Chemistry", "PAPER", 2), (3, "Biology", "PAPER", 2)],
+        "STU000002": [(1, "Physics", "NOT_COVERED", 0), (2, "Chemistry", "PAPER", 2), (3, "Biology", "NOT_ENROLLED", 0)],
+        "STU000003": [(1, "Physics", "NOT_COVERED", 0), (2, "Chemistry", "NOT_COVERED", 0), (3, "Biology", "NOT_ENROLLED", 0)],
+        # STU000004 is enrolled with the tutor (p2) in no batch: an enrollment without an active batch membership takes no subject,
+        # so Physics is "not enrolled"; Biology is a paper because the tutor listed the student individually (a staff override)
+        "STU000004": [(1, "Physics", "NOT_ENROLLED", 0), (2, "Chemistry", "NOT_ENROLLED", 0), (3, "Biology", "PAPER", 2)]}, sec
+    assert all((x["message"] is None) == (x["status"] == "PAPER") for v in per_student.values() for x in v[0]["sections"])
+    assert "Biology" in per_student["STU000002"][0]["sections"][2]["message"] and per_student["STU000003"][0]["questions"] == []
     mine = per_student["STU000001"][0]
     assert [q["subject"] for q in mine["questions"]] == ["Physics"] * 3 + ["Chemistry"] * 2 + ["Biology"] * 2   # grouped by subject
     assert mine["duration_minutes"] == 60 and {(q["marks"], q["negative_marks"]) for q in mine["questions"]} == {(4, 1)}   # one timer, test marking
-    assert len({p["name"] for p in sent}) == 1                                               # every student sees the same test name
+    assert {p["name"] for p in sent} == {"National Science Mock"}                          # the Global Test's own name, no date suffix
 
 
 def test_retries_create_no_duplicate_exams_assignments_notifications_or_deliveries(client, world, gs, uni, db_factory):
@@ -274,7 +284,8 @@ def test_listings_show_unified_exams_by_contribution_never_by_anchor(client, wor
     # plans are the platform's: never in a provider's plan list or Scheduled Tests list
     assert all(not x["global_test_id"] for x in client.get(f"{API}/branches/{world['p1b1']}/exam-plans", headers=login(gs["pa"])).json()["items"])
     assert [x for x in client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["pa"])).json()["items"]] == []
-    assert len(client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["sa"])).json()["items"]) == 3
+    plans = client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["sa"])).json()["items"]
+    assert len(plans) == 4 and {(x["unified_global"], x["provider_name"], x["home_branch"]) for x in plans} == {(True, "Global Test", None)}
     # the date's page: each provider sees the exams with its students, counted for its students only
     occ_p2 = client.get(f"{API}/global-occurrences/{occ['occurrence_id']}", headers=login(gs["tutor"])).json()
     assert sorted(e["assigned"] for e in occ_p2["exams"]) == [1, 1]                         # STU000001's and STU000004's exams
@@ -379,11 +390,11 @@ def test_dashboards_never_count_a_unified_exam_for_its_anchor(client, world, gs,
         db.commit()
         unified_ids = {str(x.exam_id) for x in db.query(Exam).join(ExamPlan, ExamPlan.plan_id == Exam.plan_id)
                        .filter(ExamPlan.global_occurrence_id == UUID(occ["occurrence_id"]))}
-    assert len(unified_ids) == 3
+    assert len(unified_ids) == 4
     assert client.get(f"{API}/dashboard", headers=login(gs["pa"])).json()["upcoming_exams"] == 1      # only the ordinary exam
     assert client.get(f"{API}/dashboard", headers=login(gs["tutor"])).json()["upcoming_exams"] == 0   # p2 anchors one unified exam
     d = client.get(f"{API}/dashboard", headers=login(gs["sa"])).json()
-    assert d["upcoming_exams"] == 4                                                      # the platform counts every exam
+    assert d["upcoming_exams"] == 5                                                      # the platform counts every exam
     rows = {x["exam_id"]: x for x in d["upcoming_exam_list"]}
     assert set(rows) == unified_ids | {str(e.exam_id)}
     for exam_id in unified_ids:

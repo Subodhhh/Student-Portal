@@ -36,11 +36,12 @@ from institute_common.database import utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import (
     Exam, ExamGenerationJob, ExamPlan, ExamPlanStudent, ExamPlanSubject, GlobalPaperSubmission, GlobalTest, GlobalTestOccurrence,
-    GlobalTestSubject, StudentExamAssignment,
+    GlobalTestStudent, GlobalTestSubject, StudentExamAssignment,
 )
 from institute_common.models.papers import PaperVersion
 from institute_common.models.staff import StaffRoleAssignment
 from inst_exam.services import exam_generation as gen
+from inst_exam.services import global_layout
 from inst_exam.services.notify import notify
 
 READY = {"APPROVED", "PUBLISHED"}
@@ -68,16 +69,30 @@ def resolve_submission(db: Session, sub: GlobalPaperSubmission, class_level=_LOO
     from inst_exam.routes.tests import TestAudienceIn, resolve
     if class_level is _LOOKUP:
         class_level, _problem = submission_class(db, sub)
-    return resolve(db, TestAudienceIn.model_validate(sub.audience), [sub.subject_id], class_level)
+    # once per request (session): a page resolves the same submission for its "students now" and again for coverage, and each
+    # resolution is several database round trips; a submission's audience never changes once submitted
+    cache = db.info.setdefault("resolved_submissions", {})
+    key = (getattr(sub, "submission_id", None), class_level)
+    if key[0] is None or key not in cache:
+        # Global Tests: a batch membership without a subject selection takes the subjects its batch offers (not every subject)
+        rows = resolve(db, TestAudienceIn.model_validate(sub.audience), [sub.subject_id], class_level, unselected_takes_batch_subjects=True)
+        if key[0] is None:
+            return rows                                       # an unsaved audience (previews, tests): never cached
+        cache[key] = rows
+    return cache[key]
 
 
 def assignments(db: Session, occ: GlobalTestOccurrence, provider_id: UUID) -> dict:
     """Who gets which paper for one provider: {"papers": {student: {subject: (submission, enrollment_id)}}, "ambiguous": {(student,
     subject)}, "not_ready": [submission]}. Pure computation, writes nothing (also used for coverage before the deadline)."""
-    subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id,
-                                                          GlobalPaperSubmission.provider_id == provider_id,
-                                                          GlobalPaperSubmission.status == "ACTIVE")
-                      .order_by(GlobalPaperSubmission.submitted_at)).all()
+    loaded = db.info.get("occurrence_submissions", {}).get(occ.occurrence_id)       # the page already read the date's submissions
+    if loaded is not None:
+        subs = sorted((s for s in loaded if s.provider_id == provider_id and s.status == "ACTIVE"), key=lambda s: s.submitted_at)
+    else:
+        subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id,
+                                                              GlobalPaperSubmission.provider_id == provider_id,
+                                                              GlobalPaperSubmission.status == "ACTIVE")
+                          .order_by(GlobalPaperSubmission.submitted_at)).all()
     papers: dict[str, dict[UUID, tuple[GlobalPaperSubmission, str]]] = defaultdict(dict)
     ambiguous: set[tuple[str, UUID]] = set()
     not_ready = []
@@ -135,18 +150,54 @@ def merge(per_provider: dict[UUID, dict]) -> tuple[dict[str, dict[UUID, tuple[Gl
     return {sid: m for sid, m in merged.items() if m}, conflicts
 
 
-def _group_key(occ: GlobalTestOccurrence, paper_set: tuple) -> str:
-    """Unified plans: one per (occurrence, combined paper set); the gocc2 prefix never meets the older per-provider gocc keys."""
-    digest = hashlib.sha256(repr(paper_set).encode()).hexdigest()[:32]
+def _group_key(occ: GlobalTestOccurrence, layout_key: tuple) -> str:
+    """Unified plans: one per (occurrence, layout); the gocc2 prefix never meets the older per-provider gocc keys."""
+    digest = hashlib.sha256(repr(layout_key).encode()).hexdigest()[:32]
     return f"gocc2:{occ.occurrence_id.hex}:{digest}"
 
 
+def _record_students(db: Session, occ: GlobalTestOccurrence, plan: ExamPlan, members: list[global_layout.StudentLayout]) -> None:
+    """Every student's row of the date (at most one per student: primary key) and one row per configured subject. A student whose
+    plan was not generated yet follows the current layout; a student who already holds an exam is never touched."""
+    from institute_common.models.exams import GlobalTestStudentSubject as Cell
+    for lay in members:
+        row = db.get(GlobalTestStudent, (occ.occurrence_id, lay.student_id))
+        if row is not None and row.exam_id is not None:
+            continue
+        if row is None:
+            db.add(GlobalTestStudent(occurrence_id=occ.occurrence_id, student_id=lay.student_id, enrollment_id=lay.enrollment_id, plan_id=plan.plan_id))
+            db.flush()
+        else:
+            row.plan_id, row.enrollment_id = plan.plan_id, lay.enrollment_id
+            for old in db.scalars(select(Cell).where(Cell.occurrence_id == occ.occurrence_id, Cell.student_id == lay.student_id)):
+                db.delete(old)
+            db.flush()
+        for c in lay.cells:
+            db.add(Cell(occurrence_id=occ.occurrence_id, student_id=lay.student_id, subject_id=c.subject_id, position=c.position,
+                        status=c.status, submission_id=c.submission.submission_id if c.submission else None,
+                        paper_version_id=c.submission.paper_version_id if c.submission else None,
+                        provider_id=c.submission.provider_id if c.submission else None, detail=c.detail))
+
+
+def _anchor(db: Session, picks: dict[UUID, GlobalPaperSubmission], ordered: list[UUID], members: list[global_layout.StudentLayout]):
+    """(provider, branch) the plan is filed under: the first paper's submission, else the first student's reference enrollment.
+    Only an anchor: it grants nothing (services/unified.py)."""
+    if ordered:
+        return picks[ordered[0]].provider_id, picks[ordered[0]].branch_id
+    from institute_common.models.org import Enrollment
+    e = db.get(Enrollment, members[0].enrollment_id)
+    return e.provider_id, e.branch_id
+
+
 def _plan_for_group(db: Session, test: GlobalTest, occ: GlobalTestOccurrence, subject_order: list[UUID],
-                    picks: dict[UUID, GlobalPaperSubmission], students: list[str]) -> ExamPlan:
-    """One unified plan: the students sharing exactly this combined paper set, each subject from its own submission. The provider and
-    branch columns hold the first subject's submission only as an anchor (services/unified.py: they grant nothing)."""
+                    members: list[global_layout.StudentLayout]) -> ExamPlan:
+    """One unified plan: the students sharing exactly this layout (each configured subject's paper, or the same reason for none), each
+    paper from its own submission. A group whose students have no usable paper at all gets a plan with no slots (their card explains
+    every subject and cannot be started)."""
+    picks = members[0].papers()
     ordered = [s for s in subject_order if s in picks]
-    base = _group_key(occ, tuple((s, picks[s].submission_id) for s in ordered))
+    students = [m.student_id for m in members]
+    base = _group_key(occ, members[0].key())
     existing = db.scalars(select(ExamPlan).where((ExamPlan.client_request_id == base) | ExamPlan.client_request_id.like(base + ":%"))
                           .order_by(ExamPlan.created_at)).all()
     for plan in existing:
@@ -157,15 +208,16 @@ def _plan_for_group(db: Session, test: GlobalTest, occ: GlobalTestOccurrence, su
                 db.delete(row)
             for sid in set(students) - have:
                 db.add(ExamPlanStudent(plan_id=plan.plan_id, student_id=sid))
+            _record_students(db, occ, plan, members)
             db.commit()
             return plan
-    # the same paper set was generated already: these students (none holds this date yet) get a follow-up plan, never nothing
+    # the same layout was generated already: these students (none holds this date yet) get a follow-up plan, never nothing
     key = base if not existing else f"{base}:{len(existing)}"
     plan = db.scalar(select(ExamPlan).where(ExamPlan.client_request_id == key))
     if plan:
         return plan
-    anchor = picks[ordered[0]]
-    plan = ExamPlan(provider_id=anchor.provider_id, branch_id=anchor.branch_id, name=test.name, description=test.description,
+    provider_id, branch_id = _anchor(db, picks, ordered, members)
+    plan = ExamPlan(provider_id=provider_id, branch_id=branch_id, name=test.name, description=test.description,
                     duration_minutes=test.duration_minutes, start_at=occ.start_at, end_at=occ.end_at, auto_publish=True, status="ACTIVE",
                     audience_type="STUDENTS", marking_mode=test.marking_mode, marks_correct=test.marks_correct, marks_wrong=test.marks_wrong,
                     exam_type=test.exam_type, target_class=test.target_class, global_test_id=test.test_id,
@@ -178,8 +230,9 @@ def _plan_for_group(db: Session, test: GlobalTest, occ: GlobalTestOccurrence, su
         for pos, subject in enumerate(ordered, start=1):
             db.add(ExamPlanSubject(plan_id=plan.plan_id, position=pos, subject_id=subject, paper_version_id=picks[subject].paper_version_id,
                                    source_submission_id=picks[subject].submission_id))
+        _record_students(db, occ, plan, members)
         db.commit()
-    except IntegrityError:          # a concurrent run created this group's plan first
+    except IntegrityError:          # a concurrent run created this group's plan (or a student's row) first
         db.rollback()
         plan = db.scalar(select(ExamPlan).where(ExamPlan.client_request_id == key))
     return plan
@@ -237,16 +290,20 @@ def generate_occurrence(db: Session, occ: GlobalTestOccurrence, now: datetime | 
         holding = set(db.scalars(select(StudentExamAssignment.student_id).join(Exam, Exam.exam_id == StudentExamAssignment.exam_id)
                                  .join(ExamPlan, ExamPlan.plan_id == Exam.plan_id)
                                  .where(ExamPlan.global_occurrence_id == occ.occurrence_id, Exam.status != "CANCELLED")))
-        papers = {sid: per for sid, per in papers.items() if sid not in holding}     # one exam per student per date, whatever changed since
-        groups: dict[tuple, list[str]] = defaultdict(list)
-        group_picks: dict[tuple, dict[UUID, GlobalPaperSubmission]] = {}
-        for sid, per_subject in sorted(papers.items()):
-            paper_set = tuple(sorted((subject, sub.submission_id) for subject, (sub, _eid) in per_subject.items()))
-            groups[paper_set].append(sid)
-            group_picks[paper_set] = {subject: sub for subject, (sub, _eid) in per_subject.items()}
-        for paper_set, students in groups.items():
+        holding |= set(db.scalars(select(GlobalTestStudent.student_id).where(GlobalTestStudent.occurrence_id == occ.occurrence_id,
+                                                                             GlobalTestStudent.exam_id.is_not(None))))
+        code, problem = class_target(test.target_class)
+        layouts = global_layout.layouts(db, occ.occurrence_id, subject_order, gen.UNMATCHABLE if problem else code, per_provider, papers, conflicts)
+        groups: dict[tuple, list[global_layout.StudentLayout]] = defaultdict(list)
+        for sid, lay in sorted(layouts.items()):
+            if sid not in holding:                   # one exam per student per date, whatever changed since
+                groups[lay.key()].append(lay)
+        report["eligible"] = len(layouts)
+        report["without_paper"] = sum(1 for lay in layouts.values() if not lay.papers())
+        for _key, members in groups.items():
+            students = [m.student_id for m in members]
             try:
-                plan = _plan_for_group(db, test, occ, subject_order, group_picks[paper_set], students)
+                plan = _plan_for_group(db, test, occ, subject_order, members)
                 job = _given_up(db, plan) or gen.generate(db, plan.plan_id)
             except Exception as exc:  # noqa: BLE001  (recorded and retried on the next pass; the other groups continue)
                 db.rollback()
@@ -256,7 +313,12 @@ def generate_occurrence(db: Session, occ: GlobalTestOccurrence, now: datetime | 
                 bucket = "failed" if job.attempts < MAX_ATTEMPTS else "abandoned"
                 report.setdefault(bucket, []).append({"plan_id": str(plan.plan_id), "error": (job.error or "generation failed")[:200]})
                 if bucket == "abandoned":
-                    _notify_abandoned(db, test, occ, plan, students, {sub.provider_id for sub in group_picks[paper_set].values()}, job.error, when)
+                    _notify_abandoned(db, test, occ, plan, students, {sub.provider_id for sub in members[0].papers().values()}, job.error, when)
+                continue
+            if job.status not in ("SUCCEEDED", "PARTIAL") or not job.exam_id:
+                # another (or an interrupted) run holds this group's job: never mark the date generated while a student lacks an exam;
+                # the next pass returns the finished job, or restarts it once it is stale (exam_generation.STALE_RUNNING)
+                report["failed"].append({"plan_id": str(plan.plan_id), "error": f"generation of a group is still {job.status.lower()}"})
                 continue
             report["plans"] += 1
             report["students"] += len(students)
@@ -280,8 +342,8 @@ def generate_occurrence(db: Session, occ: GlobalTestOccurrence, now: datetime | 
             problems += [f"A {names.get(sub.subject_id, 'subject')} paper was not approved by the deadline and was not used" for sub in a["not_ready"]]
             uncovered = _uncovered(db, provider_id, set(a["papers"]) | {sid for sid, _s in a["ambiguous"]})
             if uncovered:
-                problems.append(f"{sum(uncovered.values())} active student(s) are covered by no paper and were not assigned this test "
-                                f"({', '.join(f'{b}: {n}' for b, n in sorted(uncovered.items()))})")
+                problems.append(f"{sum(uncovered.values())} active student(s) received no paper from you; eligible ones see the test with "
+                                f"the reason for each subject ({', '.join(f'{b}: {n}' for b, n in sorted(uncovered.items()))})")
             if a["ambiguous"]:
                 problems.append(f"{len(a['ambiguous'])} student/subject pair(s) were covered by two submissions and received neither paper")
                 report["ambiguous"] += len(a["ambiguous"])
@@ -298,7 +360,8 @@ def generate_occurrence(db: Session, occ: GlobalTestOccurrence, now: datetime | 
         for provider_id in offering:
             if provider_id not in providers:
                 notify(db, _provider_admins(db, provider_id), kind="GLOBAL_TEST_MISSING_PAPERS", title=f"{test.name} ({when}): no papers submitted",
-                       body="No paper was submitted for this Global Test, so none of your students were assigned it.",
+                       body="No paper was submitted for this Global Test, so none of your students received a paper from you; eligible "
+                            "students see the test with the reason for each subject.",
                        dedupe=f"gmiss:{occ.occurrence_id}:{provider_id}", provider_id=provider_id)
     occ = db.get(GlobalTestOccurrence, occ.occurrence_id)
     errors = report["failed"] + report.get("abandoned", [])

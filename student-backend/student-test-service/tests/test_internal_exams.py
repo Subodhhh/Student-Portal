@@ -153,3 +153,54 @@ def test_a_unified_global_test_is_stored_as_its_date_and_listed_as_the_global_te
         assert str(format_test(row, db)["global_occurrence_id"]) == occurrence
         from app.schemas.test import TestResponse                          # what the student listing endpoints serialise through
         assert str(TestResponse.model_validate(format_test(row, db)).global_occurrence_id) == occurrence
+
+
+SECTIONS = [{"position": 1, "subject": "Physics", "status": "PAPER", "message": None, "question_count": 1},
+            {"position": 2, "subject": "Chemistry", "status": "PAPER", "message": None, "question_count": 1},
+            {"position": 3, "subject": "Biology", "status": "NOT_ENROLLED", "message": "You are not enrolled in Biology with any of your institutes.",
+             "question_count": 0}]
+
+
+def test_a_unified_global_test_stores_every_configured_subject_in_order(env):
+    from app.schemas.test import TestResponse
+    from app.services.test_service import format_test
+    c, Session = env
+    body = payload(global_occurrence_id=str(uuid.uuid4()), sections=SECTIONS)
+    assert c.post("/internal/v1/exams", json=body, headers=H).status_code == 201
+    with Session() as db:
+        t = db.get(test_models.Test, uuid.UUID(body["exam_version_id"]))
+        assert [(s["position"], s["subject"], s["status"], s["question_count"]) for s in t.sections] == [
+            (1, "Physics", "PAPER", 1), (2, "Chemistry", "PAPER", 1), (3, "Biology", "NOT_ENROLLED", 0)]
+        row = {"test_id": t.test_id, "provider_id": t.provider_id, "provider_name": "P", "branch_id": t.branch_id, "branch_name": "B", "city": None,
+               "state": None, "name": t.name, "description": None, "duration_minutes": 60, "total_questions": 2, "total_marks": 8,
+               "start_at": t.start_at, "end_at": t.end_at, "status": t.status, "global_occurrence_id": t.global_occurrence_id, "sections": t.sections}
+        out = TestResponse.model_validate(format_test(row, db))
+        assert [s.subject for s in out.sections] == ["Physics", "Chemistry", "Biology"] and out.sections[2].message.startswith("You are not enrolled")
+
+
+def test_a_card_without_any_paper_is_accepted_only_in_that_form(env):
+    c, Session = env
+    none = [{"position": 1, "subject": "Physics", "status": "NO_SUBMISSION", "message": "No Physics paper.", "question_count": 0}]
+    card = payload(global_occurrence_id=str(uuid.uuid4()), sections=none, questions=[])
+    assert c.post("/internal/v1/exams", json=card, headers=H).status_code == 201                       # explains, cannot be started
+    with Session() as db:
+        assert db.get(test_models.Test, uuid.UUID(card["exam_version_id"])).total_questions == 0
+    assert c.post("/internal/v1/exams", json=payload(questions=[]), headers=H).status_code == 422          # no sections: still refused
+    bad = [dict(none[0], status="PAPER", message=None, question_count=1)]                                    # claims a paper, delivers none
+    assert c.post("/internal/v1/exams", json=payload(sections=bad, questions=[]), headers=H).status_code == 422
+    wrong = [dict(SECTIONS[0], question_count=2), SECTIONS[1], SECTIONS[2]]                                  # counts do not match
+    assert c.post("/internal/v1/exams", json=payload(sections=wrong), headers=H).status_code == 422
+    unexplained = [SECTIONS[0], SECTIONS[1], dict(SECTIONS[2], message=None)]                                # a missing subject needs its reason
+    assert c.post("/internal/v1/exams", json=payload(sections=unexplained), headers=H).status_code == 422
+
+
+def test_question_order_is_per_student_stable_and_keeps_the_configured_subject_order():
+    from app.services.question_order import section_order
+    rows = [{"id": f"q{i}", "subject": s} for i, s in enumerate(["Chemistry"] * 6 + ["Physics"] * 6)]
+    sections = [{"position": 1, "subject": "Physics"}, {"position": 2, "subject": "Chemistry"}]
+    order = lambda sid: [r["id"] for r in section_order(rows, sections, sid, "test-1", lambda r: r["subject"], lambda r: r["id"])]
+    a = order("STU000001")
+    assert a == order("STU000001")                                                        # same student: always the same order
+    assert [r for r in a[:6]] and all(i in {f"q{k}" for k in range(6, 12)} for i in a[:6])  # Physics (configured first) before Chemistry
+    assert len({tuple(order(f"STU00000{i}")) for i in range(1, 6)}) > 1                     # students get orders of their own
+    assert section_order(rows, None, "STU000001", "test-1", lambda r: r["subject"], lambda r: r["id"]) == rows   # no sections: unchanged

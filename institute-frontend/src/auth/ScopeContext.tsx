@@ -31,16 +31,26 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   const [choice, setChoice] = useState(read);
   const providersQ = useApi<Page<Provider>>(me ? "/api/v1/providers?page_size=100" : null);
   const providers: Provider[] = providersQ.data?.items ?? EMPTY;
-  // Effective selection is derived: an unknown/stale saved id falls back to the first available.
-  const providerId = providers.some((p) => p.provider_id === choice.p) ? choice.p : (providers[0]?.provider_id ?? "");
+  // Until the lists arrive, the saved choice (or the user's own provider/branch) is used so branches and page data load in parallel
+  // with the lists instead of after them; once a list arrives the selection is validated and, if stale, falls back to the first
+  // available (the backend re-checks every request, so a wrong guess only costs one request).
+  const assigned = me?.assignments.find((a) => a.provider_id);
+  const guessP = choice.p || assigned?.provider_id || "";
+  const providerId = providersQ.data
+    ? (providers.some((p) => p.provider_id === choice.p) ? choice.p : (providers[0]?.provider_id ?? ""))
+    : (me ? guessP : "");
 
   const branchesQ = useApi<Page<Branch>>(providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null);
   const branches: Branch[] = branchesQ.data?.items ?? EMPTY;
-  const branchId = branches.some((b) => b.branch_id === choice.b) ? choice.b : (branches[0]?.branch_id ?? "");
+  const guessB = choice.b || (assigned?.provider_id === providerId ? assigned?.branch_id ?? "" : "");
+  const branchId = branchesQ.data
+    ? (branches.some((b) => b.branch_id === choice.b) ? choice.b : (branches[0]?.branch_id ?? ""))
+    : (providerId && providerId === guessP ? guessB : "");
 
   useEffect(() => {
+    if (!providersQ.data || !branchesQ.data) return;                // only a validated selection is remembered
     try { sessionStorage.setItem(KEY, JSON.stringify({ p: providerId, b: branchId })); } catch { /* storage may be unavailable */ }
-  }, [providerId, branchId]);
+  }, [providerId, branchId, providersQ.data, branchesQ.data]);
 
   const value: ScopeState = {
     providers, branches, providerId, branchId,

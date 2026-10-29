@@ -32,7 +32,7 @@ def next_months(n=2):
 
 @pytest.fixture()
 def gs(world, make_staff, db_factory):
-    from institute_common.models.academics import ProviderSubject, Subject, TeacherSubjectAssignment
+    from institute_common.models.academics import BatchSubject, ProviderSubject, Subject, TeacherSubjectAssignment
     from institute_common.models.org import Batch, Enrollment, EnrollmentBatch
     from institute_common.models.papers import Paper, PaperVersion
     c = {}
@@ -48,6 +48,9 @@ def gs(world, make_staff, db_factory):
         db.add_all(batches.values())
         db.flush()
         c.update({f"batch_{k}": b.batch_id for k, b in batches.items()})
+        for b in batches.values():                  # the subjects each batch offers (what a membership without a selection takes)
+            for k in ("phy", "chem"):
+                db.add(BatchSubject(batch_id=b.batch_id, subject_id=c[k]))
         for eid, sid, prov, br, batch in (("g1", "STU000001", "p1", "p1b1", "a"), ("g2", "STU000002", "p1", "p1b1", "b"),
                                           ("g3", "STU000003", "p1", "p1b2", "c"), ("g4", "STU000004", "p2", "p2b1", None),
                                           ("g5", "STU000001", "p2", "p2b1", None)):
@@ -123,6 +126,18 @@ def exams_of(db_factory, occurrence_id):
                 papers = [str(x.paper_version_id) for x in db.query(ExamVersionPaper).filter_by(exam_version_id=ev.exam_version_id).order_by(ExamVersionPaper.position)]
                 for a in db.query(StudentExamAssignment).filter_by(exam_id=exam.exam_id):
                     out.setdefault(a.student_id, []).append((plan.provider_id, papers))
+    return out
+
+
+def layout_of(db_factory, occurrence_id):
+    """{student: {subject name: status}} of a generated date: every configured subject of every eligible student (global_test_student_subjects)."""
+    from institute_common.models.academics import Subject
+    from institute_common.models.exams import GlobalTestStudentSubject
+    out: dict = {}
+    with db_factory() as db:
+        for c, name in db.query(GlobalTestStudentSubject, Subject.name).join(Subject, Subject.subject_id == GlobalTestStudentSubject.subject_id) \
+                .filter(GlobalTestStudentSubject.occurrence_id == UUID(str(occurrence_id))).order_by(GlobalTestStudentSubject.position):
+            out.setdefault(c.student_id, {})[name] = c.status
     return out
 
 
@@ -252,7 +267,7 @@ def test_each_student_receives_only_their_own_teachers_paper(client, world, gs, 
     assert submit(client, login, gs["tutor"], occ, gs["phy"], gs["paperT"], aud(world, gs, provider="p2", branches=("p2b1",),
                   students=("STU000004", "STU000001"))).status_code == 201
     [run] = run_generation(db_factory, test, occ)
-    assert not run["failed"] and run["students"] == 3 and run["conflicts"] == 1, run
+    assert not run["failed"] and run["students"] == 4 and run["conflicts"] == 1 and run["without_paper"] == 1, run
     got = exams_of(db_factory, occ["occurrence_id"])
     p1, p2 = world["p1"], world["p2"]
     # STU000001 studies Physics with p1 (paper A, batch A) AND p2 (tutor's paper T): a cross-provider conflict, so neither Physics
@@ -260,10 +275,14 @@ def test_each_student_receives_only_their_own_teachers_paper(client, world, gs, 
     assert got["STU000001"] == [(p1, [gs["paperC"]])]
     assert got["STU000002"] == [(p1, [gs["paperB"], gs["paperC"]])]
     assert got["STU000004"] == [(p2, [gs["paperT"]])]
-    assert "STU000003" not in got                                                    # no submission covers batch C: never another paper
+    # no submission covers batch C: STU000003 still gets ONE card, with no paper at all (never another batch's paper)
+    assert got["STU000003"] == [(p1, [])]
+    assert layout_of(db_factory, occ["occurrence_id"]) == {
+        "STU000001": {"Physics": "CONFLICT", "Chemistry": "PAPER"}, "STU000002": {"Physics": "PAPER", "Chemistry": "PAPER"},
+        "STU000003": {"Physics": "NOT_COVERED", "Chemistry": "NOT_COVERED"}, "STU000004": {"Physics": "PAPER", "Chemistry": "NOT_ENROLLED"}}
     with db_factory() as db:
         plans = db.query(ExamPlan).filter_by(global_occurrence_id=UUID(occ["occurrence_id"])).count()
-        assert plans == 3 and db.query(ExamOutbox).count() == 3                       # one exam per combined paper set, each delivered
+        assert plans == 4 and db.query(ExamOutbox).count() == 4                       # one exam per layout, each delivered
         bodies = {o.payload["provider_id"]: o.payload["body"] for o in db.query(ExamNotificationOutbox)
                   if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"}
         assert all("another provider's paper" in bodies[str(p)] for p in (p1, p2)), bodies   # every provider in the conflict is told
@@ -295,7 +314,10 @@ def test_ambiguous_students_get_neither_paper_and_unapproved_papers_are_not_used
         db.commit()
     [run] = run_generation(db_factory, test, occ)
     got = exams_of(db_factory, occ["occurrence_id"])
-    assert run["ambiguous"] == 1 and "STU000002" not in got and got["STU000001"] == [(world["p1"], [gs["paperA"]])]
+    assert run["ambiguous"] == 1 and got["STU000001"] == [(world["p1"], [gs["paperA"]])]
+    assert got["STU000002"] == [(world["p1"], [])]                                    # neither paper: a card that explains why
+    lay = layout_of(db_factory, occ["occurrence_id"])
+    assert lay["STU000002"] == {"Physics": "CONFLICT", "Chemistry": "NO_SUBMISSION"} and lay["STU000001"]["Physics"] == "PAPER"
     with db_factory() as db:
         bodies = [o.payload["body"] for o in db.query(ExamNotificationOutbox) if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"]
         assert any("received neither paper" in b for b in bodies)
@@ -303,7 +325,9 @@ def test_ambiguous_students_get_neither_paper_and_unapproved_papers_are_not_used
     test2, occ2 = published(client, login, gs)
     submit(client, login, gs["tA"], occ2, gs["phy"], gs["paperDraft"], aud(world, gs, batches=("batch_a",)), key="draft-paper")
     [run2] = run_generation(db_factory, test2, occ2)
-    assert run2["students"] == 0 and exams_of(db_factory, occ2["occurrence_id"]) == {}
+    got2 = exams_of(db_factory, occ2["occurrence_id"])
+    assert all(papers == [] for rows in got2.values() for _p, papers in rows) and run2["without_paper"] == len(got2)   # nobody gets the draft
+    assert layout_of(db_factory, occ2["occurrence_id"])["STU000001"] == {"Physics": "NOT_APPROVED", "Chemistry": "NO_SUBMISSION"}
     assert any("not approved by the deadline" in p for m in run2["missing"] for p in m["problems"])
 
 

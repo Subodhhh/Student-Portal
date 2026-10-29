@@ -16,6 +16,7 @@ import { ForgotPasswordPage, LoginPage, MfaPage, ResetPasswordPage, VerifyEmailP
 import DashboardPage from "./pages/DashboardPage";
 import CompositePage from "./pages/CompositePage";
 import { ExamDetailPage, ExamPlansPage, ExamsPage } from "./pages/ExamsPages";
+import { ResultDetailPage, ResultsPage } from "./pages/ResultsPages";
 import { AuditPage, BillingPage, NotificationsPage, SettingsPage, SupportPage } from "./pages/OpsPages";
 import { PaperDetailPage } from "./pages/PapersPage";
 import PhotoPapersPage, { PhotoDraftPage } from "./pages/PhotoPaperPages";
@@ -94,6 +95,10 @@ export function AppRoutes() {
           <Route element={<ProtectedRoute perm="exam.read" />}>
             <Route path="exams" element={<ExamsPage />} />
             <Route path="exams/:examId" element={<ExamDetailPage />} />
+          </Route>
+          <Route element={<ProtectedRoute perm="result.read" />}>
+            <Route path="results" element={<ResultsPage />} />
+            <Route path="results/:examId" element={<ResultDetailPage />} />
           </Route>
           <Route element={<ProtectedRoute perm="billing.read" />}><Route path="billing" element={<BillingPage />} /></Route>
           <Route element={<ProtectedRoute anyPerm={["settings.platform", "settings.provider", "settings.branch"]} />}><Route path="settings" element={<SettingsPage />} /></Route>

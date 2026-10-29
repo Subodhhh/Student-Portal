@@ -16,6 +16,8 @@ from app.repositories.attempt_repository import (
     get_attempt_by_id,
     get_attempt_by_test,
 )
+from app.services.integrity import finish, start_retake
+from app.services.question_order import section_order
 
 
 def start_attempt(
@@ -42,10 +44,7 @@ def start_attempt(
                 )
 
             if now >= expires_at:
-                existing_attempt.status = (
-                    AttemptStatus.AUTO_SUBMITTED
-                )
-                existing_attempt.submitted_at = now
+                finish(existing_attempt, now, "TIME_EXPIRED")
 
                 db.commit()
                 db.refresh(existing_attempt)
@@ -56,6 +55,11 @@ def start_attempt(
                 )
 
             return existing_attempt
+
+        # a provider authorized a retake of an attempt submitted automatically after warnings: a NEW linked attempt
+        retake = start_retake(db, existing_attempt, duration_minutes)
+        if retake is not None:
+            return retake
 
         raise HTTPException(
             status_code=400,
@@ -118,8 +122,7 @@ def get_attempt(
         attempt.status == AttemptStatus.IN_PROGRESS
         and now >= expires_at
     ):
-        attempt.status = AttemptStatus.AUTO_SUBMITTED
-        attempt.submitted_at = now
+        finish(attempt, now, "TIME_EXPIRED")
 
         db.commit()
         db.refresh(attempt)
@@ -176,6 +179,12 @@ def get_attempt_workspace(
             "test_id": attempt.test_id,
         },
     ).mappings().all()
+
+    sections = db.execute(text("SELECT sections FROM tests WHERE test_id = :t"), {"t": attempt.test_id}).scalar()
+    if isinstance(sections, str):
+        import json
+        sections = json.loads(sections)
+    rows = section_order(rows, sections, student_id, attempt.test_id, subject_of=lambda r: r["subject"], id_of=lambda r: r["question_id"])
 
     now = datetime.now(timezone.utc)
 
@@ -347,12 +356,7 @@ def submit_attempt(
             tzinfo=timezone.utc
         )
 
-    if now >= expires_at:
-        attempt.status = AttemptStatus.AUTO_SUBMITTED
-    else:
-        attempt.status = AttemptStatus.SUBMITTED
-
-    attempt.submitted_at = now
+    finish(attempt, now, "TIME_EXPIRED" if now >= expires_at else "STUDENT")
 
     db.commit()
     db.refresh(attempt)

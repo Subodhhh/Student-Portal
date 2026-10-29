@@ -31,6 +31,8 @@ class ResultListItem(BaseModel):
 
     test_name: str
     global_occurrence_id: UUID | None = None   # a unified Global Test: not owned by provider_id (only its anchor), labelled "Global Test"
+    is_retake: bool = False                    # the result of a provider-authorized retake
+    superseded: bool = False                   # an original replaced by its evaluated retake (kept for audit; not official)
     provider_id: UUID
     provider_name: str
 
@@ -55,6 +57,8 @@ class ResultListItem(BaseModel):
 
 class SubjectPerformance(BaseModel):
     subject: str
+    status: str | None = None        # unified Global Test: PAPER, or why the student had no paper for this subject
+    message: str | None = None
 
     total_questions: int
     attempted_questions: int

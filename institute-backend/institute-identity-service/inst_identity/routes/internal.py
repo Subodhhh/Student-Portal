@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from institute_common.audit_forward import ingest_events
-from institute_common.core.security import authenticate_session, load_assignments, load_teaching, principal_payload
+from institute_common.core.security import authenticate_principal, principal_payload
 from institute_common.database import get_db
 from institute_common.internal_http import require_internal_key
 from fastapi import HTTPException
@@ -22,8 +22,8 @@ class Introspect(BaseModel):
 def introspect(body: Introspect, db: Session = Depends(get_db)):
     """Who owns this browser session? Validates it (and slides the idle timeout), checks the CSRF token for unsafe methods and returns the
     caller's identity, role assignments and teaching assignments. 401/403 mirror what the public API answers."""
-    staff, data = authenticate_session(db, body.session_id, body.method, body.csrf_token)
-    return principal_payload(staff, load_assignments(db, staff.staff_id), load_teaching(db, staff.staff_id), data["csrf"])
+    staff, assignments, teaching, data = authenticate_principal(db, body.session_id, body.method, body.csrf_token)
+    return principal_payload(staff, assignments, teaching, data["csrf"])
 
 
 class AuditBatch(BaseModel):

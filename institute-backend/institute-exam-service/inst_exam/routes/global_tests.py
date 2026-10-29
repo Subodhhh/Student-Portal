@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit
@@ -143,29 +143,57 @@ def _test(db: Session, p: Principal, test_id: UUID) -> GlobalTest:
 
 
 def _out(db: Session, t: GlobalTest) -> GlobalTestOut:
+    return _outs(db, [t])[0]
+
+
+def _outs(db: Session, tests: list[GlobalTest]) -> list[GlobalTestOut]:
+    """GlobalTestOut for each test, with sections, subjects, publishers and date counts loaded for the whole page in one statement each
+    (a list used to run ~7 statements per test)."""
+    ids = [t.test_id for t in tests]
+    if not ids:
+        return []
+    sections: dict = {}
     rows = db.execute(select(GlobalTestSection, PaperVersion, Paper)
                       .join(PaperVersion, PaperVersion.paper_version_id == GlobalTestSection.paper_version_id)
                       .join(Paper, Paper.paper_id == PaperVersion.paper_id)
-                      .where(GlobalTestSection.test_id == t.test_id).order_by(GlobalTestSection.position)).all()
+                      .where(GlobalTestSection.test_id.in_(ids)).order_by(GlobalTestSection.position)).all()
     names = {sid: n for sid, n in db.execute(select(Subject.subject_id, Subject.name).where(Subject.subject_id.in_({s.subject_id for s, _, _ in rows})))} if rows else {}
-    sections = [SectionOut(position=s.position, subject_id=s.subject_id, subject=names.get(s.subject_id), paper_id=pp.paper_id, paper_title=pp.title,
-                           paper_version_id=v.paper_version_id, version_no=v.version_no, version_status=v.status,
-                           question_count=v.question_count, total_marks=v.total_marks) for s, v, pp in rows]
-    publisher = db.get(Staff, t.published_by) if t.published_by else None
-    subjects = [{"subject_id": sid, "subject": name} for sid, name in db.execute(
-        select(GlobalTestSubject.subject_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
-        .where(GlobalTestSubject.test_id == t.test_id).order_by(GlobalTestSubject.position))]
-    counts = {status: n for status, n in db.execute(select(GlobalTestOccurrence.status, func.count()).where(GlobalTestOccurrence.test_id == t.test_id)
-                                                      .group_by(GlobalTestOccurrence.status))}
-    counts["GENERATED"] = db.scalar(select(func.count()).where(GlobalTestOccurrence.test_id == t.test_id, GlobalTestOccurrence.generated_at.is_not(None))) or 0
-    upcoming = db.scalar(select(func.min(GlobalTestOccurrence.start_at)).where(GlobalTestOccurrence.test_id == t.test_id,
-                                                                              GlobalTestOccurrence.status == "PUBLISHED", GlobalTestOccurrence.start_at > utcnow()))
-    return GlobalTestOut(test_id=t.test_id, name=t.name, description=t.description, exam_type=t.exam_type, target_class=t.target_class,
-                         duration_minutes=t.duration_minutes, status=t.status, derived_from_test_id=t.derived_from_test_id,
-                         created_at=t.created_at, published_at=t.published_at, publisher=publisher.full_name if publisher else None,
-                         question_count=sum(x.question_count for x in sections), total_marks=sum((x.total_marks for x in sections), Decimal(0)),
-                         sections=sections, kind=t.kind, subjects=subjects, marking_mode=t.marking_mode, marks_correct=t.marks_correct,
-                         marks_wrong=t.marks_wrong, generate_lead_minutes=t.generate_lead_minutes, occurrences=counts, next_occurrence_at=upcoming)
+    for sec, v, pp in rows:
+        sections.setdefault(sec.test_id, []).append(SectionOut(
+            position=sec.position, subject_id=sec.subject_id, subject=names.get(sec.subject_id), paper_id=pp.paper_id, paper_title=pp.title,
+            paper_version_id=v.paper_version_id, version_no=v.version_no, version_status=v.status, question_count=v.question_count,
+            total_marks=v.total_marks))
+    publishers = {sid: n for sid, n in db.execute(select(Staff.staff_id, Staff.full_name).where(
+        Staff.staff_id.in_({t.published_by for t in tests if t.published_by})))} if any(t.published_by for t in tests) else {}
+    subjects: dict = {}
+    for tid, sid, name in db.execute(select(GlobalTestSubject.test_id, GlobalTestSubject.subject_id, Subject.name)
+                                     .join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
+                                     .where(GlobalTestSubject.test_id.in_(ids)).order_by(GlobalTestSubject.test_id, GlobalTestSubject.position)):
+        subjects.setdefault(tid, []).append({"subject_id": sid, "subject": name})
+    counts: dict = {tid: {} for tid in ids}
+    for tid, status, n in db.execute(select(GlobalTestOccurrence.test_id, GlobalTestOccurrence.status, func.count())
+                                     .where(GlobalTestOccurrence.test_id.in_(ids)).group_by(GlobalTestOccurrence.test_id, GlobalTestOccurrence.status)):
+        counts[tid][status] = n
+    now = utcnow()
+    generated = {tid: 0 for tid in ids}
+    upcoming: dict = {}
+    for tid, gen, nxt in db.execute(select(GlobalTestOccurrence.test_id, func.count(GlobalTestOccurrence.generated_at),
+                                           func.min(case((and_(GlobalTestOccurrence.status == "PUBLISHED", GlobalTestOccurrence.start_at > now),
+                                                          GlobalTestOccurrence.start_at))))
+                                    .where(GlobalTestOccurrence.test_id.in_(ids)).group_by(GlobalTestOccurrence.test_id)):
+        generated[tid], upcoming[tid] = gen or 0, nxt
+    out = []
+    for t in tests:
+        secs = sections.get(t.test_id, [])
+        occ = {**counts[t.test_id], "GENERATED": generated[t.test_id]}
+        out.append(GlobalTestOut(test_id=t.test_id, name=t.name, description=t.description, exam_type=t.exam_type, target_class=t.target_class,
+                                 duration_minutes=t.duration_minutes, status=t.status, derived_from_test_id=t.derived_from_test_id,
+                                 created_at=t.created_at, published_at=t.published_at, publisher=publishers.get(t.published_by),
+                                 question_count=sum(x.question_count for x in secs), total_marks=sum((x.total_marks for x in secs), Decimal(0)),
+                                 sections=secs, kind=t.kind, subjects=subjects.get(t.test_id, []), marking_mode=t.marking_mode,
+                                 marks_correct=t.marks_correct, marks_wrong=t.marks_wrong, generate_lead_minutes=t.generate_lead_minutes,
+                                 occurrences=occ, next_occurrence_at=upcoming.get(t.test_id)))
+    return out
 
 
 def _write_subjects(db: Session, t: GlobalTest, subject_ids: list[UUID]) -> None:
@@ -220,7 +248,7 @@ def list_global_tests(status: str | None = Query(default=None, pattern="^(DRAFT|
     if q:
         stmt = stmt.where(func.lower(GlobalTest.name).contains(q.lower()))
     res = paginate(db, stmt.order_by(GlobalTest.created_at.desc()), page, page_size)
-    res["items"] = [_out(db, t) for t in res["items"]]
+    res["items"] = _outs(db, list(res["items"]))
     return res
 
 

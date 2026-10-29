@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +31,12 @@ class Test(Base):
     # the provider/branch above, which is only the Institute side's anchor.
     global_occurrence_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
+        nullable=True,
+    )
+
+    # Unified Global Test: every configured subject in order, with its delivered question count or why there is no paper.
+    sections: Mapped[list | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),     # jsonb: the listings use SELECT DISTINCT (plain json has no equality)
         nullable=True,
     )
 

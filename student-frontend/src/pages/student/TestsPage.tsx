@@ -34,6 +34,14 @@ type Enrollment = {
   }[];
 };
 
+type TestSection = {
+  position: number;
+  subject: string;
+  status: string;                // PAPER, or why there is no paper for this student
+  message: string | null;
+  question_count: number;
+};
+
 type Test = {
   test_id: string;
   name: string;
@@ -55,6 +63,7 @@ type Test = {
   end_at: string | null;
   status: string;
   global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
+  sections?: TestSection[] | null;       // every configured subject, in order (unified Global Test only)
 };
 
 type Attempt = {
@@ -391,6 +400,12 @@ function TestsPage() {
                 </div>
 
                 <div className="test-card-action">
+                  {test.total_questions === 0 ? (
+                    // a Global Test card without any paper for this student: it explains each subject, nothing to start
+                    <button type="button" className="test-details-link" onClick={() => window.location.assign(`/tests/${test.test_id}`)}>
+                      No paper available · View Details
+                    </button>
+                  ) : (
                   <button
                     type="button"
                     className={
@@ -406,6 +421,7 @@ function TestsPage() {
                       ? "Resume Test"
                       : "Start Test"}
                   </button>
+                  )}
                 </div>
               </article>
             );

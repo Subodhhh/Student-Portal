@@ -5,15 +5,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.test_result import TestResult
-from app.services.reevaluation import score
 from app.repositories.result_repository import (
-    get_review_window,
     create_result,
     get_attempt,
     get_existing_result,
     get_questions_with_answers,
+    get_review_window,
     get_student_results,
 )
+from app.services.question_order import section_order
+from app.services.reevaluation import score
 
 
 def evaluate_attempt(
@@ -119,6 +120,15 @@ def get_results_for_student(
         db=db,
         student_id=student_id,
     )
+
+def _sections(db: Session, test_id):
+    from sqlalchemy import text
+    value = db.execute(text("SELECT sections FROM tests WHERE test_id = :t"), {"t": test_id}).scalar()
+    if isinstance(value, str):
+        import json
+        value = json.loads(value)
+    return value
+
 
 def get_result_details(
     db: Session,
@@ -235,6 +245,18 @@ def get_result_details(
         )
 
         subject_performance.append(subject_data)
+
+    sections = _sections(db, result["test_id"])
+    if sections:
+        # a unified Global Test: every configured subject in the configured order; one without a paper is shown as unavailable with
+        # no questions and no marks (nothing is invented); the subjects with questions are exactly the ones scored above
+        by_name = {s["subject"]: s for s in subject_performance}
+        subject_performance = [{**(by_name.get(x["subject"]) or {"subject": x["subject"], "total_questions": 0, "attempted_questions": 0,
+                                                                 "correct_answers": 0, "incorrect_answers": 0, "unanswered_questions": 0,
+                                                                 "total_marks": 0, "obtained_marks": 0, "accuracy": 0.0}),
+                                "status": x["status"], "message": x.get("message")} for x in sections]
+        question_reviews = section_order(question_reviews, sections, student_id, result["test_id"],
+                                         subject_of=lambda q: q["subject"], id_of=lambda q: q["question_id"])
 
     return {
         "result": result,

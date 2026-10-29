@@ -373,6 +373,9 @@ class FakeResults:
         self.rows = rows
         self.asked = []
 
+    def exam_subject_results(self, test_id):
+        return []
+
     def exam_results(self, test_id):
         self.asked.append(test_id)
         return self.rows

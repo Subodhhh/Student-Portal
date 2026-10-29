@@ -57,17 +57,15 @@ class ProviderSummary(ProviderOut):
 def _counts(db: Session, provider_ids: list[UUID]) -> dict[UUID, dict[str, int]]:
     if not provider_ids:
         return {}
+    # the three counts per provider in one statement (scalar subqueries), not one round trip each
+    branches = (select(func.count()).where(Branch.provider_id == Provider.provider_id, Branch.deleted_at.is_(None)).scalar_subquery())
+    staff = (select(func.count(func.distinct(StaffRoleAssignment.staff_id)))
+             .where(StaffRoleAssignment.provider_id == Provider.provider_id, StaffRoleAssignment.status == "ACTIVE").scalar_subquery())
+    students = (select(func.count(func.distinct(Enrollment.student_id)))
+                .where(Enrollment.provider_id == Provider.provider_id, Enrollment.status == "ACTIVE").scalar_subquery())
     out = {pid: {"branch_count": 0, "staff_count": 0, "student_count": 0} for pid in provider_ids}
-    for pid, n in db.execute(select(Branch.provider_id, func.count()).where(Branch.provider_id.in_(provider_ids), Branch.deleted_at.is_(None))
-                             .group_by(Branch.provider_id)):
-        out[pid]["branch_count"] = n
-    for pid, n in db.execute(select(StaffRoleAssignment.provider_id, func.count(func.distinct(StaffRoleAssignment.staff_id)))
-                             .where(StaffRoleAssignment.provider_id.in_(provider_ids), StaffRoleAssignment.status == "ACTIVE")
-                             .group_by(StaffRoleAssignment.provider_id)):
-        out[pid]["staff_count"] = n
-    for pid, n in db.execute(select(Enrollment.provider_id, func.count(func.distinct(Enrollment.student_id)))
-                             .where(Enrollment.provider_id.in_(provider_ids), Enrollment.status == "ACTIVE").group_by(Enrollment.provider_id)):
-        out[pid]["student_count"] = n
+    for pid, b, st, sd in db.execute(select(Provider.provider_id, branches, staff, students).where(Provider.provider_id.in_(provider_ids))):
+        out[pid] = {"branch_count": b or 0, "staff_count": st or 0, "student_count": sd or 0}
     return out
 
 

@@ -12,12 +12,13 @@ Exams generated before unified generation have no source_submission_id and keep 
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
 from institute_common.core.roles import Role
 from institute_common.core.security import Principal
-from institute_common.models.exams import Exam, ExamPlanSubject, ExamVersion, ExamVersionPaper, GlobalPaperSubmission, StudentExamAssignment
+from institute_common.models.exams import (Exam, ExamPlanSubject, ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTestStudent,
+                                           StudentExamAssignment)
 from institute_common.models.org import Enrollment
 from inst_exam.services import teacher_scope
 
@@ -30,20 +31,49 @@ class SubjectScope:
 
 
 def unified_plan_clause(plan_id_column):
-    return exists().where(ExamPlanSubject.plan_id == plan_id_column, ExamPlanSubject.source_submission_id.is_not(None))
+    """Per-student rows of a date name the plan, or (dates generated before those rows) its slots come from submissions."""
+    return or_(exists().where(GlobalTestStudent.plan_id == plan_id_column),
+               exists().where(ExamPlanSubject.plan_id == plan_id_column, ExamPlanSubject.source_submission_id.is_not(None)))
 
 
 def unified_exam_clause(exam_id_column):
-    return exists().where(ExamVersion.exam_id == exam_id_column, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id,
-                          ExamVersionPaper.source_submission_id.is_not(None))
+    """Per-student rows of a date name the exam (also an exam without any paper), or its manifest comes from submissions."""
+    return or_(exists().where(GlobalTestStudent.exam_id == exam_id_column),
+               exists().where(ExamVersion.exam_id == exam_id_column, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id,
+                              ExamVersionPaper.source_submission_id.is_not(None)))
 
 
 def is_unified_plan(db: Session, plan_id: UUID) -> bool:
-    return bool(db.scalar(select(unified_plan_clause(plan_id))))
+    cache = db.info.setdefault("unified_plan", {})           # per session (one request): a plan never changes kind once generated
+    if plan_id not in cache:
+        cache[plan_id] = bool(db.scalar(select(unified_plan_clause(plan_id))))
+    return cache[plan_id]
+
+
+def prefetch_unified_plans(db: Session, plan_ids) -> None:
+    """Which of these plans are unified, in one statement (list pages ask for every plan)."""
+    from institute_common.models.exams import ExamPlan
+    cache = db.info.setdefault("unified_plan", {})
+    wanted = [i for i in plan_ids if i not in cache]
+    if wanted:
+        found = set(db.scalars(select(ExamPlan.plan_id).where(ExamPlan.plan_id.in_(wanted), unified_plan_clause(ExamPlan.plan_id))))
+        cache.update({i: i in found for i in wanted})
 
 
 def is_unified_exam(db: Session, exam_id: UUID) -> bool:
-    return bool(db.scalar(select(unified_exam_clause(exam_id))))
+    cache = db.info.setdefault("unified_exam", {})          # per session (one request): an exam never changes kind once generated
+    if exam_id not in cache:
+        cache[exam_id] = bool(db.scalar(select(unified_exam_clause(exam_id))))
+    return cache[exam_id]
+
+
+def prefetch_unified_exams(db: Session, exam_ids) -> None:
+    """Which of these exams are unified, in one statement (list pages ask for every row)."""
+    cache = db.info.setdefault("unified_exam", {})
+    wanted = [i for i in exam_ids if i not in cache]
+    if wanted:
+        found = set(db.scalars(select(Exam.exam_id).where(Exam.exam_id.in_(wanted), unified_exam_clause(Exam.exam_id))))
+        cache.update({i: i in found for i in wanted})
 
 
 def is_platform(p: Principal, perm: str) -> bool:
@@ -63,9 +93,18 @@ def contributions(db: Session, exam_id: UUID) -> dict[UUID, set[UUID]]:
 
 
 def scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope | None:
-    """None = the whole exam (platform roles). Otherwise the caller's subjects and students; empty when they have none."""
+    """None = the whole exam (platform roles). Otherwise the caller's subjects and students; empty when they have none. Computed once per
+    request (session) for a caller, permission and exam: list pages ask for it more than once per row."""
     if is_platform(p, perm):
         return None
+    cache = db.info.setdefault("unified_scope", {})
+    key = (p.staff_id, perm, exam.exam_id)
+    if key not in cache:
+        cache[key] = _scope(db, p, perm, exam)
+    return cache[key]
+
+
+def _scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope:
     assigned = [sid for (sid,) in db.execute(select(StudentExamAssignment.student_id).where(StudentExamAssignment.exam_id == exam.exam_id))]
     students: set[str] = set()
     subjects: set[UUID] = set()

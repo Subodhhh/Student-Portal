@@ -45,7 +45,7 @@ export default function TestWizardPage() {
   if (params.get("global")) return <Navigate to={`/tests/global/${params.get("global")}/schedule`} replace />;
   return (
     <>
-      <PageHeader crumbs={[<Link key="plans" to="/exam-plans">Exam Plans</Link>, "Create a test"]} title="Create a test"
+      <PageHeader crumbs={[<Link key="plans" to="/tests">Scheduled Tests</Link>, "Create a test"]} title="Create a test"
         subtitle="Choose who takes it, where its questions come from, its rules, then review and schedule it." />
       <NeedBranch>{({ providerId, branchId }) => <Wizard key={branchId} providerId={providerId} branchId={branchId} />}</NeedBranch>
     </>
@@ -183,9 +183,9 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
     return (
       <Card>
         <h2>{result.plan.status === "DRAFT" ? "Draft saved" : result.job ? "Test generated" : "Test scheduled"}</h2>
-        {result.plan.status === "DRAFT" && <p>The plan “{result.plan.name}” is saved as a draft. It generates nothing until you activate it on the Exam Plans page.</p>}
+        {result.plan.status === "DRAFT" && <p>The plan “{result.plan.name}” is saved as a draft. It generates nothing until you activate it on the Scheduled Tests page.</p>}
         {result.plan.status !== "DRAFT" && !result.job && <p>“{result.plan.name}” is scheduled.{eff.generateAt ? ` It is generated automatically at ${fmt(eff.generateAt)}.`
-          : kind === "global" ? " Generate it from the Global Test's page when you are ready." : " Generate it from the Exam Plans page when you are ready."}</p>}
+          : kind === "global" ? " Generate it from the Global Test's page when you are ready." : " Generate it from the Scheduled Tests page when you are ready."}</p>}
         {result.job && (
           <Alert kind={result.job.status === "FAILED" ? "error" : result.job.status === "PARTIAL" ? "warn" : "success"}>
             Generation {result.job.status.toLowerCase()}{result.job.error ? `: ${result.job.error}` : ""}.
@@ -194,7 +194,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
           </Alert>
         )}
         <div className="row">{kind === "global" ? <Link className="btn secondary" to={`/tests/global/${globalId}`}>Back to the Global Test</Link>
-          : <Link className="btn secondary" to="/exam-plans">Back to Exam Plans</Link>}</div>
+          : <Link className="btn secondary" to="/tests">Back to Scheduled Tests</Link>}</div>
       </Card>
     );
   }

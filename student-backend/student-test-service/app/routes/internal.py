@@ -45,6 +45,14 @@ class QuestionIn(BaseModel):
     negative_marks: int = Field(ge=0)
 
 
+class SectionIn(BaseModel):
+    position: int = Field(ge=1, le=100)
+    subject: str = Field(min_length=1, max_length=100)
+    status: str = Field(pattern="^(PAPER|NOT_ENROLLED|NO_SUBMISSION|NOT_APPROVED|NOT_COVERED|CONFLICT)$")
+    message: str | None = Field(default=None, max_length=500)
+    question_count: int = Field(ge=0)
+
+
 class ExamIn(BaseModel):
     operation: str = Field(pattern="^(PUBLISH|CANCEL)$")
     exam_version_id: uuid.UUID
@@ -58,6 +66,7 @@ class ExamIn(BaseModel):
     questions: list[QuestionIn] = Field(default_factory=list, max_length=1000)
     student_ids: list[str] = Field(default_factory=list, max_length=20000)
     global_occurrence_id: uuid.UUID | None = None      # a unified Global Test exam
+    sections: list[SectionIn] | None = Field(default=None, max_length=100)   # unified Global Test: every configured subject, in order
 
     @field_validator("start_at", "end_at")
     @classmethod
@@ -76,6 +85,22 @@ def _to_session_naive(db: Session, dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _check_sections(body: ExamIn) -> None:
+    """Sections (a unified Global Test) must describe exactly the delivered questions: positions 1..n, every PAPER section's questions
+    delivered with that subject and count, no question of any other subject, and an unavailable section without questions. An exam
+    without any question is accepted only in that form (a card that explains every subject and cannot be started)."""
+    if not body.sections:
+        return
+    if sorted(x.position for x in body.sections) != list(range(1, len(body.sections) + 1)) or len({x.subject for x in body.sections}) != len(body.sections):
+        raise HTTPException(status_code=422, detail="Sections need positions 1..n and distinct subjects")
+    delivered: dict[str, int] = {}
+    for q in body.questions:
+        delivered[q.subject or ""] = delivered.get(q.subject or "", 0) + 1
+    expected = {x.subject: x.question_count for x in body.sections if x.status == "PAPER"}
+    if delivered != expected or any(x.question_count or not x.message for x in body.sections if x.status != "PAPER"):
+        raise HTTPException(status_code=422, detail="Sections do not match the delivered questions")
+
+
 @router.post("/exams", status_code=201)
 def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
     existing = db.get(test_models.Test, body.exam_version_id)
@@ -87,7 +112,8 @@ def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
 
     if existing:
         return {"status": "already_published"}  # immutable: replays are acknowledged, not rewritten
-    if not body.questions:
+    _check_sections(body)
+    if not body.questions and not body.sections:
         raise HTTPException(status_code=422, detail="An exam needs at least one question")
     if [q.order for q in body.questions] != list(range(1, len(body.questions) + 1)):
         raise HTTPException(status_code=422, detail="Question orders must be 1..n without gaps")
@@ -99,7 +125,8 @@ def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
 
     db.add(test_models.Test(
         test_id=body.exam_version_id, provider_id=body.provider_id, branch_id=body.branch_id, name=body.name,
-        global_occurrence_id=body.global_occurrence_id, description=body.description, duration_minutes=body.duration_minutes, total_questions=len(body.questions),
+        global_occurrence_id=body.global_occurrence_id, sections=[x.model_dump() for x in body.sections] if body.sections else None,
+        description=body.description, duration_minutes=body.duration_minutes, total_questions=len(body.questions),
         total_marks=sum(q.marks for q in body.questions), start_at=_to_session_naive(db, body.start_at),
         end_at=_to_session_naive(db, body.end_at), status="ACTIVE",
     ))

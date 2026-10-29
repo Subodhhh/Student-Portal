@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from institute_common.config import settings
@@ -199,14 +199,41 @@ def _unauth() -> HTTPException:
     return api_error(401, "NOT_AUTHENTICATED", "Not authenticated.")
 
 
+def load_principal(db: Session, staff_id: UUID) -> tuple[Staff | None, list[StaffRoleAssignment], list[TeacherSubjectAssignment]]:
+    """The account with its ACTIVE role and teaching assignments in ONE statement (every API request authenticates; each statement is a
+    database round trip). Same rows as db.get + load_assignments + load_teaching."""
+    rows = db.execute(
+        select(Staff, StaffRoleAssignment, TeacherSubjectAssignment)
+        .outerjoin(StaffRoleAssignment, and_(StaffRoleAssignment.staff_id == Staff.staff_id, StaffRoleAssignment.status == "ACTIVE"))
+        .outerjoin(TeacherSubjectAssignment, and_(TeacherSubjectAssignment.staff_id == Staff.staff_id, TeacherSubjectAssignment.status == "ACTIVE"))
+        .where(Staff.staff_id == staff_id)
+    ).all()
+    if not rows:
+        return None, [], []
+    assignments = list({a.assignment_id: a for _s, a, _t in rows if a is not None}.values())
+    teaching = list({t.teaching_id: t for _s, _a, t in rows if t is not None}.values())
+    return rows[0][0], assignments, teaching
+
+
+def authenticate_principal(db: Session, sid: str | None, method: str, csrf_header: str):
+    """authenticate_session + the caller's ACTIVE role and teaching assignments, in one database round trip."""
+    staff, data, assignments, teaching = _authenticate(db, sid, method, csrf_header)
+    return staff, assignments, teaching, data
+
+
 def authenticate_session(db: Session, sid: str | None, method: str, csrf_header: str) -> tuple[Staff, dict]:
     """Identity-service logic: validate the session (sliding idle window), the account status and, for unsafe methods, the CSRF token."""
+    staff, data, _a, _t = _authenticate(db, sid, method, csrf_header)
+    return staff, data
+
+
+def _authenticate(db: Session, sid: str | None, method: str, csrf_header: str):
     if not sid:
         raise _unauth()
     data = sessions.get_session(sid)
     if not data:
         raise _unauth()
-    staff = db.get(Staff, UUID(data["staff_id"]))
+    staff, assignments, teaching = load_principal(db, UUID(data["staff_id"]))
     if not staff or staff.status != "ACTIVE":
         sessions.delete_session(sid)
         raise _unauth()
@@ -214,7 +241,7 @@ def authenticate_session(db: Session, sid: str | None, method: str, csrf_header:
         import hmac
         if not hmac.compare_digest(csrf_header or "", data["csrf"]):
             raise api_error(403, "CSRF_FAILED", "Missing or invalid CSRF token.")
-    return staff, data
+    return staff, data, assignments, teaching
 
 
 def load_teaching(db: Session, staff_id: UUID) -> list[TeacherSubjectAssignment]:
@@ -263,8 +290,8 @@ def get_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
     origin_check(request)
     sid = request.cookies.get(cookie_name())
     if current_service() == "identity" or current_service() is None:
-        staff, data = authenticate_session(db, sid, request.method, request.headers.get("x-csrf-token", ""))
-        return Principal(staff, load_assignments(db, staff.staff_id), load_teaching(db, staff.staff_id), sid, data["csrf"], client_ip(request))
+        staff, assignments, teaching, data = authenticate_principal(db, sid, request.method, request.headers.get("x-csrf-token", ""))
+        return Principal(staff, assignments, teaching, sid, data["csrf"], client_ip(request))
     # Every other service asks the identity service (the owner of sessions, accounts and roles) who is calling.
     if not sid:
         raise _unauth()

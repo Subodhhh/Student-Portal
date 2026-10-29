@@ -1526,3 +1526,29 @@ body,
     width: 100%;
   }
 }
+/* A configured Global Test subject without a paper for this student: its tab explains why. */
+.test-attempt-empty-section {
+  padding: 32px 24px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.test-attempt-empty-section h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.test-attempt-empty-section p {
+  margin: 0;
+}
+
+/* Exam integrity */
+.test-attempt-rules ul { text-align: left; margin: 12px 0 20px; padding-left: 20px; line-height: 1.5; }
+.test-attempt-warnings { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: #f1f5f9; color: #334155; font-size: 0.9rem; }
+.test-attempt-warnings.active { background: #fef3c7; color: #92400e; }
+.test-attempt-fullscreen { margin-left: 12px; }
+.test-attempt-review-form { display: flex; flex-direction: column; gap: 8px; text-align: left; margin: 16px 0; }
+.test-attempt-review-form textarea { min-height: 90px; }
+.test-attempt-review-status { margin: 16px 0; }

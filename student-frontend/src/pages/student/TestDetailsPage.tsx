@@ -4,6 +4,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import "../../styles/test-details.css";
 import { TEST_API_URL } from "../../services/api";
 
+type TestSection = {
+  position: number;
+  subject: string;
+  status: string;                // PAPER, or why there is no paper for this student
+  message: string | null;
+  question_count: number;
+};
+
 type Test = {
   test_id: string;
   name: string;
@@ -15,6 +23,7 @@ type Test = {
   end_at: string | null;
   status: string;
   global_occurrence_id?: string | null;  // a unified Global Test: one exam with papers from your institutes
+  sections?: TestSection[] | null;       // every configured subject, in order (unified Global Test only)
 
   provider: {
     provider_id: string;
@@ -271,7 +280,27 @@ function TestDetailsPage() {
         </div>
       </div>
 
-      {isAvailable && (
+      {test.sections && test.sections.length > 0 && (
+        <div className="test-details-sections">
+          <h3>Subjects</h3>
+          <ul>
+            {[...test.sections].sort((a, b) => a.position - b.position).map((section) => (
+              <li key={section.subject} className={section.status === "PAPER" ? "available" : "unavailable"}>
+                <strong>{section.subject}</strong>
+                <span>{section.status === "PAPER" ? `${section.question_count} question(s)` : section.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isAvailable && test.total_questions === 0 && (
+        <p className="test-details-unavailable" role="status">
+          No paper is available to you in this test, so it cannot be started. Each subject above explains why.
+        </p>
+      )}
+
+      {isAvailable && test.total_questions > 0 && (
         <div className="test-details-action">
           <button
             type="button"

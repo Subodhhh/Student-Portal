@@ -32,11 +32,12 @@ from institute_common.database import utcnow
 from institute_common.models.exams import (
     ExamPlanBranch,
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
-    ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, GlobalTestSection, StudentExamAssignment,
+    ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, GlobalTestSection, GlobalTestStudent, GlobalTestStudentSubject,
+    StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch
 from institute_common.core.class_levels import class_target
-from institute_common.models.academics import EnrollmentAcademicProfile, EnrollmentBatchSubject, Subject
+from institute_common.models.academics import BatchSubject, EnrollmentAcademicProfile, EnrollmentBatchSubject, Subject
 from institute_common.models.papers import Paper, PaperShare, PaperVersion
 from inst_exam.services.notify import notify, responsible_staff
 
@@ -149,7 +150,7 @@ UNMATCHABLE = "!unmatchable"   # a class code no enrollment has: a plan whose ta
 
 def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
     """The plan's audience resolved from CURRENT data (see `resolve_audience`), including its Class (plan.target_class)."""
-    if unified_sources(db, plan.plan_id):
+    if unified_plan(db, plan.plan_id):
         return unified_students(db, plan)
     class_level, problem = class_target(plan.target_class)
     if problem:                 # fail-safe for every reader (generation itself refuses such a plan before calling this)
@@ -162,6 +163,26 @@ def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -
     subject_ids = list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)))
     return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids,
                             subject_ids=subject_ids, class_level=class_level, report=report)
+
+
+def unified_plan(db: Session, plan_id: UUID) -> bool:
+    """A unified Global Test plan: it has per-student rows of its date (global_test_students), or (dates generated before those rows
+    existed) its slots come from provider submissions."""
+    return bool(db.scalar(select(GlobalTestStudent.student_id).where(GlobalTestStudent.plan_id == plan_id).limit(1))) \
+        or bool(unified_sources(db, plan_id))
+
+
+def unified_layout(db: Session, plan: ExamPlan) -> list[dict]:
+    """The configured subjects of a unified plan in order, each with the paper or the reason there is none (all students of one plan
+    share it). Empty for plans of dates generated before per-student rows existed."""
+    first = db.scalar(select(GlobalTestStudent.student_id).where(GlobalTestStudent.plan_id == plan.plan_id).order_by(GlobalTestStudent.student_id).limit(1))
+    if first is None:
+        return []
+    rows = db.execute(select(GlobalTestStudentSubject, Subject.name).join(Subject, Subject.subject_id == GlobalTestStudentSubject.subject_id)
+                      .where(GlobalTestStudentSubject.occurrence_id == plan.global_occurrence_id, GlobalTestStudentSubject.student_id == first)
+                      .order_by(GlobalTestStudentSubject.position)).all()
+    return [{"position": c.position, "subject_id": str(c.subject_id), "subject": name, "status": c.status,
+             "provider_id": str(c.provider_id) if c.provider_id else None} for c, name in rows]
 
 
 def unified_sources(db: Session, plan_id: UUID) -> list[GlobalPaperSubmission]:
@@ -177,6 +198,14 @@ def unified_students(db: Session, plan: ExamPlan) -> list[tuple[str, str, UUID |
     sources = unified_sources(db, plan.plan_id)
     listed = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id)
                                            .order_by(ExamPlanStudent.student_id))]
+    if not sources:
+        # a group without any usable paper: still enrolled (reference enrollment, else any ACTIVE one) -> a card that cannot be started
+        ref = dict(db.execute(select(GlobalTestStudent.student_id, GlobalTestStudent.enrollment_id).where(GlobalTestStudent.plan_id == plan.plan_id)).all())
+        current: dict[str, list[str]] = {}
+        for sid, eid in db.execute(select(Enrollment.student_id, Enrollment.enrollment_id).where(Enrollment.status == "ACTIVE", Enrollment.student_id.in_(listed or [""]))
+                                   .order_by(Enrollment.enrolled_at, Enrollment.enrollment_id)):
+            current.setdefault(sid, []).append(eid)
+        return [(sid, ref[sid] if ref.get(sid) in current[sid] else current[sid][0], None) for sid in listed if sid in current]
     active: dict[UUID, dict[str, list[tuple[str, UUID]]]] = {}
     for prov in {s.provider_id for s in sources}:
         rows: dict[str, list[tuple[str, UUID]]] = {}
@@ -207,9 +236,51 @@ def subjects_taken(db: Session, enrollment_ids) -> dict[tuple[str, UUID], set[UU
     return out
 
 
+def batch_subjects(db: Session, batch_ids) -> dict[UUID, set[UUID]]:
+    """batch_id -> the subjects that batch offers (what a membership without a subject selection takes, for Global Tests)."""
+    out: dict[UUID, set[UUID]] = {}
+    for bid, sid in db.execute(select(BatchSubject.batch_id, BatchSubject.subject_id).where(BatchSubject.batch_id.in_(list(batch_ids) or [None]))):
+        out.setdefault(bid, set()).add(sid)
+    return out
+
+
+def _snapshot(db: Session, provider_id: UUID) -> dict | None:
+    """One provider's resolution inputs in 6 statements, when the request opted in (db.info["audience_snapshot"]): a page that resolves
+    many submissions of the same providers (the Global date page) then applies resolve_audience's rules in memory instead of ~5 round
+    trips per submission. Generation and every other caller keep the query path."""
+    if not db.info.get("audience_snapshot"):
+        return None
+    cache = db.info.setdefault("audience_snapshot_data", {})
+    if provider_id not in cache:
+        # every provider the page announced (db.info["audience_snapshot_providers"]) in the same 6 statements
+        provs = sorted({provider_id, *db.info.get("audience_snapshot_providers", ())} - set(cache), key=str)
+        rows = db.execute(select(Enrollment.provider_id, Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id, EnrollmentBatch.batch_id)
+                          .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
+                          .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
+                          .where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE", Batch.status == "ACTIVE",
+                                 Batch.branch_id == Enrollment.branch_id)).all()
+        eids, bids = {r[2] for r in rows}, {r[4] for r in rows}
+        batch_branch: dict = {}
+        for prov, bid, br in db.execute(select(Branch.provider_id, Batch.batch_id, Batch.branch_id).join(Branch, Branch.branch_id == Batch.branch_id)
+                                        .where(Branch.provider_id.in_(provs))):
+            batch_branch.setdefault(prov, {})[bid] = br
+        active: dict = {}
+        for prov, br in db.execute(select(Branch.provider_id, Branch.branch_id).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE",
+                                                                                     Branch.deleted_at.is_(None))):
+            active.setdefault(prov, set()).add(br)
+        chosen, offered = subjects_taken(db, eids), batch_subjects(db, bids)      # keyed by enrollment/batch: shared safely
+        classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
+                                  .where(EnrollmentAcademicProfile.enrollment_id.in_(eids or {None}))).all())
+        for prov in provs:
+            cache[prov] = {"members": sorted(((s, e, br, b) for p, s, e, br, b in rows if p == prov), key=lambda r: (r[0], r[3])),
+                           "batch_branch": batch_branch.get(prov, {}), "active_branches": active.get(prov, set()),
+                           "chosen": chosen, "offered": offered, "classes": classes}
+    return cache[provider_id]
+
+
 def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_type: str, batch_ids: list[UUID],
                      student_ids: list[str], *, branch_ids: list[UUID] = (), subject_ids=(), class_level: str | None = None,
-                     report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
+                     report: dict | None = None, unselected_takes_batch_subjects: bool = False) -> list[tuple[str, str, UUID | None]]:
     """(student_id, enrollment_id, batch_id), one row per student. Used by generation and by the wizard's audience preview.
 
     BATCHES / BRANCH / INSTITUTE: an ACTIVE enrollment at the provider (in the plan's branch for BATCHES and BRANCH) and an
@@ -219,7 +290,8 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
     TARGETED: the union of whole branches (`branch_ids`, BRANCH rule), batches of any branch of the provider (BATCHES rule in each
     batch's own branch) and listed students (STUDENTS rule); a student reached several ways is assigned once.
     Subject-wise enrollment: with `subject_ids` (the exam's subjects), a batch-based rule counts a membership only if the student takes
-    ALL of them in that batch (a membership without a subject selection takes every subject). Listed students are a staff override
+    ALL of them in that batch (a membership without a subject selection takes every subject; with
+    `unselected_takes_batch_subjects`, used for Global Tests, only the subjects its batch offers). Listed students are a staff override
     and are never filtered by subject.
     Class: with `class_level` (a code from core/class_levels.class_target), batch-based rules also require the ENROLLMENT's academic
     profile to have exactly that Class; enrollments without a profile are excluded. `report` (if given) counts the students excluded
@@ -227,12 +299,17 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
     if audience_type == "TARGETED":
         rows: list[tuple[str, str, UUID | None]] = []
         for b in dict.fromkeys(branch_ids):
-            rows += resolve_audience(db, provider_id, b, "BRANCH", [], [], subject_ids=subject_ids, class_level=class_level, report=report)
+            rows += resolve_audience(db, provider_id, b, "BRANCH", [], [], subject_ids=subject_ids, class_level=class_level, report=report,
+                                     unselected_takes_batch_subjects=unselected_takes_batch_subjects)
         by_branch: dict[UUID, list[UUID]] = {}
-        for bid, br in db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))):
+        snap = _snapshot(db, provider_id)
+        pairs = ([(b, snap["batch_branch"][b]) for b in batch_ids if b in snap["batch_branch"]] if snap is not None
+                 else db.execute(select(Batch.batch_id, Batch.branch_id).where(Batch.batch_id.in_(list(batch_ids) or [None]))).all())
+        for bid, br in pairs:
             by_branch.setdefault(br, []).append(bid)
         for br, bids in by_branch.items():
-            rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [], subject_ids=subject_ids, class_level=class_level, report=report)
+            rows += resolve_audience(db, provider_id, br, "BATCHES", bids, [], subject_ids=subject_ids, class_level=class_level, report=report,
+                                     unselected_takes_batch_subjects=unselected_takes_batch_subjects)
         rows += resolve_audience(db, provider_id, branch_id, "STUDENTS", [], list(student_ids))
         seen: set[str] = set()
         unique = []
@@ -254,6 +331,9 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
                 best[sid] = (sid, eid, None)
         return [best[sid] for sid in sorted(best)]
 
+    snap = _snapshot(db, provider_id)
+    if snap is not None:
+        return _resolve_from_snapshot(snap, branch_id, audience_type, batch_ids, subject_ids, class_level, report, unselected_takes_batch_subjects)
     stmt = (select(Enrollment.student_id, Enrollment.enrollment_id, EnrollmentBatch.batch_id)
             .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
             .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
@@ -272,10 +352,45 @@ def resolve_audience(db: Session, provider_id: UUID, branch_id: UUID, audience_t
     rows = db.execute(stmt.order_by(Enrollment.student_id, EnrollmentBatch.batch_id)).all()
     if subject_ids:
         needed, chosen = set(subject_ids), subjects_taken(db, {eid for _sid, eid, _bid in rows})
-        rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), needed)]
+        if unselected_takes_batch_subjects:
+            offered = batch_subjects(db, {bid for _sid, _eid, bid in rows})
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), offered.get(r[2], set()))]
+        else:
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), needed)]
     if class_level:
         classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
                                   .where(EnrollmentAcademicProfile.enrollment_id.in_({eid for _sid, eid, _bid in rows} or {None}))).all())
+        if report is not None:
+            for key, cond in (("excluded_no_class", lambda c: c is None), ("excluded_other_class", lambda c: c is not None and c != class_level)):
+                report.setdefault(key, set()).update(sid for sid, eid, _bid in rows if cond(classes.get(eid)))
+        rows = [r for r in rows if classes.get(r[1]) == class_level]
+    seen, out = set(), []
+    for sid, eid, bid in rows:
+        if sid not in seen:
+            seen.add(sid)
+            out.append((sid, eid, bid))
+    return out
+
+
+def _resolve_from_snapshot(snap: dict, branch_id, audience_type: str, batch_ids, subject_ids, class_level, report, unselected_takes_batch_subjects: bool):
+    """resolve_audience's batch-based rules (BATCHES / BRANCH / INSTITUTE) applied to a provider snapshot: the same filters and order."""
+    if audience_type == "BATCHES":
+        if not batch_ids:
+            return []
+        wanted = set(batch_ids)
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br == branch_id and b in wanted]
+    elif audience_type == "BRANCH":
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br == branch_id]
+    else:  # INSTITUTE
+        rows = [(s, e, b) for s, e, br, b in snap["members"] if br in snap["active_branches"]]
+    if subject_ids:
+        needed, chosen = set(subject_ids), snap["chosen"]
+        if unselected_takes_batch_subjects:
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), snap["offered"].get(r[2], set()))]
+        else:
+            rows = [r for r in rows if needed <= chosen.get((r[1], r[2]), needed)]
+    if class_level:
+        classes = snap["classes"]
         if report is not None:
             for key, cond in (("excluded_no_class", lambda c: c is None), ("excluded_other_class", lambda c: c is not None and c != class_level)):
                 report.setdefault(key, set()).update(sid for sid, eid, _bid in rows if cond(classes.get(eid)))
@@ -293,7 +408,7 @@ def already_holding_global_test(db: Session, plan: ExamPlan, start: datetime, st
     through ANY other plan of the same occurrence (one exam per student per occurrence, whichever provider)."""
     if not plan.global_test_id or not student_ids:
         return set()
-    if plan.global_occurrence_id and unified_sources(db, plan.plan_id):
+    if plan.global_occurrence_id and unified_plan(db, plan.plan_id):
         rows = db.execute(
             select(StudentExamAssignment.student_id).join(Exam, Exam.exam_id == StudentExamAssignment.exam_id)
             .join(ExamPlan, ExamPlan.plan_id == Exam.plan_id)
@@ -315,7 +430,7 @@ def _event(db: Session, job: ExamGenerationJob, kind: str, details: dict | None 
 
 
 def _notify_failure(db: Session, plan: ExamPlan, job: ExamGenerationJob, message: str) -> None:
-    if unified_sources(db, plan.plan_id):
+    if unified_plan(db, plan.plan_id):
         return          # a unified plan belongs to the platform: the failure is on the occurrence (generation_error), not the anchor's inbox
     staff = responsible_staff(db, plan.provider_id, plan.branch_id, institute=plan.audience_type in ("INSTITUTE", "TARGETED"))
     notify(db, staff, kind="EXAM_GENERATION_FAILED", title=f"Exam generation failed: {plan.name}",
@@ -377,7 +492,9 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
     try:
         res = resolve_slots(db, plan)
         _event(db, job, "RESOLVED", {"resolved": len(res.resolved), "missing": res.missing})
-        if not res.resolved:
+        layout = unified_layout(db, plan) if plan.global_occurrence_id else []
+        card_only = bool(layout) and not res.missing and not any(c["status"] == "PAPER" for c in layout)
+        if not res.resolved and not card_only:
             job.status, job.error, job.finished_at = "FAILED", "No approved papers are available for any subject.", utcnow()
             _event(db, job, "FAILED", {"reason": job.error})
             db.commit()
@@ -403,7 +520,7 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
         duplicates = already_holding_global_test(db, plan, start, [sid for sid, _, _ in students])
         students = [row for row in students if row[0] not in duplicates]
         exam = Exam(plan_id=plan.plan_id, run_key=run_key, provider_id=plan.provider_id, branch_id=plan.branch_id,
-                    name=f"{plan.name} ({start.date().isoformat()})", created_by=actor,
+                    name=plan.name if layout else f"{plan.name} ({start.date().isoformat()})", created_by=actor,   # unified: the Global Test's own name
                     status="PUBLISHED" if plan.auto_publish else "SCHEDULED")
         db.add(exam)
         db.flush()
@@ -414,7 +531,7 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
             total_m = sum((r.version.total_marks for r in res.resolved), Decimal(0))
         ev = ExamVersion(exam_id=exam.exam_id, version_no=1, duration_minutes=plan.duration_minutes, start_at=start, end_at=end,
                          total_questions=total_q, total_marks=total_m, missing_subjects=res.missing or None,
-                         settings={**plan_settings(plan), "skipped_duplicates": len(duplicates)},
+                         settings={**plan_settings(plan), "skipped_duplicates": len(duplicates), **({"sections": layout} if layout else {})},
                          generation_job_id=job.job_id, published_at=utcnow() if plan.auto_publish else None)
         db.add(ev)
         db.flush()
@@ -426,6 +543,11 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
         for sid, eid, bid in students:
             db.add(StudentExamAssignment(exam_id=exam.exam_id, exam_version_id=ev.exam_version_id, student_id=sid,
                                          enrollment_id=eid, batch_id=bid))
+        if layout:      # in the SAME transaction: the student's one row of the date names this exam (unified from its first moment)
+            db.flush()
+            for row in db.scalars(select(GlobalTestStudent).where(GlobalTestStudent.plan_id == plan.plan_id,
+                                                                  GlobalTestStudent.student_id.in_([sid for sid, _, _ in students] or [""]))):
+                row.exam_id = exam.exam_id
         if plan.auto_publish:
             db.add(ExamOutbox(exam_version_id=ev.exam_version_id, operation="PUBLISH"))
         job.exam_id = exam.exam_id

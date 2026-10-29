@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.official import official
 from app.config import settings
 from app.database import get_db
 from app.models.result_history import ResultHistory
@@ -34,7 +35,8 @@ router = APIRouter(prefix="/internal/v1", tags=["Internal"], dependencies=[Depen
 
 @router.get("/tests/{test_id}/results")
 def exam_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
-    rows = db.scalars(select(TestResult).where(TestResult.test_id == test_id).order_by(TestResult.obtained_marks.desc()).limit(MAX_ROWS)).all()
+    # official results only: one per student (an authorized retake replaces its original once evaluated)
+    rows = db.scalars(select(TestResult).where(TestResult.test_id == test_id, official).order_by(TestResult.obtained_marks.desc()).limit(MAX_ROWS)).all()
     return [
         {"student_id": r.student_id, "total_marks": r.total_marks, "obtained_marks": r.obtained_marks,
          "attempted_questions": r.attempted_questions, "correct_answers": r.correct_answers,
@@ -52,7 +54,7 @@ def exam_subject_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
     result, so it is not part of any subject here."""
     out = []
     # shortcut: one answers query per evaluated attempt; batch it if exams reach thousands of students.
-    for r in db.scalars(select(TestResult).where(TestResult.test_id == test_id).order_by(TestResult.student_id).limit(MAX_ROWS)):
+    for r in db.scalars(select(TestResult).where(TestResult.test_id == test_id, official).order_by(TestResult.student_id).limit(MAX_ROWS)):
         by_subject: dict[str, list] = {}
         for q in get_questions_with_answers(db=db, attempt_id=r.attempt_id):
             by_subject.setdefault(q["subject"] or "Other", []).append(q)
@@ -80,7 +82,7 @@ class ReevaluateIn(BaseModel):
 def adjust_marks(body: AdjustIn, db: Session = Depends(get_db)):
     """Sets a student's effective marks after an authorized manual review. The original and every earlier value stay in
     result_history; replaying the same correction_ref changes nothing."""
-    rows = db.scalars(select(TestResult).where(TestResult.test_id == body.test_id, TestResult.student_id == body.student_id)).all()
+    rows = db.scalars(select(TestResult).where(TestResult.test_id == body.test_id, TestResult.student_id == body.student_id, official)).all()
     if not rows:
         raise HTTPException(status_code=404, detail="Result not found")
     if len(rows) > 1:

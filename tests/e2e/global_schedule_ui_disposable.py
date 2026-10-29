@@ -14,6 +14,7 @@ Photos are SYNTHETIC phone-camera-like images (tests/e2e/phone_photos.py), not p
 Needs: Docker, the images mcr.microsoft.com/playwright/python:v1.48.0-noble and institute-paper-service:latest, npm, and a Python with
 playwright==1.48 for the browser script (PW_PYTHON, default: python3).
 """
+import hashlib
 import json
 import os
 import re
@@ -221,6 +222,9 @@ with TestClient(gateway, base_url="http://localhost") as c:
     A = c.post(f"{API}/branches/{B1}/batches", json={"name": "NEET A"}, headers=h).json()["batch_id"]
     BB = c.post(f"{API}/branches/{B1}/batches", json={"name": "NEET B"}, headers=h).json()["batch_id"]
     C = c.post(f"{API}/branches/{B2}/batches", json={"name": "JEE C"}, headers=h).json()["batch_id"]
+    for batch in (A, BB, C):          # the subjects each batch offers: what a membership without a selection takes for Global Tests
+        for sj in (PHY, CHE):
+            assert c.put(f"{API}/batches/{batch}/subjects/{sj}", json={}, headers=h).status_code == 200
     ADM = invite(c, h, "Jay Junior", "jay@platform.example.com", "ADMIN")
     PA = invite(c, h, "Priya Admin", "priya@north.example.com", "PROVIDER_ADMIN", P)
     BA = invite(c, h, "Bharat Branch", "bharat@north.example.com", "BRANCH_ADMIN", P, B1)
@@ -455,7 +459,29 @@ prov_of = dict(sql("""select vp.paper_version_id::text, sub.provider_id::text fr
                       where e.exam_id = :e""", e=got[S1][0][2]))
 check("Asha's exam keeps each paper's provenance: Physics and Chemistry from North, Biology from the tutor",
       prov_of == {tara_pv: P, PV_BA_CHE: P, PV_TUTOR: P2}, prov_of)
-check("Chitra (Mumbai) gets no exam: no Physics paper and the Mumbai Chemistry paper was never approved", S3 not in got, got.get(S3))
+check("Chitra (Mumbai) gets no paper: no Physics paper for her and the Mumbai Chemistry paper was never approved", S3 not in got, got.get(S3))
+ORDER = [n for (n,) in sql("select s.name from global_test_subjects g join subjects s on s.subject_id = g.subject_id where g.test_id = :t order by g.position", t=GT)]
+
+
+def layout(sid):
+    return [(n, st) for n, st in sql("""select s.name, x.status from global_test_student_subjects x join subjects s on s.subject_id = x.subject_id
+                                         where x.occurrence_id = :o and x.student_id = :s order by x.position""", o=O1, s=sid)]
+
+
+chitra = dict(layout(S3))
+check("every eligible student has ONE row for the date and one row per configured subject, in the configured order",
+      sorted(sid for (sid,) in sql("select student_id from global_test_students where occurrence_id = :o", o=O1)) == sorted([S1, S2, S3, S4, S5])
+      and all([n for n, _ in layout(x)] == ORDER for x in (S1, S2, S3, S4, S5)), (ORDER, {x: layout(x) for x in (S1, S2, S3, S4, S5)}))
+check("Asha has a paper for every subject; Chitra none, each with its reason: Physics not covered (Pune's papers are for NEET A/B), "
+      "Chemistry not approved in time",
+      dict(layout(S1)) == {n: "PAPER" for n in ORDER} and chitra.get("Physics") == "NOT_COVERED" and chitra.get("Chemistry") == "NOT_APPROVED"
+      and "PAPER" not in chitra.values(), (layout(S1), chitra))
+chitra_exam = sql("""select e.exam_id, v.total_questions, e.status from global_test_students g join exams e on e.exam_id = g.exam_id
+                     join exam_versions v on v.exam_id = e.exam_id where g.occurrence_id = :o and g.student_id = :s""", o=O1, s=S3)
+check("Chitra still gets ONE Global Test card (an exam without questions) that explains each subject",
+      len(chitra_exam) == 1 and chitra_exam[0][1] == 0 and chitra_exam[0][2] == "PUBLISHED", chitra_exam)
+names = {n for (n,) in sql("select distinct e.name from exams e join exam_plans pl on pl.plan_id = e.plan_id where pl.global_occurrence_id = :o", o=O1)}
+check("every exam of the date carries the Global Test's own name, without provider, branch or date", names == {"National Mock"}, names)
 notes = [json.loads(p) if isinstance(p, str) else p for (p,) in sql("select payload from exam_notification_outbox where payload->>'kind' = 'GLOBAL_TEST_MISSING_PAPERS'")]
 north_notes = [n for n in notes if n["provider_id"] == P]
 check("provider admins are told what is missing: North (unapproved Mumbai Chemistry, the Mumbai student uncovered); the tutor, whose only "
@@ -491,19 +517,34 @@ check("students get a password through the real Student auth service", set_stude
 with TestClient(gateway, base_url="http://localhost") as c:
     hn = login(c, PA["staff_code"])
     north = c.get(f"{API}/exams/{asha_exam}", headers=hn).json()
+    north_layout = c.get(f"{API}/global-occurrences/{O1}/student-subjects", headers=hn).json()
     cancel = c.post(f"{API}/exams/{asha_exam}/cancel", json={"reason": "not North's to cancel"}, headers=hn)
 with TestClient(gateway, base_url="http://localhost") as c:
     tutor_view = c.get(f"{API}/exams/{asha_exam}", headers=login(c, TU["staff_code"])).json()
 with TestClient(gateway, base_url="http://localhost") as c:
-    full = c.get(f"{API}/exams/{asha_exam}", headers=login(c, "STF000001")).json()
+    hp = login(c, "STF000001")
+    full = c.get(f"{API}/exams/{asha_exam}", headers=hp).json()
+    full_layout = c.get(f"{API}/global-occurrences/{O1}/student-subjects", headers=hp).json()
 check("North's admin sees only Physics + Chemistry of Asha's exam, the tutor only Biology, the platform all three; North cannot cancel it",
       {x["subject_id"] for x in north["papers"]} == {PHY, CHE} and [x["subject_id"] for x in tutor_view["papers"]] == [BIO]
       and len(full["papers"]) == 3 and cancel.status_code == 403, (north.get("papers"), tutor_view.get("papers"), cancel.status_code))
+cells = lambda body, sid: [(x["subject"], x["status"], x["provider_name"]) for st in body["students"] if st["student_id"] == sid for x in st["subjects"]]
+check("the platform's layout shows every student and subject; North's shows only its students and its own part (never the tutor's Biology)",
+      {st["student_id"] for st in full_layout["students"]} == {S1, S2, S3, S4, S5} and [x[0] for x in cells(full_layout, S1)] == ORDER
+      and {x[0] for x in cells(north_layout, S1)} == {"Physics", "Chemistry"} and S5 not in {st["student_id"] for st in north_layout["students"]},
+      (cells(full_layout, S1), cells(north_layout, S1)))
+# the order Asha must see: subjects in the configured order, inside each an order of her own (sha256 of student, test, question)
+qs = sql("select question_id::text, subject, question_text from questions where test_id = :t", t=asha_ev)
+expected_order = [text_ for _q, _s, text_ in sorted(qs, key=lambda r: (ORDER.index(r[1]), hashlib.sha256(f"{S1}:{asha_ev}:{r[0]}".encode()).hexdigest()))]
+sections = sql("select sections from tests where test_id = :t", t=asha_ev)[0][0]
+check("her delivered test lists every configured subject in order with its question count",
+      [(x["subject"], x["status"], x["question_count"]) for x in sections] == [(n, "PAPER", c) for n, c in zip(ORDER, [{"Physics": 4, "Chemistry": 3, "Biology": 2}[n] for n in ORDER])],
+      sections)
 # the answers Asha gives: every Physics question right; Chemistry: question 1 right, question 2 wrong, question 3 left blank;
 # Biology: question 1 right, question 2 left blank
 answers = {e["question"]: e["options"]["ABCD".index(e["correct"])] for e in EXPECTED}
 answers.update({"Pune Chemistry Set question 1?": "A1", "Pune Chemistry Set question 2?": "A2", "Ravi Biology Set question 1?": "A1"})
-params.update({"asha_test": asha_ev, "answers": answers})
+params.update({"asha_test": asha_ev, "answers": answers, "subject_order": ORDER, "expected_order": expected_order})
 (WORK / "ui_params.json").write_text(json.dumps(params))
 
 print("\nbrowser journeys, student (Chromium, Student portal)")
@@ -517,6 +558,10 @@ attempts = sql("select attempt_id, status, test_id, started_at, expires_at from 
 check("exactly one attempt by Asha for the date, SUBMITTED on her unified exam, timed by one shared timer (30 minutes)",
       len(attempts) == 1 and str(attempts[0][2]) == asha_ev and str(attempts[0][1]).upper().endswith(("SUBMITTED", "EVALUATED", "COMPLETED"))
       and abs((attempts[0][4] - attempts[0][3]).total_seconds() - 1800) < 120, attempts)
+warned = sql("select count(*) from attempt_integrity_events e join test_attempts a on a.attempt_id = e.attempt_id where a.student_id = :s", s=S1)
+check("her reload mid-attempt and the submit confirmation recorded no warning (a refresh is not leaving the exam)", warned == [(0,)], warned)
+reason = sql("select submit_reason from test_attempts where student_id = :s", s=S1)
+check("her attempt records why it ended: submitted by the student", reason == [("STUDENT",)], reason)
 res = sql("select total_marks, obtained_marks from test_results where test_id = :t and student_id = :s", t=asha_ev, s=S1)
 check("one overall result, evaluated by the existing Student result logic with the Global Test's +4/-1 marking across all subjects: "
       "6 correct, 1 wrong, 2 skipped of 9 -> 23 of 36", res == [(36, 23)], res)

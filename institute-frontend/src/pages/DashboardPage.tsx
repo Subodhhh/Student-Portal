@@ -5,6 +5,7 @@ import { CATEGORIES, isGlobalRole } from "../auth/roles";
 import { Alert, Button, Card, DataTable, EmptyState, PageHeader, Spinner, StatCard, StatusBadge } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import type { Page } from "../services/api";
+import { StudentCount } from "../components/StudentCount";
 
 type Dash = Record<string, unknown> & {
   role: string;
@@ -90,7 +91,7 @@ function PlatformDashboard({ d }: { d: Platform & Dash }) {
               n(ops.failed_student_notifications) > 0 && `${ops.failed_student_notifications} student notifications were not delivered`,
               n(ops.unfinished_corrections) > 0 && `${ops.unfinished_corrections} result corrections are unfinished (submit the same correction again from the exam page)`,
             ].filter(Boolean).join(" · ")}.{" "}
-            <Link to="/exams">Open Exams & Results</Link>
+            <Link to="/exams">Open Exams</Link>
           </Alert>
         )}
 
@@ -115,12 +116,13 @@ function PlatformDashboard({ d }: { d: Platform & Dash }) {
           <div className="grid stats">
             <StatCard label="Active providers" value={activeProviders} to="/providers" hint={inactiveProviders ? `${inactiveProviders} inactive` : "None inactive"} />
             <StatCard label="Active branches" value={d.branches_by_status.ACTIVE ?? 0} to="/providers" hint={`${sum(d.branches_by_status)} in total`} />
-            <StatCard label="Enrolled students" value={d.students} to="/students" hint={`${d.active_enrollments} active enrollments`} />
+            <StatCard label="Enrolled students" value={can("enrollment.manage") ? <StudentCount count={d.students} url="/api/v1/students?status=ACTIVE" title="Enrolled students"
+              context="Every student with at least one active enrollment." /> : d.students} hint={<><Link to="/students">Open the directory</Link> · {d.active_enrollments} active enrollments</>} />
             <StatCard label="Active staff" value={d.staff} to="/staff" />
             <StatCard label="Platform subjects" value={d.subjects} to="/subjects" hint={`${d.subjects_offered} offered by providers`} />
             <StatCard label="Bank questions" value={d.questions} to="/papers" hint={`${published} published papers`} />
             <StatCard label="Upcoming exams" value={n(d.upcoming_exams)} to="/exams" hint={`${d.recent_exams_30d} completed in 30 days`} />
-            <StatCard label="Global Tests" value={n(d.global_tests_published)} to="/exam-plans?tab=global" hint="published" />
+            <StatCard label="Global Tests" value={n(d.global_tests_published)} to="/tests/global" hint="published" />
             <StatCard label="Open support requests" value={d.open_tickets} to="/support" tone={d.open_tickets ? "warn" : undefined} />
             {d.unpaid_invoices > 0 && <StatCard label="Unpaid invoices" value={d.unpaid_invoices} to="/billing" tone="warn" />}
             <StatCard label="Unread notifications" value={n(d.unread_notifications)} to="/notifications" />
@@ -143,7 +145,7 @@ function PlatformDashboard({ d }: { d: Platform & Dash }) {
           </Card>
 
           <Card>
-            <div className="card-head"><h2>Upcoming exams</h2><Link to="/exams" className="small">Exams & Results</Link></div>
+            <div className="card-head"><h2>Upcoming exams</h2><Link to="/exams" className="small">Exams</Link></div>
             <DataTable rows={d.upcoming_exam_list} rowKey={(e) => e.exam_id} empty={<EmptyState title="No upcoming exams" />}
               columns={[
                 { header: "Exam", render: (e) => e.name },
@@ -209,7 +211,7 @@ function StatusCounts({ counts, empty }: { counts?: Record<string, number>; empt
 // ------------------------------------------------------------------ provider, branch and teacher dashboards
 
 function RoleDashboard({ data }: { data: Dash }) {
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const role = data.role as keyof typeof ROLE_LABEL;
   return (
     <>
@@ -219,7 +221,8 @@ function RoleDashboard({ data }: { data: Dash }) {
         <div className="grid stats">
           {data.branches !== undefined && <StatCard label="Active branches" value={n(data.branches)} />}
           {data.teachers !== undefined && <StatCard label="Teachers" value={n(data.teachers)} />}
-          {data.students !== undefined && <StatCard label="Enrolled students" value={n(data.students)} to="/students" />}
+          {data.students !== undefined && <StatCard label="Enrolled students" value={can("enrollment.manage") ? <StudentCount count={Number(data.students)} url="/api/v1/students?status=ACTIVE" title="Your enrolled students"
+            context="Students with an active enrollment in your institute or branches." /> : n(data.students)} hint={<Link to="/students">Open the directory</Link>} />}
           {data.batches !== undefined && <StatCard label="Active batches" value={n(data.batches)} to="/batches" />}
           <StatCard label="Upcoming exams" value={n(data.upcoming_exams)} to="/exams" />
           {data.pending_transfers !== undefined && (

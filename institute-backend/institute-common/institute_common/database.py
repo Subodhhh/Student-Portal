@@ -1,6 +1,7 @@
+import time
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String, create_engine
+from sqlalchemy import DateTime, String, create_engine, event, exc
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import JSON, TypeDecorator
@@ -39,7 +40,33 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(settings.database_url)
+
+
+@event.listens_for(engine, "checkin")
+def _checked_in(_dbapi_connection, record):
+    record.info["idle_since"] = time.monotonic()
+
+
+@event.listens_for(engine, "checkout")
+def _ping_if_idle(dbapi_connection, record, _proxy):
+    """pool_pre_ping costs a database round trip on EVERY checkout (~200 ms to the hosted database, twice per API request: the service
+    and the identity check). Only a connection that sat idle longer than db_ping_after_idle_seconds is pinged; a dead one is discarded
+    and the pool reconnects (DisconnectionError = SQLAlchemy's pessimistic-disconnect protocol), exactly as pre-ping would."""
+    idle_since = record.info.get("idle_since")
+    if idle_since is None or time.monotonic() - idle_since < settings.db_ping_after_idle_seconds:
+        return
+    try:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("SELECT 1")
+        finally:
+            cursor.close()
+        # the driver opened a transaction for the ping: end it, so the connection is handed out idle like any other (a session that
+        # then switches to AUTOCOMMIT, e.g. the identity check, cannot do that inside a transaction)
+        dbapi_connection.rollback()
+    except Exception as e:  # noqa: BLE001 - any failure means the connection cannot be trusted
+        raise exc.DisconnectionError() from e
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

@@ -35,6 +35,8 @@ interface SubjectPerformance {
   total_marks: number;
   obtained_marks: number;
   accuracy: number;
+  status?: string | null;    // unified Global Test: PAPER, or why there was no paper for this subject
+  message?: string | null;
 }
 
 interface QuestionReview {
@@ -388,8 +390,9 @@ export default function TestResultPage() {
                         <h3>{subject.subject}</h3>
 
                         <span>
-                          {subject.attempted_questions} of{" "}
-                          {subject.total_questions} attempted
+                          {subject.status && subject.status !== "PAPER"
+                            ? `Unavailable: ${subject.message ?? "no paper for you"}`
+                            : `${subject.attempted_questions} of ${subject.total_questions} attempted`}
                         </span>
                       </div>
 

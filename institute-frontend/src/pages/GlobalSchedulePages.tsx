@@ -11,9 +11,22 @@ import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import { audienceBody, audienceReady, emptyAudience, newRequestKey, type AudienceState, type CheckError, type ScopeResponse } from "../services/createTest";
 import { audienceText, fmtDate, markingOf, subjectsOf, type Occurrence, type OccurrenceDetail, type SubmittablePaper, type Submission } from "../services/globalSchedule";
+import { StudentCount } from "../components/StudentCount";
 
 // Global Tests with a central schedule. The platform plans and publishes the dates; provider staff open a date and submit their own paper
 // for each subject and audience. Every rule (who may plan, submit, see what; overlaps; the deadline) is enforced by the API.
+
+type StudentLayouts = {
+  scope: string;
+  subjects: { subject_id: string; subject: string; position: number }[];
+  students: { student_id: string; name: string | null; exam_id: string | null; exam_status: string | null;
+    subjects: { subject_id: string; subject: string; status: string; message: string | null; provider_name: string | null }[] }[];
+};
+
+const LAYOUT_LABELS: Record<string, string> = {
+  NOT_ENROLLED: "Not enrolled", NO_SUBMISSION: "No paper submitted", NOT_APPROVED: "Not approved in time",
+  NOT_COVERED: "Not covered", CONFLICT: "Conflict",
+};
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -230,6 +243,8 @@ export function GlobalOccurrencePage() {
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
   const d = useApi<OccurrenceDetail>(`/api/v1/global-occurrences/${occurrenceId}`);
+  const teacherOnly = me?.primary_role === "TEACHER";   // teachers use the exam pages; the layout API refuses them
+  const layout = useApi<StudentLayouts>(d.data?.generated_at && !teacherOnly ? `/api/v1/global-occurrences/${occurrenceId}/student-subjects` : null);
   const [submitting, setSubmitting] = useState(false);
   const [withdraw, setWithdraw] = useState<Submission | null>(null);
   const [reason, setReason] = useState("");
@@ -260,7 +275,8 @@ export function GlobalOccurrencePage() {
             { header: "Subject", render: (s) => s.subject },
             { header: "Paper", render: (s) => <>{s.paper_title} v{s.version_no}<div className="muted small">{s.question_count} questions</div></> },
             { header: "Approval", render: (s) => <>{<StatusBadge status={s.version_status ?? "?"} />}{!s.ready && s.status === "ACTIVE" && <div className="muted small">approve and publish it before the deadline</div>}</> },
-            { header: "For", render: (s) => <>{audienceText(s.audience)}<div className="muted small">{s.students_now} student(s) now</div></> },
+            { header: "For", render: (s) => <>{audienceText(s.audience)}<div className="muted small"><StudentCount count={s.students_now} url={`/api/v1/global-paper-submissions/${s.submission_id}/students`}
+              title={`Students “${s.paper_title}” reaches now`} context={`The students this ${s.subject} paper is for at present (its audience, subject and the test's class).`} /> student(s) now</div></> },
             { header: "From", render: (s) => <>{[s.provider_name, s.branch_name].filter(Boolean).join(" · ")}<div className="muted small">{s.submitted_by_name}</div></> },
             { header: "Status", render: (s) => <><StatusBadge status={s.status} />{s.withdraw_reason && <div className="muted small">{s.withdraw_reason}</div>}</> },
             { header: "", render: (s) => (s.can_withdraw && o.submissions_open ? <Button small variant="secondary" onClick={() => { setReason(""); setWithdraw(s); }}>Withdraw</Button> : null) },
@@ -273,7 +289,9 @@ export function GlobalOccurrencePage() {
             ...(platform ? [{ header: "Provider", render: (c: OccurrenceDetail["coverage"][number]) => c.provider_name }] : []),
             { header: "Subject", render: (c) => c.subject },
             { header: "Papers", render: (c) => `${c.submissions} submitted · ${c.ready} approved` },
-            { header: "Students covered now", render: (c) => c.students_covered },
+            { header: "Students covered now", render: (c) => <StudentCount count={c.students_covered}
+              url={`/api/v1/global-occurrences/${o.occurrence_id}/coverage/students?provider_id=${c.provider_id}&subject_id=${c.subject_id}`}
+              title={`${c.subject}: students covered by ${c.provider_name}`} context="The students who would receive this provider's approved paper for the subject if the exams were generated now." /> },
             { header: "", render: (c) => (c.missing ? <Badge tone="danger">Missing paper</Badge> : c.ambiguous ? <Badge tone="warn">{c.ambiguous} covered twice</Badge> : <Badge tone="ok">Covered</Badge>) },
           ]} />
         </Card>
@@ -283,7 +301,25 @@ export function GlobalOccurrencePage() {
           <h2>Generated exams</h2>
           <DataTable rows={o.exams} rowKey={(e) => e.exam_id} empty={<EmptyState title="No exam in your scope" />} columns={[
             { header: "Exam", render: (e) => <Link to={`/exams/${e.exam_id}`}>{e.name}</Link> }, { header: "Status", render: (e) => <StatusBadge status={e.status} /> },
-            { header: "Assigned students", render: (e) => e.assigned },
+            { header: "Assigned students", render: (e) => <StudentCount count={e.assigned} url={`/api/v1/exams/${e.exam_id}/assignments`} title={`Students assigned to ${e.name}`} context="The students this exam is assigned to that you may see, with their attempt status." /> },
+          ]} />
+        </Card>
+      )}
+      {layout.data && (
+        <Card>
+          <h2>Students</h2>
+          <p className="muted small">{layout.data.scope === "ALL"
+            ? "Every eligible student has one Global Test exam with every configured subject: their own paper, or the reason they have none."
+            : "Your students and only your institute's part of their exam: the papers you provided, or why your institute provided none."}</p>
+          <DataTable rows={layout.data.students} rowKey={(st) => st.student_id} empty={<EmptyState title="No student in your scope" />} columns={[
+            { header: "Student", render: (st) => <>{st.name ?? st.student_id}<div className="muted small">{st.student_id}</div></> },
+            ...layout.data.subjects.map((subj) => ({ header: subj.subject, render: (st: StudentLayouts["students"][number]) => {
+              const c = st.subjects.find((x) => x.subject_id === subj.subject_id);
+              if (!c) return <span className="muted">—</span>;
+              return c.status === "PAPER" ? <Badge tone="ok">{c.provider_name ?? "Paper"}</Badge>
+                : <span title={c.message ?? ""}><Badge tone={c.status === "CONFLICT" ? "danger" : "warn"}>{LAYOUT_LABELS[c.status] ?? c.status}</Badge></span>;
+            } })),
+            { header: "Exam", render: (st) => (st.exam_id ? <>{st.exam_status ? <StatusBadge status={st.exam_status} /> : null}</> : <span className="muted">none</span>) },
           ]} />
         </Card>
       )}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { isGlobalRole } from "../auth/roles";
 import { useScope, type Branch, type Provider } from "../auth/ScopeContext";
 import { ProviderSubjects, TeachingAssignments } from "../components/academics";
 import { AuditTable } from "../components/audit";
@@ -10,12 +11,22 @@ import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { Batches } from "./BatchesPage";
+import { StudentCount } from "../components/StudentCount";
 
 type ProviderRow = Provider & { phone?: string | null; address?: string | null; created_at?: string; branch_count?: number; staff_count?: number; student_count?: number };
 const day = (s?: string) => (s ? new Date(s).toLocaleDateString() : "—");
 
+
+/** The provider's student count covers every branch: only the platform and that provider's admins (who may list all of them) get the list. */
+function useProviderLevel() {
+  const { me, can } = useAuth();
+  return (providerId: string) => can("enrollment.manage") && (isGlobalRole(me?.primary_role)
+    || (me?.assignments ?? []).some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId));
+}
+
 export function ProvidersPage() {
   const { can } = useAuth();
+  const providerLevel = useProviderLevel();
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -43,7 +54,9 @@ export function ProvidersPage() {
                 { header: "Email", render: (p) => p.email },
                 { header: "Branches", render: (p) => p.branch_count ?? "—" },
                 { header: "Staff", render: (p) => p.staff_count ?? "—" },
-                { header: "Students", render: (p) => p.student_count ?? "—" },
+                { header: "Students", render: (p) => (providerLevel(p.provider_id) && p.student_count ? <StudentCount count={p.student_count}
+                  url={`/api/v1/students?provider_id=${p.provider_id}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
+                  context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? "—") },
                 { header: "Created", render: (p) => day(p.created_at) },
                 { header: "Status", render: (p) => <StatusBadge status={p.status} /> },
                 { header: "Actions", render: (p) => <Link className="btn secondary small" to={`/providers/${p.provider_id}`} aria-label={`Open ${p.name}`}>Open</Link> },
@@ -102,6 +115,7 @@ const useTab = (fallback: string) => {
 export function ProviderDetailPage() {
   const { providerId = "" } = useParams();
   const { can } = useAuth();
+  const providerLevel = useProviderLevel();
   const scope = useScope();
   const prov = useApi<ProviderRow>(`/api/v1/providers/${providerId}`);
   const [tab, setTab] = useTab("overview");
@@ -130,7 +144,9 @@ export function ProviderDetailPage() {
           <div className="grid stats">
             <StatCard label="Branches" value={p.branch_count ?? 0} />
             <StatCard label="Staff with an active role" value={p.staff_count ?? 0} />
-            <StatCard label="Enrolled students" value={p.student_count ?? 0} />
+            <StatCard label="Enrolled students" value={providerLevel(providerId) ? <StudentCount count={p.student_count ?? 0}
+              url={`/api/v1/students?provider_id=${providerId}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
+              context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? 0} />
           </div>
           <Card>
             <h2>Contact</h2>

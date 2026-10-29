@@ -23,6 +23,8 @@ TEST = uuid.uuid4()
 def env(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:   # owned by the attempt service; the official-result rule reads it
+        conn.exec_driver_sql("CREATE TABLE test_attempts (attempt_id CHAR(32) PRIMARY KEY, retake_of_attempt_id CHAR(32))")
     Session = sessionmaker(bind=engine, autoflush=False)
 
     def override():

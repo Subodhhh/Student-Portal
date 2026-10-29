@@ -277,9 +277,9 @@ def _series_plans(db: Session, s: TestSeries) -> list[ExamPlan]:
     return db.scalars(select(ExamPlan).where(ExamPlan.series_id == s.series_id).order_by(ExamPlan.start_at)).all()
 
 
-def _out(db: Session, s: TestSeries, with_tests: bool = False) -> dict:
+def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal | None = None) -> dict:
     plans = _series_plans(db, s)
-    summaries = daily._summaries(db, plans)
+    summaries = daily._summaries(db, plans, viewer=viewer)
     planned = _series_occurrences(s)
     by_start = {sm["start_at"].astimezone(timezone.utc) if sm["start_at"].tzinfo else sm["start_at"].replace(tzinfo=timezone.utc): sm for sm in summaries}
     states: dict[str, int] = {}
@@ -375,7 +375,7 @@ def create_series(body: SeriesIn, idempotency_key: str = Header(min_length=8, ma
                                    "'Generate missing tests'.", error=str(exc), series_id=str(s.series_id))
     else:
         result = {"created": [], "existing": [], "skipped_past": []}
-    return {**_out(db, s, with_tests=True), "generation": result}
+    return {**_out(db, s, with_tests=True, viewer=p), "generation": result}
 
 
 @router.post("/test-series/{series_id}/generate")
@@ -391,7 +391,7 @@ def generate_series(series_id: UUID, p: Principal = Depends(get_principal), db: 
     except SeriesGenerationError as exc:
         status = 409 if s.status != "ACTIVE" else 502
         raise api_error_detail(status, "GENERATION_FAILED", str(exc), series_id=str(series_id))
-    return {**_out(db, s, with_tests=True), "generation": result}
+    return {**_out(db, s, with_tests=True, viewer=p), "generation": result}
 
 
 @router.post("/test-series/{series_id}/cancel")
@@ -415,7 +415,7 @@ def cancel_series(series_id: UUID, body: ReasonIn, p: Principal = Depends(get_pr
     db.commit()
     audit.record(db, "test_series.cancel", "SUCCESS", actor=p.staff_id, target_type="test_series", target_id=s.series_id,
                  provider_id=s.provider_id, branch_id=s.branch_id, reason=reason, ip=p.ip, details={"stopped": stopped})
-    return {**_out(db, s, with_tests=True), "stopped": stopped}
+    return {**_out(db, s, with_tests=True, viewer=p), "stopped": stopped}
 
 
 @router.get("/test-series")
@@ -431,7 +431,7 @@ def list_series(provider_id: UUID | None = None, page: int = 1, page_size: int =
         stmt = stmt.where(TestSeries.provider_id.in_(provs or [None]))
     visible = [s for s in db.scalars(stmt.order_by(TestSeries.created_at.desc())) if _visible(db, p, s)]
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
-    return {"items": [_out(db, s) for s in visible[(page - 1) * page_size: page * page_size]], "total": len(visible), "page": page,
+    return {"items": [_out(db, s, viewer=p) for s in visible[(page - 1) * page_size: page * page_size]], "total": len(visible), "page": page,
             "page_size": page_size}
 
 
@@ -439,4 +439,4 @@ def list_series(provider_id: UUID | None = None, page: int = 1, page_size: int =
 def get_series(series_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     if not (p.has_perm(PERM) or p.has_perm("exam.read")):
         p.require(db, PERM)
-    return _out(db, _series(db, p, series_id), with_tests=True)
+    return _out(db, _series(db, p, series_id), with_tests=True, viewer=p)

@@ -467,6 +467,9 @@ def test_institute_exam_results_are_scoped_to_the_viewers_branch(client, world, 
     from institute_common.clients.result_client import set_result_client
 
     class Results:
+        def exam_subject_results(self, _ev):
+            return []
+
         def exam_results(self, _ev):
             return [{"student_id": "STU000001", "obtained_marks": 4}, {"student_id": "STU000002", "obtained_marks": 2}]
     set_result_client(Results())
