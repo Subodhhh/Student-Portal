@@ -7,7 +7,7 @@ on:
   pull_request:
     paths: ["institute-backend/**", "scripts/**", "tests/**", "docker-compose.yml", ".github/workflows/institute-services-ci.yml"]
   push:
-    branches: [dev, QA, main, "feature/institute-portal"]
+    branches: [dev, QA, main, "feature/institute-portal", "Institute-Student-Portal"]
     paths: ["institute-backend/**", "scripts/**", "tests/**", "docker-compose.yml", ".github/workflows/institute-services-ci.yml"]
 
 permissions:

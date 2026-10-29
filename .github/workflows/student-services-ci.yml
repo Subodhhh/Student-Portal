@@ -8,7 +8,7 @@ on:
   pull_request:
     paths: ["student-backend/**", "institute-backend/legacy-monolith/tests/test_schema_ownership.py", ".github/workflows/student-services-ci.yml"]
   push:
-    branches: [dev, QA, main, "feature/institute-portal"]
+    branches: [dev, QA, main, "feature/institute-portal", "Institute-Student-Portal"]
     paths: ["student-backend/**", ".github/workflows/student-services-ci.yml"]
 
 permissions:

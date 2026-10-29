@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ["institute-backend/legacy-monolith/**", "student-backend/**", "scripts/**", "tests/**", ".github/workflows/institute-backend-ci.yml", "docs/institute-portal/**"]
   push:
-    branches: [dev, QA, main, "feature/institute-portal"]
+    branches: [dev, QA, main, "feature/institute-portal", "Institute-Student-Portal"]
     paths: ["institute-backend/legacy-monolith/**", "student-backend/**", "scripts/**", "tests/**", ".github/workflows/institute-backend-ci.yml"]
 
 permissions:

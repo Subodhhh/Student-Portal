@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ["institute-frontend/**", ".github/workflows/institute-frontend-ci.yml"]
   push:
-    branches: [dev, QA, main, "feature/institute-portal"]
+    branches: [dev, QA, main, "feature/institute-portal", "Institute-Student-Portal"]
     paths: ["institute-frontend/**"]
 
 permissions:
