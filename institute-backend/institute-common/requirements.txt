@@ -11,4 +11,4 @@ python-multipart==0.0.32
 redis==8.1.0
 tzdata==2026.5
 uvicorn==0.54.0
-pypdf==6.19.0
+pypdf==6.21.4
