@@ -44,6 +44,8 @@ map "$request_method $uri" $edge_upstream {
     "~^POST /student/attempts/start$"                                              "student-attempt-service:8001";
     "~^POST /student/attempts/[^/]+/(answers|submit)$"                             "student-attempt-service:8001";
     "~^POST /student/attempts/[^/]+/questions/[^/]+/(clear|mark-review|visit)$"    "student-attempt-service:8001";
+    "~^GET /student/attempts/[^/]+/integrity$" "student-attempt-service:8001";
+    "~^POST /student/attempts/[^/]+/review$" "student-attempt-service:8001";
     # Student: results, ranking
     "~^GET /student/results(/attempts/[^/]+(/details)?)?$"                         "student-result-service:8001";
     "~^POST /student/results/attempts/[^/]+/evaluate$"                             "student-result-service:8001";
