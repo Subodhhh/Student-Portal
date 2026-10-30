@@ -275,6 +275,10 @@ test("edge: method-specific Student routes", () => {
     ["GET", "/student/tests/t1/audiences", null],
     ["POST", "/student/attempts/a1/questions/q1/mark-review", "student-attempt-service"],
     ["GET", "/student/attempts/a1/workspace", "student-attempt-service"],
+    ["GET", "/student/attempts/tests/t1/papers", "student-attempt-service"], ["POST", "/student/attempts/tests/t1/papers", null],
+    ["PUT", "/student/attempts/tests/t1/selection", "student-attempt-service"], ["GET", "/student/attempts/tests/t1/selection", null],
+    ["POST", "/student/attempts/a1/integrity-events", "student-attempt-service"],
+    ...["GET", "PUT", "PATCH", "DELETE"].map((m) => [m, "/student/attempts/a1/integrity-events", null]),
     ["PATCH", "/student/notifications/n1/read", "student-notification-service"], ["POST", "/student/notifications", null],
     ["POST", "/student/results/attempts/a1/evaluate", "student-result-service"],
   ];
