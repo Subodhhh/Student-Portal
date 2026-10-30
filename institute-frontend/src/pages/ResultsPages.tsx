@@ -82,7 +82,7 @@ export function ResultDetailPage() {
               <SelectField label="Sort" value={sort} onChange={(ev) => setSort(ev.target.value)}><option value="rank">By rank</option><option value="name">By name</option></SelectField>
             </div>
             <DataTable rows={rows} rowKey={(x) => x.student_id} empty={<EmptyState title={q ? "No student matches" : "No submissions yet"} />}
-              columns={[{ header: "Rank", render: (x) => x.rank }, { header: "Student", render: (x) => <>{x.name ?? "—"}<div className="muted small">{x.student_id}</div></> },
+              columns={[{ header: "Rank", render: (x) => x.rank ?? "—" }, { header: "Student", render: (x) => <>{x.name ?? "—"}<div className="muted small">{x.student_id}</div></> },
                 { header: "Status", render: () => <StatusBadge status="SUBMITTED" /> },
                 { header: r.subject_view ? `Marks (${(r.visible_subjects ?? []).join(", ") || "your subjects"})` : "Total score", render: (x) => `${x.obtained_marks}/${x.total_marks}` },
                 { header: "By subject", render: (x) => (x.subjects?.length ? x.subjects.map((s) => `${s.subject} ${s.obtained_marks}/${s.total_marks}`).join(" · ") : "—") },
@@ -90,16 +90,19 @@ export function ResultDetailPage() {
           </Card>
         )}
         {e.status === "PUBLISHED" && can("result.read") && <IntegrityCard examId={examId} />}
-        {e.status === "PUBLISHED" && can("result.correct") && <CorrectionsCard examId={examId} canCorrect={can("result.correct")} onChanged={() => results.reload()} />}
+        {e.status === "PUBLISHED" && (can("result.correct") || (r?.global_test && can("result.correct.own"))) && (
+          <CorrectionsCard examId={examId} platform={can("result.correct")} globalTest={Boolean(r?.global_test)} rows={r?.results ?? []}
+            onChanged={() => results.reload()} />
+        )}
       </div>
     </>
   );
 }
 
-type SubjectScore = { subject: string; obtained_marks: number; total_marks: number };
-type ResultRow = { rank: number; student_id: string; name: string | null; obtained_marks: number; total_marks: number; accuracy: number; submitted_at?: string;
+type SubjectScore = { subject: string; obtained_marks: number; total_marks: number; paper_id?: string | null; adjustment?: number };
+type ResultRow = { rank: number | null; student_id: string; name: string | null; obtained_marks: number; total_marks: number; accuracy: number; submitted_at?: string;
   subjects?: SubjectScore[] };
-type Results = { window_closed: boolean; total_marks: string; subject_view?: boolean; visible_subjects?: string[] | null; summary: { assigned: number; submitted: number; not_submitted: number; average: number | null; highest: number | null; lowest: number | null };
+type Results = { window_closed: boolean; total_marks: string; subject_view?: boolean; global_test?: boolean; visible_subjects?: string[] | null; summary: { assigned: number; submitted: number; not_submitted: number; average: number | null; highest: number | null; lowest: number | null };
   results: ResultRow[] };
 
 type Correction = { correction_id: string; kind: "MARKS_ADJUSTMENT" | "ANSWER_KEY"; status: string; student_id: string | null; reason: string; actor: string; created_at: string;
@@ -114,8 +117,12 @@ function useCorrectionKey(signature: string) {
   return { key: state.key, renew: () => setState({ signature, key: crypto.randomUUID() }) };
 }
 
-function CorrectionsCard({ examId, canCorrect, onChanged }: { examId: string; canCorrect: boolean; onChanged: () => void }) {
-  const list = useApi<Correction[]>(`/api/v1/exams/${examId}/result-corrections`);
+/** platform: the Super Admin's full corrections. Otherwise (a Global Test contributor) only the answer key of the contributor's own
+ * papers; the server refuses any other question. */
+export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged }: { examId: string; platform: boolean; globalTest: boolean; rows: ResultRow[];
+  onChanged: () => void }) {
+  const list = useApi<Correction[]>(platform ? `/api/v1/exams/${examId}/result-corrections` : null);
+  const [subjectMarks, setSubjectMarks] = useState<Record<string, string>>({});
   const act = useAction();
   const [student, setStudent] = useState("");
   const [marks, setMarks] = useState("");
@@ -123,7 +130,11 @@ function CorrectionsCard({ examId, canCorrect, onChanged }: { examId: string; ca
   const [order, setOrder] = useState("");
   const [option, setOption] = useState("A");
   const [keyReason, setKeyReason] = useState("");
-  const adjustKey = useCorrectionKey(`${student}|${marks}|${reason}`);
+  // a Global Test: the corrected marks are given per subject of that student's attempt
+  const subjects = globalTest ? (rows.find((x) => x.student_id === student)?.subjects ?? []) : [];
+  const perSubject = subjects.length > 0;
+  const subjectTotal = subjects.reduce((sum, x) => sum + Number(subjectMarks[x.subject] ?? ""), 0);
+  const adjustKey = useCorrectionKey(`${student}|${marks}|${reason}|${JSON.stringify(subjectMarks)}`);
   const keyKey = useCorrectionKey(`${order}|${option}|${keyReason}`);
   const done = () => { list.reload(); onChanged(); };
   return (
@@ -132,14 +143,29 @@ function CorrectionsCard({ examId, canCorrect, onChanged }: { examId: string; ca
       <p className="muted small">Corrections are recorded permanently with the reason and who made them; the original result is never overwritten. Affected students are told their result was updated.</p>
       {list.error && <Alert kind="error">{list.error}</Alert>}
       {act.error && <Alert kind="error">{act.error}</Alert>}
-      {canCorrect && (
-        <div className="grid cols-2">
-          <div className="stack"><h3>Correct one student's marks</h3>
-            <Field label="Student ID" value={student} onChange={(e) => setStudent(e.target.value.trim().toUpperCase())} placeholder="STU000001" />
-            <Field label="Correct marks" type="number" value={marks} onChange={(e) => setMarks(e.target.value)} />
+      {!platform && <p className="muted small">You can correct the answer key of your own papers only.</p>}
+      <div className="grid cols-2">
+          {platform && <div className="stack"><h3>Correct one student's marks</h3>
+            <Field label="Student ID" value={student} onChange={(e) => { setStudent(e.target.value.trim().toUpperCase()); setSubjectMarks({}); }} placeholder="STU000001" />
+            {perSubject ? (
+              <>
+                {subjects.map((x) => (
+                  <Field key={x.subject} label={`${x.subject} marks (out of ${x.total_marks}, now ${x.obtained_marks})`} type="number"
+                    value={subjectMarks[x.subject] ?? ""} onChange={(e) => setSubjectMarks({ ...subjectMarks, [x.subject]: e.target.value })} />
+                ))}
+                <p className="muted small">New total: {subjectTotal}</p>
+              </>
+            ) : (
+              <Field label="Correct marks" type="number" value={marks} onChange={(e) => setMarks(e.target.value)} />
+            )}
             <TextAreaField label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
-            <Button busy={act.busy} disabled={!student || marks === "" || reason.trim().length < 5}
-              onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/results/${student}/adjustments`, { method: "POST", body: { obtained_marks: Number(marks), reason }, headers: { "Idempotency-Key": adjustKey.key } }); adjustKey.renew(); setStudent(""); setMarks(""); setReason(""); done(); })}>Apply correction</Button></div>
+            <Button busy={act.busy} disabled={!student || reason.trim().length < 5 || (perSubject ? subjects.some((x) => (subjectMarks[x.subject] ?? "") === "") : marks === "")}
+              onClick={() => void act.run(async () => {
+                const body = perSubject
+                  ? { obtained_marks: subjectTotal, reason, subjects: subjects.map((x) => ({ subject: x.subject, obtained_marks: Number(subjectMarks[x.subject]) })) }
+                  : { obtained_marks: Number(marks), reason };
+                await api(`/api/v1/exams/${examId}/results/${student}/adjustments`, { method: "POST", body, headers: { "Idempotency-Key": adjustKey.key } });
+                adjustKey.renew(); setStudent(""); setMarks(""); setSubjectMarks({}); setReason(""); done(); })}>Apply correction</Button></div>}
           <div className="stack"><h3>Correct an answer key and re-evaluate</h3>
             <Field label="Question number" type="number" min={1} value={order} onChange={(e) => setOrder(e.target.value)} />
             <SelectField label="Correct option" value={option} onChange={(e) => setOption(e.target.value)}>{["A", "B", "C", "D"].map((o) => <option key={o}>{o}</option>)}</SelectField>
@@ -147,14 +173,13 @@ function CorrectionsCard({ examId, canCorrect, onChanged }: { examId: string; ca
             <p className="muted small">Results a person adjusted by hand are not re-scored; they are listed below as skipped.</p>
             <Button variant="danger" busy={act.busy} disabled={!order || keyReason.trim().length < 5}
               onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/answer-key-corrections`, { method: "POST", body: { changes: [{ question_order: Number(order), correct_option: option }], reason: keyReason }, headers: { "Idempotency-Key": keyKey.key } }); keyKey.renew(); setOrder(""); setKeyReason(""); done(); })}>Correct key and re-evaluate</Button></div>
-        </div>
-      )}
-      <h3>History</h3>
-      <DataTable rows={list.data ?? []} rowKey={(c) => c.correction_id} empty={<EmptyState title="No corrections yet" />}
+      </div>
+      {platform && <h3>History</h3>}
+      {platform && <DataTable rows={list.data ?? []} rowKey={(c) => c.correction_id} empty={<EmptyState title="No corrections yet" />}
         columns={[{ header: "When", render: (c) => fmt(c.created_at) }, { header: "By", render: (c) => c.actor },
           { header: "What", render: (c) => c.kind === "MARKS_ADJUSTMENT" ? `${c.student_id}: ${c.previous_marks ?? "?"} → ${c.new_marks ?? "?"}`
             : `Key: ${(c.key_changes ?? []).map((k) => `Q${k.question_order} ${k.previous}→${k.new}`).join(", ") || "pending"}; ${c.reevaluation ? `${c.reevaluation.changed.length} result(s) changed${c.reevaluation.skipped_manual.length ? `, ${c.reevaluation.skipped_manual.length} skipped (manual)` : ""}` : "not re-evaluated yet"}` },
-          { header: "Reason", render: (c) => c.reason }, { header: "Status", render: (c) => <StatusBadge status={c.status} /> }]} />
+          { header: "Reason", render: (c) => c.reason }, { header: "Status", render: (c) => <StatusBadge status={c.status} /> }]} />}
       {(list.data ?? []).some((c) => c.status !== "APPLIED") && <p className="muted small">A correction marked FAILED was saved but not completed. Submit the same correction again to finish it.</p>}
     </Card>
   );

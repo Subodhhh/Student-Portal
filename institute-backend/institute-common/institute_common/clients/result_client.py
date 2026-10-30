@@ -21,8 +21,9 @@ class ResultRejected(Exception):
 class ResultClient(Protocol):
     def exam_results(self, test_id: str) -> list[dict]: ...
     def exam_subject_results(self, test_id: str) -> list[dict]: ...
-    def adjust(self, *, test_id: str, student_id: str, obtained_marks: int, reason: str, actor: str, correction_ref: str) -> dict: ...
-    def reevaluate(self, *, test_id: str, reason: str, actor: str, correction_ref: str) -> dict: ...
+    def adjust(self, *, test_id: str, student_id: str, obtained_marks: int, reason: str, actor: str, correction_ref: str,
+               subjects: list[dict] | None = None) -> dict: ...
+    def reevaluate(self, *, test_id: str, reason: str, actor: str, correction_ref: str, paper_ids: list[str] | None = None) -> dict: ...
 
 
 class HttpResultClient:
@@ -54,12 +55,18 @@ class HttpResultClient:
         except ResultRejected as exc:
             raise ResultServiceError(f"result service refused the request ({exc.status})") from exc
 
-    def adjust(self, *, test_id, student_id, obtained_marks, reason, actor, correction_ref) -> dict:
-        return self._call("POST", "/results/adjust", json={"test_id": test_id, "student_id": student_id, "obtained_marks": obtained_marks,
-                                                           "reason": reason, "actor": actor, "correction_ref": correction_ref})
+    def adjust(self, *, test_id, student_id, obtained_marks, reason, actor, correction_ref, subjects=None) -> dict:
+        body = {"test_id": test_id, "student_id": student_id, "obtained_marks": obtained_marks, "reason": reason, "actor": actor,
+                "correction_ref": correction_ref}
+        if subjects is not None:             # a Global Test: the marks attributed per subject
+            body["subjects"] = subjects
+        return self._call("POST", "/results/adjust", json=body)
 
-    def reevaluate(self, *, test_id, reason, actor, correction_ref) -> dict:
-        return self._call("POST", f"/tests/{test_id}/reevaluate", json={"reason": reason, "actor": actor, "correction_ref": correction_ref})
+    def reevaluate(self, *, test_id, reason, actor, correction_ref, paper_ids=None) -> dict:
+        body = {"reason": reason, "actor": actor, "correction_ref": correction_ref}
+        if paper_ids is not None:            # a Global Test: only the attempts that sat these papers
+            body["paper_ids"] = paper_ids
+        return self._call("POST", f"/tests/{test_id}/reevaluate", json=body)
 
 
 def _detail(r) -> str:

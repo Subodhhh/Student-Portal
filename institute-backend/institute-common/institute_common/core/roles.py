@@ -55,7 +55,7 @@ _ALL = {
     "paper.override_status",
     "examplan.manage", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
     "test.create",
-    "result.read", "result.correct",
+    "result.read", "result.correct", "result.correct.own",
     "analytics.read", "notification.manage", "notification.read",
     "support.manage", "billing.read", "billing.routine", "billing.refund", "billing.adjust",
     "settings.platform", "settings.provider", "settings.branch", "audit.read",
@@ -64,7 +64,7 @@ _ALL = {
 ROLE_PERMISSIONS: dict[Role, set[str]] = {
     Role.SUPER_ADMIN: set(_ALL),
     Role.ADMIN: _ALL - {
-        "paper.override_status", "result.correct", "billing.refund", "billing.adjust",
+        "paper.override_status", "result.correct", "result.correct.own", "billing.refund", "billing.adjust",
         "settings.platform",
     },
     Role.PROVIDER_ADMIN: {
@@ -77,7 +77,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
         "examplan.manage", "test.create", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
-        "result.read", "analytics.read", "notification.manage", "notification.read",
+        "result.read", "result.correct.own", "analytics.read", "notification.manage", "notification.read",
         "support.manage", "billing.read", "settings.provider", "settings.branch", "audit.read",
     },
     Role.BRANCH_ADMIN: {
@@ -90,7 +90,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
         "test.create",   # Daily and Weekly Tests for the admin's own branch only (Principal.can matches the branch)
         "exam.read", "exam.generate", "exam.schedule", "exam.publish",
-        "result.read", "analytics.read", "notification.manage", "notification.read",
+        "result.read", "result.correct.own", "analytics.read", "notification.manage", "notification.read",
         "support.manage", "settings.branch",
     },
     Role.TEACHER: {
@@ -98,6 +98,6 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "question.read", "question.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
         # No test.create: teachers upload and contribute papers and see the scheduled tests of what they teach, but never create tests.
-        "exam.read", "result.read", "analytics.read", "notification.read",
+        "exam.read", "result.read", "result.correct.own", "analytics.read", "notification.read",
     },
 }

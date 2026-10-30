@@ -103,7 +103,7 @@ services:
     environment:
       FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
-      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_TEST_SERVICE_KEY:-}
+      INSTITUTE_SERVICE_API_KEYS: ${STUDENT_TEST_SERVICE_KEY:-},${STUDENT_ATTEMPT_TEST_SERVICE_KEY:-}   # Institute exam service, Student attempt service
     ports:
       - "8005:8001"
     healthcheck: *student_health
@@ -123,6 +123,8 @@ services:
       FORWARDED_ALLOW_IPS: "10.231.47.2"   # proxy headers trusted from portal-edge only (deploy/tunnel)
       REDIS_URL: redis://student-auth-redis:6379
       INSTITUTE_SERVICE_API_KEYS: ${STUDENT_ATTEMPT_SERVICE_KEY:-}
+      STUDENT_TEST_SERVICE_URL: http://student-test-service:8001   # paper-choice eligibility (Global Tests)
+      STUDENT_TEST_SERVICE_API_KEY: ${STUDENT_ATTEMPT_TEST_SERVICE_KEY:-}
     ports:
       - "8006:8001"
     healthcheck: *student_health

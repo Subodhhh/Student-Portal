@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from fractions import Fraction
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -487,6 +488,9 @@ def generate_exam(plan_id: UUID, body: GenerateIn, idempotency_key: str | None =
     start, end = body.start_at or plan.start_at, body.end_at or plan.end_at
     if end <= start:
         raise api_error(422, "INVALID_WINDOW", "end_at must be after start_at.")
+    if plan.global_occurrence_id and (start != plan.start_at or end != plan.end_at):
+        # a Global Test date has ONE exam in its scheduled window: another window would be a second exam for the same students
+        raise api_error(409, "GLOBAL_TEST_WINDOW_FIXED", "A Global Test date is generated only in its scheduled window.")
     # One exam per plan and window start: manual and scheduled generation converge on the same run (the Idempotency-Key header is
     # still accepted but no longer creates a separate exam for the same window).
     try:
@@ -823,7 +827,12 @@ def _subject_rows(db: Session, rc: ResultClient, ev: ExamVersion, scope: unified
     names = set(db.scalars(select(Subject.name).where(Subject.subject_id.in_(scope.subject_ids or [None]))))
     out = []
     for r in rc.exam_subject_results(str(ev.exam_version_id)):
-        mine = [x for x in r["subjects"] if x["subject"] in names]
+        # by paper when the attempt reports its papers (students who chose papers: another provider may contribute a paper of the
+        # same subject); otherwise by subject, which within one exam is one paper (every exam made for one combination of papers)
+        by_paper = any(x.get("paper_id") for x in r["subjects"])
+        mine = [x for x in r["subjects"] if (x.get("paper_id") in scope.paper_ids if by_paper else x["subject"] in names)]
+        if by_paper and not mine:
+            continue                              # this student sat none of the caller's papers
         add = lambda k, mine=mine: sum(x[k] for x in mine)  # noqa: E731
         attempted, correct = add("attempted_questions"), add("correct_answers")
         out.append({"student_id": r["student_id"], "subjects": mine, "total_marks": add("total_marks"), "obtained_marks": add("obtained_marks"),
@@ -831,6 +840,19 @@ def _subject_rows(db: Session, rc: ResultClient, ev: ExamVersion, scope: unified
                     "unanswered_questions": add("unanswered_questions"), "accuracy": round(correct / attempted * 100, 2) if attempted else 0.0,
                     "submitted_at": r["submitted_at"]})
     return sorted(out, key=lambda x: -x["obtained_marks"])
+
+
+def competition_ranked(rows: list[dict]) -> list[dict]:
+    """Global Test ranking, the same rule as the student ranking service: obtained / that student's own maximum compared as exact
+    fractions, equal ratios share a rank (1, 1, 3), ordered inside a rank by raw marks; a zero maximum is not ranked (listed last)."""
+    ranked = sorted((r for r in rows if r["total_marks"]), key=lambda r: (-Fraction(r["obtained_marks"], r["total_marks"]), -r["obtained_marks"]))
+    out, previous, current = [], None, 0
+    for i, r in enumerate(ranked, start=1):
+        ratio = Fraction(r["obtained_marks"], r["total_marks"])
+        if ratio != previous:
+            current, previous = i, ratio
+        out.append({**r, "rank": current})
+    return out + [{**r, "rank": None} for r in rows if not r["total_marks"]]
 
 
 @router.get("/exams/{exam_id}/results")
@@ -863,20 +885,55 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
     except StudentServiceError:
         names = {}
     marks = [r["obtained_marks"] for r in rows]
-    out_rows = [{**r, "rank": i + 1, "name": (f"{names[r['student_id']].first_name} {names[r['student_id']].last_name}" if r["student_id"] in names else None)}
+    unified_exam = unified.is_unified_exam(db, e.exam_id)
+    if unified_exam:
+        rows = competition_ranked(rows)           # Global Test: exact obtained/maximum ratio, shared ranks (as the student ranking)
+    out_rows = [{**r, "rank": r["rank"] if unified_exam else i + 1,
+                 "name": (f"{names[r['student_id']].first_name} {names[r['student_id']].last_name}" if r["student_id"] in names else None)}
                 for i, r in enumerate(rows)]
     if subject_view:
         visible = [x for x in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == ev.exam_version_id))
-                   if x.subject_id in branches.subject_ids]
+                   if str(x.source_submission_id) in branches.paper_ids]
         total = _papers_total(ev, visible)
     return {
         "exam_id": str(exam_id), "window_closed": utcnow() >= ev.end_at, "total_marks": str(total if subject_view else ev.total_marks),
+        "global_test": unified_exam,                              # contributors may correct their own papers' answer keys
         "subject_view": subject_view, "visible_subjects": sorted({s["subject"] for r in rows for s in r.get("subjects", [])}) if subject_view else None,
         "summary": {"assigned": len(allowed), "submitted": len(rows), "not_submitted": max(len(allowed) - len(rows), 0),
                     "average": round(sum(marks) / len(marks), 2) if marks else None,
                     "highest": max(marks) if marks else None, "lowest": min(marks) if marks else None},
         "results": out_rows,
     }
+
+
+class RequeueIn(Strict):
+    reason: str = Field(max_length=1000)
+
+
+@router.post("/exams/{exam_id}/outbox/requeue")
+def requeue_delivery(exam_id: UUID, body: RequeueIn, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+                     p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Super Admin only, after investigating a FAILED delivery: send it again. The same outbox row is reset (same Idempotency-Key towards
+    the Student services, which acknowledge an exam they already hold), so nothing is ever delivered or created twice. Repeating the
+    request when nothing has failed changes nothing."""
+    e = _exam(db, exam_id)
+    if not p.has_role(Role.SUPER_ADMIN):
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": "outbox.requeue", "exam_id": str(exam_id)})
+        raise api_error(403, "FORBIDDEN", "Only the Super Admin can send a failed delivery again.")
+    if not idempotency_key or not 8 <= len(idempotency_key.strip()) <= 100:
+        raise api_error(422, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key header of 8-100 characters is required.")
+    reason = need_reason(body.reason)
+    rows = db.scalars(select(ExamOutbox).join(ExamVersion, ExamVersion.exam_version_id == ExamOutbox.exam_version_id)
+                      .where(ExamVersion.exam_id == exam_id)).all()
+    requeued = [r for r in rows if r.status == "FAILED"]
+    for r in requeued:
+        r.status, r.attempts, r.next_attempt_at, r.last_error = "PENDING", 0, utcnow(), None
+    db.commit()
+    if requeued:
+        audit.record(db, "exam.outbox.requeue", "SUCCESS", actor=p.staff_id, target_type="exam", target_id=exam_id, provider_id=e.provider_id,
+                     branch_id=e.branch_id, reason=reason, ip=p.ip, details={"operations": [r.operation for r in requeued]})
+    return {"exam_id": str(exam_id), "requeued": [r.operation for r in requeued],
+            "deliveries": [{"operation": r.operation, "status": r.status} for r in rows]}
 
 
 @router.post("/exams/{exam_id}/sync")

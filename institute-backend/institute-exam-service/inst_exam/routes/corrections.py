@@ -1,6 +1,8 @@
 """Result corrections: manual marks adjustment and answer-key correction (with re-evaluation).
 
-Super Admin only (permission `result.correct`). Every request needs an Idempotency-Key and a reason. The request is
+Super Admin only (permission `result.correct`), except one case: on a Global Test exam a contributor with `result.correct.own` may
+correct the answer key of their OWN papers only (services/unified.may_correct_own; a request touching any other question is refused as
+a whole), and the re-evaluation then reaches only the attempts that sat a corrected paper. Every request needs an Idempotency-Key and a reason. The request is
 stored first (immutable), then applied through the Student services, which keep the immutable result history. A retry
 with the same key finishes an interrupted correction using the same correction reference, so nothing is applied twice."""
 from decimal import Decimal
@@ -27,9 +29,15 @@ from inst_exam.services.student_notifications import enqueue as enqueue_student_
 router = APIRouter(prefix="/api/v1", tags=["Result corrections"])
 
 
+class SubjectMarks(Strict):
+    subject: str = Field(min_length=1, max_length=100)
+    obtained_marks: int
+
+
 class AdjustIn(Strict):
     obtained_marks: int
     reason: str = Field(max_length=1000)
+    subjects: list[SubjectMarks] | None = Field(default=None, max_length=100)   # a Global Test: the marks per subject
 
 
 class KeyChange(Strict):
@@ -162,6 +170,11 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
     reason = need_reason(body.reason)
     ev = _published(e, ev)
     request = {"student_id": student_id, "obtained_marks": body.obtained_marks}
+    subjects = [x.model_dump() for x in body.subjects] if body.subjects is not None else None
+    if subjects is not None:
+        if not unified.is_unified_exam(db, e.exam_id):
+            raise api_error(422, "SUBJECT_MARKS_NOT_SUPPORTED", "Marks per subject apply only to Global Tests.")
+        request["subjects"] = subjects
     c = _existing(db, key, exam_id, "MARKS_ADJUSTMENT", request)
     if c is None:
         if not db.scalar(select(StudentExamAssignment.assignment_id).where(StudentExamAssignment.exam_version_id == ev.exam_version_id,
@@ -183,7 +196,7 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
     actor = _staff_code(db, p)
     try:
         outcome = rc.adjust(test_id=str(ev.exam_version_id), student_id=student_id, obtained_marks=body.obtained_marks, reason=c.reason,
-                            actor=actor, correction_ref=str(c.correction_id))
+                            actor=actor, correction_ref=str(c.correction_id), **({"subjects": subjects} if subjects is not None else {}))
     except ResultRejected as exc:
         raise _rejected(db, c, exc)
     except ResultServiceError as exc:
@@ -193,11 +206,36 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
     return _out(c, actor)
 
 
+def _key_correction_scope(db: Session, exam_id: UUID, p: Principal, orders: list[int]) -> tuple[Exam, ExamVersion, list[str] | None]:
+    """Who may correct these questions' answer key, and which papers they belong to. Every exam: the platform-wide `result.correct`
+    (Super Admin). A Global Test exam also: a contributor whose `result.correct.own` covers EVERY question's paper; one question
+    outside it refuses the whole request. For a Global Test the corrected papers are returned, so only their takers are re-scored."""
+    e = db.get(Exam, exam_id)
+    if not e or not unified.is_unified_exam(db, e.exam_id):
+        e, ev = _exam_and_version(db, exam_id, p, "result.correct")
+        return e, ev, None
+    ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
+    ranges = unified.paper_orders(db, ev.exam_version_id) if ev else []
+    owner = {o: sub for r, _evp, sub in ranges for o in r if sub is not None}
+    platform = unified.is_platform(p, "result.correct")
+    if not platform and not p.has_perm("result.correct.own"):
+        e, ev = _exam_and_version(db, exam_id, p, "result.correct")             # the existing refusal (audited)
+    unknown = [o for o in orders if o not in owner]
+    if unknown:
+        raise api_error(404, "QUESTION_NOT_FOUND", f"No such question in this exam: {', '.join(map(str, unknown[:20]))}.")
+    denied = [o for o in orders if not (platform or unified.may_correct_own(p, owner[o]))]
+    if denied:
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
+                     details={"permission": "result.correct.own", "exam_id": str(exam_id), "question_orders": denied[:50]})
+        raise api_error(403, "FORBIDDEN", "You may correct only questions of your own papers.")
+    return e, ev, sorted({str(owner[o].submission_id) for o in orders})
+
+
 @router.post("/exams/{exam_id}/answer-key-corrections")
 def correct_answer_key(exam_id: UUID, body: KeyCorrectionIn, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
                        p: Principal = Depends(get_principal), db: Session = Depends(get_db), rc: ResultClient = Depends(get_result_client),
                        kc: AnswerKeyClient = Depends(get_answer_key_client)):
-    e, ev = _exam_and_version(db, exam_id, p, "result.correct")
+    e, ev, paper_ids = _key_correction_scope(db, exam_id, p, [c.question_order for c in body.changes])
     key = _key(idempotency_key)
     reason = need_reason(body.reason)
     ev = _published(e, ev)
@@ -221,7 +259,8 @@ def correct_answer_key(exam_id: UUID, body: KeyCorrectionIn, idempotency_key: st
     except InternalServiceError as exc:
         raise _unavailable(db, c, exc)
     try:
-        re = rc.reevaluate(test_id=test_id, reason=c.reason, actor=actor, correction_ref=ref)
+        re = rc.reevaluate(test_id=test_id, reason=c.reason, actor=actor, correction_ref=ref,
+                           **({"paper_ids": paper_ids} if paper_ids is not None else {}))
     except ResultRejected as exc:
         raise _rejected(db, c, exc)
     except ResultServiceError as exc:

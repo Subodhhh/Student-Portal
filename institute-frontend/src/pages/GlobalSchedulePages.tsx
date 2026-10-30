@@ -25,7 +25,7 @@ type StudentLayouts = {
 
 const LAYOUT_LABELS: Record<string, string> = {
   NOT_ENROLLED: "Not enrolled", NO_SUBMISSION: "No paper submitted", NOT_APPROVED: "Not approved in time",
-  NOT_COVERED: "Not covered", CONFLICT: "Conflict",
+  NOT_COVERED: "Not covered", CONFLICT: "Conflict", SELECTABLE: "Student chooses",
 };
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -33,6 +33,7 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function DateState({ o }: { o: Occurrence }) {
   if (o.status !== "PUBLISHED") return <StatusBadge status={o.status} />;
   if (o.generated_at) return <Badge tone="ok">Exams generated</Badge>;
+  if (o.generation_failed_at) return <Badge tone="danger">Generation stopped</Badge>;
   return o.submissions_open ? <Badge tone="info">Papers open</Badge> : <Badge tone="warn">Generating</Badge>;
 }
 
@@ -263,12 +264,23 @@ export function GlobalOccurrencePage() {
       {notice && <Alert kind="success">{notice}</Alert>}
       {act.error && !withdraw && <Alert kind="error">{act.error}</Alert>}
       {o.status === "CANCELLED" && <Alert kind="warn">This date was cancelled: {o.cancel_reason}</Alert>}
+      {o.question_limit?.exceeded && !o.generated_at && (
+        <Alert kind="warn">The papers submitted for this date hold more questions than one exam may ({o.question_limit.projected ?? "over"} of {o.question_limit.limit}
+          {o.question_limit.mine !== null ? `; your papers: ${o.question_limit.mine}` : ""}). The exam will not be generated (questions are never cut) unless papers are withdrawn or the limit is raised.</Alert>
+      )}
+      {o.generation_failed_at && !o.generated_at && (
+        <Alert kind="error">Generating this date stopped{o.generation_error ? `: ${o.generation_error}` : ""}.
+          {me?.primary_role === "SUPER_ADMIN" && <> <Button small busy={act.busy} onClick={() => void act.run(async () => {
+            await api(`/api/v1/global-occurrences/${o.occurrence_id}/generation/retry`, { method: "POST", body: { reason: "Retried after investigating the cause" },
+              headers: { "Idempotency-Key": crypto.randomUUID() } });
+            setNotice("Generation will be retried by the next worker pass."); d.reload(); })}>Retry generation</Button></>}</Alert>
+      )}
       <Card>
         <div className="card-head"><h2>Papers</h2>
           {!platform && o.submissions_open && mySubjects.length > 0 && <Button onClick={() => setSubmitting(true)}>Submit a paper</Button>}</div>
         <p className="muted small">{o.submissions_open
-          ? `Papers are accepted until ${fmtDate(o.submission_deadline)}. Each student receives the paper submitted for them; two papers of the same subject can never cover the same student.`
-          : o.generated_at ? "The deadline has passed: every student received their own paper and the exams no longer change." : "Papers are no longer accepted for this date."}</p>
+          ? `Papers are accepted until ${fmtDate(o.submission_deadline)}. Each student may sit only the papers submitted for them; a student reached by two papers of a subject chooses one. The same paper cannot be submitted twice for the same students.`
+          : o.generated_at ? "The deadline has passed: the date's exam is fixed and each student sits their own papers." : "Papers are no longer accepted for this date."}</p>
         <DataTable rows={o.submission_list} rowKey={(s) => s.submission_id}
           empty={<EmptyState title={platform ? "No papers submitted yet" : "You have not submitted a paper for this date"} />}
           columns={[
@@ -292,7 +304,7 @@ export function GlobalOccurrencePage() {
             { header: "Students covered now", render: (c) => <StudentCount count={c.students_covered}
               url={`/api/v1/global-occurrences/${o.occurrence_id}/coverage/students?provider_id=${c.provider_id}&subject_id=${c.subject_id}`}
               title={`${c.subject}: students covered by ${c.provider_name}`} context="The students who would receive this provider's approved paper for the subject if the exams were generated now." /> },
-            { header: "", render: (c) => (c.missing ? <Badge tone="danger">Missing paper</Badge> : c.ambiguous ? <Badge tone="warn">{c.ambiguous} covered twice</Badge> : <Badge tone="ok">Covered</Badge>) },
+            { header: "", render: (c) => (c.missing ? <Badge tone="danger">Missing paper</Badge> : c.choosing ? <Badge tone="info">{c.choosing} will choose a paper</Badge> : <Badge tone="ok">Covered</Badge>) },
           ]} />
         </Card>
       )}

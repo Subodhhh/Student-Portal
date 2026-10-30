@@ -69,6 +69,7 @@ class SubjectPerformance(BaseModel):
     total_marks: int
     obtained_marks: int
     accuracy: float
+    adjustment: int = 0              # a Global Test: this subject's manual adjustment (included in obtained_marks)
 
 
 class QuestionReview(BaseModel):
@@ -102,3 +103,5 @@ class ResultDetailsResponse(BaseModel):
     # False while the test can still be started by others: questions is then empty and review opens at review_available_at.
     review_available: bool = True
     review_available_at: datetime | None = None
+    # a Global Test: a manual adjustment never attributed to a subject (included in the overall result only)
+    unattributed_adjustment: int | None = None

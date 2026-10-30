@@ -8,9 +8,10 @@ Provider staff (Provider Admin, Branch Admin, Teacher - permission `paper.upload
   see the published schedule of the tests that concern them (a subject their provider offers; teachers: a subject they teach), and
   submit, per occurrence and subject, one of their papers for an audience they are authorized for (the Create Test audience: whole
   branches, batches, individual students - a tutor without batches picks students). The backend checks the paper (own provider and
-  subject; teachers: their own papers), the audience (routes/tests.authorize with paper.upload) and refuses an audience that overlaps
-  another active submission of the same provider for that subject. Submissions close at the deadline (start - generate_lead_minutes),
-  when services/global_generation.py gives every student their own submission's paper.
+  subject; teachers: their own papers) and the audience (routes/tests.authorize with paper.upload), and refuses a submission of the SAME
+  paper version for students another active submission of that subject already reaches (a duplicate; different papers for the same
+  students are allowed: those students choose one). Submissions close at the deadline (start - generate_lead_minutes), when
+  services/global_generation.py makes the date's one exam with every student's eligible papers.
 
 Visibility: platform - everything (metadata only; papers stay in the paper service's own access rules); provider admins - their
 provider's submissions; branch admins - their branch's; teachers - their own."""
@@ -27,6 +28,7 @@ from institute_common.clients.student_client import StudentClient, StudentServic
 from institute_common.core import audit
 from institute_common.core.class_levels import class_target
 from institute_common.core.roles import GLOBAL_ROLES, Role
+from institute_common.config import settings
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
@@ -196,6 +198,7 @@ def _occ_out(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
            "marking": {"mode": test.marking_mode, "correct": test.marks_correct, "wrong": test.marks_wrong},
            "start_at": occ.start_at, "end_at": occ.end_at, "status": occ.status, "submission_deadline": gg.deadline(test, occ),
            "submissions_open": _open(test, occ), "generated_at": occ.generated_at, "generation_error": occ.generation_error if _is_platform(p) else None,
+           "generation_failed_at": occ.generation_failed_at, "generation_attempts": occ.generation_attempts if _is_platform(p) else None,
            "cancel_reason": occ.cancel_reason,
            "subjects": [{"subject_id": sid, "subject": name, "can_submit": sid in mine} for sid, name in subjects],
            "submissions": {"active": sum(1 for s in subs if s.status == "ACTIVE"), "withdrawn": sum(1 for s in subs if s.status == "WITHDRAWN")}}
@@ -428,6 +431,7 @@ def get_occurrence(occurrence_id: UUID, p: Principal = Depends(get_principal), d
     db.info["audience_snapshot_providers"] = {s.provider_id for s in subs if s.status == "ACTIVE"}
     out = _occ_out(db, p, occ, t, detail=True, all_subs=subs)
     out["coverage"] = coverage(db, p, occ, t)
+    out["question_limit"] = question_limit(db, p, subs)
     if occ.generated_at:
         plans = db.scalars(select(ExamPlan).where(ExamPlan.global_occurrence_id == occ.occurrence_id)).all()
         visible = {x.plan_id for x in (daily.visible_plans(db, p, plans) if not _is_platform(p) else plans)}
@@ -542,12 +546,31 @@ def coverage(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
             if sid not in offered or sid not in allowed:
                 continue
             subs = [s for s in active if s.provider_id == prov and s.subject_id == sid and _may_see(p, s)]
-            covered = sum(1 for per in a["papers"].values() if sid in per and _may_see(p, per[sid][0]))
+            reached = [per[sid] for per in a["papers"].values() if sid in per and any(_may_see(p, x[0]) for x in per[sid])]
             out.append({"provider_id": prov, "provider_name": names.get(prov), "subject_id": sid, "subject": sname,
-                        "submissions": len(subs), "ready": sum(1 for s in subs if db.get(PaperVersion, s.paper_version_id).status in gg.READY),
-                        "students_covered": covered, "ambiguous": sum(1 for (_st, sj) in a["ambiguous"] if sj == sid),
+                        "submissions": len(subs), "ready": sum(1 for s in subs if s.submission_id not in a["reasons"]),
+                        "students_covered": len(reached), "choosing": sum(1 for picks in reached if len(picks) > 1),
                         "missing": not subs})
     return out
+
+
+PROJECTED = ("VALIDATED", "APPROVED", "PUBLISHED")       # versions that may still be usable at the deadline
+
+
+def question_limit(db: Session, p: Principal, subs: list[GlobalPaperSubmission]) -> dict:
+    """A warning before the deadline (never a refusal): the questions the date's one exam would hold with every active submission
+    whose version may still be usable, against the configured limit. The platform sees the totals; provider staff see only whether
+    the limit is exceeded and their own submissions' questions (never another provider's figures)."""
+    counts = {}
+    for s in subs:
+        if s.status == "ACTIVE":
+            v = db.get(PaperVersion, s.paper_version_id)
+            if v and v.status in PROJECTED:
+                counts[s.submission_id] = v.question_count
+    projected, limit = sum(counts.values()), settings.global_test_max_questions
+    platform = _is_platform(p)
+    return {"limit": limit, "exceeded": projected > limit, "projected": projected if platform else None,
+            "mine": None if platform else sum(counts[s.submission_id] for s in subs if s.submission_id in counts and _may_see(p, s))}
 
 
 def _named_page(sc, student_ids: list[str], page: int, page_size: int) -> dict:
@@ -585,7 +608,7 @@ def coverage_students(occurrence_id: UUID, provider_id: UUID, subject_id: UUID, 
     if subject_id not in offered or subject_id not in allowed or subject_id not in {s for s, _ in _subjects(db, test.test_id)}:
         raise api_error(404, "NOT_FOUND", "Coverage not found.")
     a = gg.assignments(db, occ, provider_id)
-    ids = [sid for sid, per in a["papers"].items() if subject_id in per and _may_see(p, per[subject_id][0])]
+    ids = [sid for sid, per in a["papers"].items() if subject_id in per and any(_may_see(p, x[0]) for x in per[subject_id])]
     return {"occurrence_id": occurrence_id, "provider_id": provider_id, "subject_id": subject_id, **_named_page(sc, ids, page, page_size)}
 
 
@@ -693,13 +716,14 @@ def submit_paper(occurrence_id: UUID, body: SubmissionIn, idempotency_key: str =
     if not students:
         raise api_error(422, "AUDIENCE_EMPTY", "Nobody is eligible: no active student in this selection takes this subject"
                         + (f" in Class {t.target_class}" if t.target_class and not class_problem else "") + ".")
+    # different papers for the same students are allowed (those students choose one); the SAME paper version twice is a duplicate
     for other in db.scalars(select(GlobalPaperSubmission).where(
-            GlobalPaperSubmission.occurrence_id == occurrence_id, GlobalPaperSubmission.provider_id == a.provider_id,
-            GlobalPaperSubmission.subject_id == body.subject_id, GlobalPaperSubmission.status == "ACTIVE")):
+            GlobalPaperSubmission.occurrence_id == occurrence_id, GlobalPaperSubmission.subject_id == body.subject_id,
+            GlobalPaperSubmission.paper_version_id == v.paper_version_id, GlobalPaperSubmission.status == "ACTIVE")):
         overlap = students & {sid for sid, _e, _b in gg.resolve_submission(db, other)}
         if overlap:
-            raise api_error_detail(409, "AUDIENCE_OVERLAP", f"{len(overlap)} of these students already receive another paper for this subject "
-                                   "on this date. Choose an audience that does not overlap, or ask for that submission to be withdrawn.",
+            raise api_error_detail(409, "DUPLICATE_PAPER_SUBMISSION", f"This paper version is already submitted for {len(overlap)} of these "
+                                   "students for this subject on this date. Choose other students or another paper.",
                                    overlapping_students=len(overlap))
     sub = GlobalPaperSubmission(occurrence_id=occurrence_id, subject_id=body.subject_id, provider_id=a.provider_id, branch_id=a.branch_ids[0],
                                 paper_version_id=v.paper_version_id, audience=a.model_dump(mode="json"), client_request_id=idempotency_key,
@@ -748,3 +772,33 @@ def list_submissions(occurrence_id: UUID, p: Principal = Depends(get_principal),
                                   .order_by(GlobalPaperSubmission.submitted_at)) if _may_see(p, s)]
     return {"items": _subs_out(db, p, subs), "total": len(subs)}
 
+
+# ------------------------------------------------------------------ platform: recovery of a date whose generation stopped
+
+class RetryIn(Strict):
+    reason: str = Field(max_length=1000)
+
+
+@router.post("/global-occurrences/{occurrence_id}/generation/retry")
+def retry_generation(occurrence_id: UUID, body: RetryIn, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+                     p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Super Admin only, after the cause was investigated: let the worker generate a date whose generation stopped (failed passes or the
+    question limit). It reuses the date's frozen plan, so no exam, version or assignment is ever created twice; repeating the request
+    when the date has not stopped changes nothing."""
+    if not p.has_role(Role.SUPER_ADMIN):
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": "global_test.generation.retry",
+                                                                                         "occurrence_id": str(occurrence_id)})
+        raise api_error(403, "FORBIDDEN", "Only the Super Admin can retry a Global Test date's generation.")
+    if not idempotency_key or not 8 <= len(idempotency_key.strip()) <= 100:
+        raise api_error(422, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key header of 8-100 characters is required.")
+    reason = need_reason(body.reason)
+    occ = db.scalar(select(GlobalTestOccurrence).where(GlobalTestOccurrence.occurrence_id == occurrence_id).with_for_update())
+    if not occ:
+        raise api_error(404, "NOT_FOUND", "Global Test date not found.")
+    previous = occ.generation_error
+    retried = gg.retry_generation(db, occ)
+    if retried:
+        audit.record(db, "global_test.occurrence.generation_retry", "SUCCESS", actor=p.staff_id, target_type="global_test_occurrence",
+                     target_id=occurrence_id, reason=reason, ip=p.ip, details={"previous_error": (previous or "")[:300]})
+    return {"occurrence_id": occurrence_id, "retried": retried, "generated_at": occ.generated_at,
+            "generation_failed_at": occ.generation_failed_at, "generation_attempts": occ.generation_attempts}

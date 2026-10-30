@@ -15,7 +15,12 @@ from app.repositories.test_repository import (
     get_test_for_student,
     has_running_attempt,
 )
+from app.services import paper_eligibility
 from app.services.question_order import section_order
+
+
+class AttemptRequired(Exception):
+    """A Global Test with paper choice serves its questions only for an attempt's frozen papers: start the attempt first."""
 
 
 def session_zone(db: Session):
@@ -69,6 +74,24 @@ def format_test(row, db: Session):
     }
 
 
+def personalize(db: Session, test, student_id: str, snap=False):
+    """A Global Test with paper choice as THIS student sees it: their sections and totals (see services/paper_eligibility); None when they
+    have no eligibility in it. Other tests are returned unchanged. snap: the attempt snapshot when the caller already has it."""
+    if not test or not paper_eligibility.has_paper_choice(test.get("sections")):
+        return test
+    if snap is False:
+        snap = paper_eligibility.snapshot(db, test["test_id"], student_id)
+    view = paper_eligibility.student_view(test["sections"], paper_eligibility.rows(db, test["test_id"], student_id), snap)
+    if view is None:
+        return None
+    test["sections"], test["total_questions"], test["total_marks"] = view
+    return test
+
+
+def _personalized(db: Session, rows, student_id: str) -> list:
+    return [t for t in (personalize(db, format_test(row, db), student_id) for row in rows) if t]
+
+
 def get_test(
     db: Session,
     test_id,
@@ -80,7 +103,7 @@ def get_test(
         student_id=student_id,
     )
 
-    return format_test(row, db)
+    return personalize(db, format_test(row, db), student_id)
 
 
 def get_test_details(
@@ -94,7 +117,7 @@ def get_test_details(
         student_id=student_id,
     )
 
-    return format_test(row, db)
+    return personalize(db, format_test(row, db), student_id)
 
 
 def get_available_tests(
@@ -106,10 +129,7 @@ def get_available_tests(
         student_id=student_id,
     )
 
-    return [
-        format_test(row, db)
-        for row in rows
-    ]
+    return _personalized(db, rows, student_id)
 
 
 def get_scheduled_tests_for_student(
@@ -121,10 +141,7 @@ def get_scheduled_tests_for_student(
         student_id=student_id,
     )
 
-    return [
-        format_test(row, db)
-        for row in rows
-    ]
+    return _personalized(db, rows, student_id)
 
 
 def get_missed_tests_for_student(
@@ -136,10 +153,7 @@ def get_missed_tests_for_student(
         student_id=student_id,
     )
 
-    return [
-        format_test(row, db)
-        for row in rows
-    ]
+    return _personalized(db, rows, student_id)
 
 
 def get_test_for_start(
@@ -166,8 +180,17 @@ def get_test_for_start(
         return None
 
     test = format_test(row, db)
+    paper_ids = None
+    if paper_eligibility.has_paper_choice(test.get("sections")):
+        snap = paper_eligibility.snapshot(db, test_id, student_id)
+        if snap is None:
+            raise AttemptRequired()
+        test = personalize(db, test, student_id, snap)
+        if not test:
+            return None
+        paper_ids = set(snap.values())       # only the attempt's papers, never another contribution's questions
 
-    questions = section_order(get_questions_by_test(db=db, test_id=test_id), test.get("sections"), student_id, test_id,
+    questions = section_order(get_questions_by_test(db=db, test_id=test_id, paper_ids=paper_ids), test.get("sections"), student_id, test_id,
                               subject_of=lambda q: q.subject, id_of=lambda q: q.question_id)
 
     test["questions"] = [

@@ -50,26 +50,31 @@ def rev(client, world, gs, login, db_factory, make_staff):  # noqa: F811
 
 
 def test_reversed_provider_mappings_give_each_student_their_own_papers_and_every_configured_subject(client, world, gs, rev, db_factory):
+    from tests.test_global_unified import cells_of
     t, occ = rev
     [run] = run_generation(db_factory, t, occ)
     assert not run["failed"], run
     got = exams_by_student(db_factory, occ["occurrence_id"])
-    p1, p2 = world["p1"], world["p2"]
-    assert got["STU000010"] == [(got["STU000010"][0][0], [(gs["phy"], gs["paperA"], p1), (gs["chem"], gs["paperChem2"], p2)])]
-    assert got["STU000011"] == [(got["STU000011"][0][0], [(gs["phy"], gs["paperT"], p2), (gs["chem"], gs["paperC"], p1)])]
-    assert got["STU000010"][0][0] != got["STU000011"][0][0]                             # different papers: different exams
+    assert got["STU000010"][0][0] == got["STU000011"][0][0]                               # the date's one exam
     lay = layout_of(db_factory, occ["occurrence_id"])
     assert list(lay["STU000010"]) == ["Physics", "Chemistry", "Biology"]                  # configured order, every configured subject
     assert lay["STU000010"] == lay["STU000011"] == {"Physics": "PAPER", "Chemistry": "PAPER", "Biology": "NOT_ENROLLED"}
-    sent = {p["student_ids"][0]: p for p in deliver(db_factory) if len(p["student_ids"]) == 1 and p["student_ids"][0] in ("STU000010", "STU000011")}
-    for sid in ("STU000010", "STU000011"):
-        bio = sent[sid]["sections"][2]
-        assert (bio["subject"], bio["status"], bio["question_count"]) == ("Biology", "NOT_ENROLLED", 0)
-        assert bio["message"] == "You are not enrolled in Biology with any of your institutes."
-        assert {q["subject"] for q in sent[sid]["questions"]} == {"Physics", "Chemistry"}   # never a question of an unrelated subject
-    # the providers' questions never mix: each student's Physics comes only from the provider they take Physics with
-    assert [q["text"] for q in sent["STU000010"]["questions"] if q["subject"] == "Physics"] == [f"paperA paper Q{i}" for i in (1, 2, 3)]
-    assert [q["text"] for q in sent["STU000011"]["questions"] if q["subject"] == "Physics"] == [f"paperT paper Q{i}" for i in range(1, 6)]
+    [payload] = deliver(db_factory)
+    provider_of = {x["paper_id"]: x["provider_name"] for sec in payload["sections"] for x in sec["papers"]}
+    cells = {a["audience_id"]: a["cells"] for a in payload["audiences"]}
+    mine = {sid: cells[aid] for aid, ids in payload["student_audiences"].items() for sid in ids}
+    # each student is eligible only for the paper of the provider they take that subject with (never mixed)
+    assert [(c["subject"], [provider_of[x] for x in c["paper_ids"]]) for c in mine["STU000010"]] == [
+        ("Physics", ["Provider p1"]), ("Chemistry", ["Provider p2"]), ("Biology", [])]
+    assert [(c["subject"], [provider_of[x] for x in c["paper_ids"]]) for c in mine["STU000011"]] == [
+        ("Physics", ["Provider p2"]), ("Chemistry", ["Provider p1"]), ("Biology", [])]
+    bio = mine["STU000010"][2]
+    assert (bio["status"], bio["message"]) == ("NOT_ENROLLED", "You are not enrolled in Biology with any of your institutes.")
+    assert cells_of(payload)["STU000010"][0] == ("Physics", "PAPER", ["Physics"])
+    questions = {x: [q["text"] for q in payload["questions"] if q["paper_id"] == x] for x in provider_of}
+    a_paper = mine["STU000010"][0]["paper_ids"][0]
+    t_paper = mine["STU000011"][0]["paper_ids"][0]
+    assert questions[a_paper] == [f"paperA paper Q{i}" for i in (1, 2, 3)] and questions[t_paper] == [f"paperT paper Q{i}" for i in range(1, 6)]
 
 
 def test_the_layout_api_shows_everything_to_the_platform_and_only_their_own_part_to_each_provider(client, world, gs, rev, login, db_factory, make_staff):
@@ -97,19 +102,28 @@ def test_the_layout_api_shows_everything_to_the_platform_and_only_their_own_part
     assert client.get(url, headers=login(gs["tA"])).status_code == 403                     # teachers use the exam pages
 
 
-def test_a_card_only_exam_is_unified_and_only_the_platform_opens_it(client, world, gs, rev, login, db_factory):
-    from institute_common.models.exams import ExamVersion
+def test_a_student_without_any_paper_still_gets_the_dates_card(client, world, gs, rev, login, db_factory):
+    from tests.test_global_unified import cells_of
     t, occ = rev
     run_generation(db_factory, t, occ)
-    [(exam_id, papers)] = exams_by_student(db_factory, occ["occurrence_id"])["STU000003"]
-    assert papers == []
-    with db_factory() as db:
-        ev = db.query(ExamVersion).filter_by(exam_id=UUID(exam_id)).one()
-        assert ev.total_questions == 0 and [c["status"] for c in ev.settings["sections"]] == ["NOT_COVERED", "NOT_COVERED", "NOT_ENROLLED"]
+    [(exam_id, _papers)] = exams_by_student(db_factory, occ["occurrence_id"])["STU000003"]
+    assert layout_of(db_factory, occ["occurrence_id"])["STU000003"] == {"Physics": "NOT_COVERED", "Chemistry": "NOT_COVERED", "Biology": "NOT_ENROLLED"}
+    assert [c[2] for c in cells_of(deliver(db_factory)[0])["STU000003"]] == [[], [], []]   # every subject explained, nothing to start
     view = client.get(f"{API}/exams/{exam_id}", headers=login(gs["sa"])).json()
-    assert view["unified_global"] is True and view["total_questions"] == 0 and view["name"] == "National Science Mock"
-    assert client.get(f"{API}/exams/{exam_id}", headers=login(gs["pa"])).status_code == 403          # its anchor grants nothing
+    assert view["unified_global"] is True and view["name"] == "National Science Mock"
     assert client.post(f"{API}/exams/{exam_id}/cancel", json={"reason": "not the anchor's"}, headers=login(gs["pa"])).status_code == 403
+
+
+def test_a_date_without_any_usable_paper_is_one_card_only_exam(client, world, gs, login, db_factory):
+    from institute_common.models.exams import ExamVersion
+    t, occ = published(client, login, gs)                                                # nobody submitted anything
+    run_generation(db_factory, t, occ)
+    got = exams_by_student(db_factory, occ["occurrence_id"])
+    assert got and all(papers == [] for rows in got.values() for _e, papers in rows) and len({e for rows in got.values() for e, _ in rows}) == 1
+    with db_factory() as db:
+        assert {ev.total_questions for ev in db.query(ExamVersion)} == {0}
+    [payload] = deliver(db_factory)
+    assert payload["questions"] == [] and all(not c["paper_ids"] and c["message"] for a in payload["audiences"] for c in a["cells"])
 
 
 def test_a_running_generation_job_never_marks_the_date_generated(client, world, gs, rev, db_factory, monkeypatch):

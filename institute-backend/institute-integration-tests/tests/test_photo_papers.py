@@ -9,7 +9,7 @@ import pytest
 
 from inst_paper.services import extraction
 from tests.test_global_contributions import client, login  # noqa: F401  (one session per staff member)
-from tests.test_global_schedule import aud, exams_of, gs, published, run_generation, submit  # noqa: F401
+from tests.test_global_schedule import aud, eligible_of, exams_of, gs, published, run_generation, submit  # noqa: F401
 
 API = "/api/v1"
 
@@ -235,5 +235,5 @@ def test_two_teachers_photo_papers_reach_only_their_own_students(client, world, 
     assert submit(client, login, gs["tA"], occ, gs["phy"], versions["tA"], aud(world, gs, batches=("batch_a",))).status_code == 201
     assert submit(client, login, gs["tB"], occ, gs["phy"], versions["tB"], aud(world, gs, batches=("batch_b",))).status_code == 201
     run_generation(db_factory, test, occ)
-    got = exams_of(db_factory, occ["occurrence_id"])
-    assert got["STU000001"] == [(world["p1"], [versions["tA"]])] and got["STU000002"] == [(world["p1"], [versions["tB"]])]
+    eligible = eligible_of(db_factory, occ["occurrence_id"])                 # each student: only their own teacher's paper
+    assert eligible["STU000001"]["Physics"] == [versions["tA"]] and eligible["STU000002"]["Physics"] == [versions["tB"]]

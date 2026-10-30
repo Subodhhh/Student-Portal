@@ -347,3 +347,55 @@
   background: #eff6ff;
   color: #2563eb;
 }
+/* v2 unified Global Test: subjects with the papers a student may choose */
+.paper-selection ul {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paper-selection li {
+  display: grid;
+  gap: 6px;
+}
+
+.paper-selection li.unavailable span {
+  color: #64748b;
+}
+
+.paper-selection fieldset {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.paper-selection legend {
+  margin-bottom: 4px;
+  color: #475569;
+  font-size: 14px;
+}
+
+.paper-selection label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.paper-selection-note,
+.paper-selection-required {
+  color: #b45309;
+}
+
+.paper-selection-error {
+  color: #b91c1c;
+}
+
+.test-details-action button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

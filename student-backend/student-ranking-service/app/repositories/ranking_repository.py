@@ -92,15 +92,20 @@ def get_occurrence_subject_scores(
     occurrence_id: UUID,
 ):
     """Per student and subject: the delivered maximum marks and the marks obtained, scored from the latest saved answer of each
-    question with the result service's rules (+marks right, -negative marks wrong, unanswered 0, case/space-insensitive)."""
+    question with the result service's rules (+marks right, -negative marks wrong, unanswered 0, case/space-insensitive), only on the
+    attempt's snapshot papers when the student chose papers, plus the subject's attributed manual adjustment; a result whose adjustment
+    is unattributed is left out (its official overall marks still rank in the overall ranking)."""
     query = text(f"""
         WITH scored AS (
-            SELECT r.student_id, r.attempt_id, r.test_id
+            SELECT r.student_id, r.attempt_id, r.test_id, r.subject_adjustments
             FROM test_results r
             JOIN tests t
                 ON t.test_id = r.test_id
             WHERE t.global_occurrence_id = :occurrence_id
               AND {OFFICIAL}
+              -- a manual adjustment never attributed to a subject keeps the result out of subject rankings (never guessed)
+              AND NOT (r.subject_adjustments IS NULL
+                       AND EXISTS (SELECT 1 FROM result_history h WHERE h.result_id = r.result_id AND h.kind = 'MARKS_ADJUSTMENT'))
         ),
         latest_answers AS (
             SELECT DISTINCT ON (aa.attempt_id, aa.question_id)
@@ -127,10 +132,13 @@ def get_occurrence_subject_scores(
                     WHEN UPPER(TRIM(la.selected_answer)) = UPPER(TRIM(q.correct_answer)) THEN COALESCE(q.marks, 0)
                     ELSE -COALESCE(q.negative_marks, 0)
                 END
-            ) AS obtained_marks
+            ) + COALESCE(MAX((sc.subject_adjustments ->> q.subject)::int), 0) AS obtained_marks
         FROM scored sc
         JOIN questions q
             ON q.test_id = sc.test_id
+            -- with paper choice only the attempt's snapshot papers (what was delivered); every question of its test otherwise
+            AND (NOT EXISTS (SELECT 1 FROM attempt_selected_papers sp WHERE sp.attempt_id = sc.attempt_id)
+                 OR q.paper_id IN (SELECT sp.paper_id FROM attempt_selected_papers sp WHERE sp.attempt_id = sc.attempt_id))
         LEFT JOIN latest_answers la
             ON la.attempt_id = sc.attempt_id
             AND la.question_id = q.question_id

@@ -25,7 +25,7 @@ from app.schemas.attempt_answer import (
     AttemptAnswerResponse,
     SaveAnswerRequest,
 )
-from app.services import integrity
+from app.services import integrity, paper_selection
 from app.services.attempt_answer_service import (
     clear_response,
     mark_for_review,
@@ -161,6 +161,34 @@ def start_test_attempt(
         test_id=request.test_id,
         duration_minutes=test["duration_minutes"],
     )
+
+
+class PaperSelectionRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=100)
+    paper_id: UUID
+
+
+@router.get("/tests/{test_id}/papers")
+def get_paper_choices(
+    test_id: UUID,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    """Global Test with paper choice: every subject with the papers this student may sit and the current choice (locked once started)."""
+    return paper_selection.view(db, test_id, student_id, paper_selection.fetch_eligibility(test_id, student_id))
+
+
+@router.put("/tests/{test_id}/selection")
+def choose_paper(
+    test_id: UUID,
+    request: PaperSelectionRequest,
+    student_id: str = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    """Choose (or change) the paper of a subject with several eligible papers; refused once the test has started."""
+    subjects = paper_selection.fetch_eligibility(test_id, student_id)
+    paper_selection.save(db, test_id, student_id, request.subject, request.paper_id, subjects)
+    return paper_selection.view(db, test_id, student_id, subjects)
 
 
 @router.get(

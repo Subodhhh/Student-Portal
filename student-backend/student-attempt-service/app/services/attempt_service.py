@@ -16,6 +16,8 @@ from app.repositories.attempt_repository import (
     get_attempt_by_id,
     get_attempt_by_test,
 )
+from app.models.paper_selection import AttemptSelectedPaper
+from app.services import paper_selection
 from app.services.integrity import finish, start_retake
 from app.services.question_order import section_order
 
@@ -25,6 +27,7 @@ def start_attempt(
     student_id: str,
     test_id: UUID,
     duration_minutes: int,
+    _retry: bool = True,
 ):
     existing_attempt = get_attempt_by_test(
         db=db,
@@ -81,6 +84,18 @@ def start_attempt(
     )
 
     try:
+        if paper_selection.has_paper_choice(paper_selection.stored_sections(db, test_id)):
+            # Global Test with paper choice: the attempt and its papers in ONE transaction (see services/paper_selection)
+            subjects = paper_selection.fetch_eligibility(test_id, student_id)
+            papers = paper_selection.lock_snapshot(db, test_id, student_id, subjects)
+            db.add(attempt)
+            db.flush()
+            for subject, paper_id in papers.items():
+                db.add(AttemptSelectedPaper(attempt_id=attempt.attempt_id, subject=subject, paper_id=paper_id))
+            db.commit()
+            db.refresh(attempt)
+            return attempt
+
         return create_attempt(
             db=db,
             attempt=attempt,
@@ -88,6 +103,10 @@ def start_attempt(
 
     except IntegrityError:
         db.rollback()
+
+        if _retry:
+            # a concurrent Start created the attempt first: return that attempt (the resume path above), never a second one
+            return start_attempt(db=db, student_id=student_id, test_id=test_id, duration_minutes=duration_minutes, _retry=False)
 
         raise HTTPException(
             status_code=400,
@@ -148,7 +167,7 @@ def get_attempt_workspace(
         )
 
     rows = db.execute(
-        text("""
+        text(f"""
             SELECT
                 q.question_id,
                 q.question_order,
@@ -170,6 +189,7 @@ def get_attempt_workspace(
                 ON aa.question_id = q.question_id
                AND aa.attempt_id = :attempt_id
             WHERE q.test_id = :test_id
+              AND {paper_selection.SNAPSHOT_FILTER}
             ORDER BY
                 q.subject ASC NULLS LAST,
                 q.question_order ASC
@@ -262,7 +282,7 @@ def get_attempt_summary(
         )
 
     summary = db.execute(
-        text("""
+        text(f"""
             SELECT
                 COUNT(q.question_id) AS total_questions,
 
@@ -294,6 +314,7 @@ def get_attempt_summary(
                AND aa.attempt_id = :attempt_id
 
             WHERE q.test_id = :test_id
+              AND {paper_selection.SNAPSHOT_FILTER}
         """),
         {
             "attempt_id": attempt_id,

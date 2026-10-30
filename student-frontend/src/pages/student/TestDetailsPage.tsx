@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import "../../styles/test-details.css";
+import PaperSelection, { type PaperChoices } from "../../components/PaperSelection";
 import { TEST_API_URL } from "../../services/api";
 
 type TestSection = {
@@ -10,6 +11,7 @@ type TestSection = {
   status: string;                // PAPER, or why there is no paper for this student
   message: string | null;
   question_count: number;
+  papers?: unknown[] | null;     // a Global Test with paper choice: the student's eligible papers (chosen on this page)
 };
 
 type Test = {
@@ -17,8 +19,8 @@ type Test = {
   name: string;
   description: string | null;
   duration_minutes: number;
-  total_questions: number;
-  total_marks: number;
+  total_questions: number | null;   // null: a Global Test with paper choice whose papers are not chosen yet
+  total_marks: number | null;
   start_at: string | null;
   end_at: string | null;
   status: string;
@@ -71,6 +73,7 @@ function TestDetailsPage() {
   const [test, setTest] = useState<Test | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [choices, setChoices] = useState<PaperChoices | null>(null);
 
   useEffect(() => {
     async function loadTest() {
@@ -166,6 +169,10 @@ function TestDetailsPage() {
     new Date() >= new Date(test.start_at) &&
     new Date() <= new Date(test.end_at);
 
+  // a Global Test with paper choice: the student chooses their papers here; the attempt service says when the choice is complete
+  const choosesPapers = Boolean(test.sections?.length && test.sections.every((section) => Array.isArray(section.papers)));
+  const canStart = !choosesPapers || Boolean(choices && (choices.complete || choices.locked));
+
   return (
     <section className="test-details-page">
       <button
@@ -243,12 +250,12 @@ function TestDetailsPage() {
 
         <div className="test-detail-item">
           <span>Questions</span>
-          <strong>{test.total_questions}</strong>
+          <strong>{test.total_questions ?? "Depends on your papers"}</strong>
         </div>
 
         <div className="test-detail-item">
           <span>Total Marks</span>
-          <strong>{test.total_marks}</strong>
+          <strong>{test.total_marks ?? "Depends on your papers"}</strong>
         </div>
 
         <div className="test-detail-item">
@@ -280,7 +287,9 @@ function TestDetailsPage() {
         </div>
       </div>
 
-      {test.sections && test.sections.length > 0 && (
+      {choosesPapers && testId && <PaperSelection testId={testId} onChange={setChoices} />}
+
+      {!choosesPapers && test.sections && test.sections.length > 0 && (
         <div className="test-details-sections">
           <h3>Subjects</h3>
           <ul>
@@ -300,11 +309,12 @@ function TestDetailsPage() {
         </p>
       )}
 
-      {isAvailable && test.total_questions > 0 && (
+      {isAvailable && test.total_questions !== 0 && (
         <div className="test-details-action">
           <button
             type="button"
             onClick={handleTakeTest}
+            disabled={!canStart}
           >
             Take Test
           </button>

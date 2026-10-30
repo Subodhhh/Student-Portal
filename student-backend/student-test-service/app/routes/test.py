@@ -7,6 +7,7 @@ from app.auth import get_current_student
 from app.database import get_db
 from app.schemas.test import TestResponse, TestStartResponse
 from app.services.test_service import (
+    AttemptRequired,
     get_available_tests,
     get_scheduled_tests_for_student,
     get_missed_tests_for_student,
@@ -73,11 +74,17 @@ def start_test(
     student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
-    test = get_test_for_start(
-        db=db,
-        test_id=test_id,
-        student_id=student_id,
-    )
+    try:
+        test = get_test_for_start(
+            db=db,
+            test_id=test_id,
+            student_id=student_id,
+        )
+    except AttemptRequired:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ATTEMPT_REQUIRED", "message": "Start the attempt first: its papers decide the questions."},
+        )
 
     if not test:
         raise HTTPException(

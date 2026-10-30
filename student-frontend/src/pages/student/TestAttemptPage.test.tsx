@@ -76,6 +76,89 @@ describe("Global Test attempt", () => {
   });
 });
 
+describe("Attempt before questions", () => {
+  it("starts (or resumes) the attempt before loading the questions", async () => {
+    const calls = renderAttempt();
+    await begin();
+    const urls = calls.map((c) => c.url);
+    expect(urls.findIndex((u) => u.endsWith("/attempts/start"))).toBeLessThan(urls.findIndex((u) => u.endsWith("/tests/t1/start")));
+  });
+
+  it("sends the student back to choose papers and loads no questions when a choice is missing", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.endsWith("/attempts/start")) return json(409, { detail: { code: "SELECTION_REQUIRED", subjects: ["Physics", "Chemistry"] } });
+      return json(200, {});
+    }));
+    render(<MemoryRouter initialEntries={["/tests/t1/attempt"]}><Routes><Route path="/tests/:testId/attempt" element={<TestAttemptPage />} />
+      <Route path="/tests/:testId" element={<p>details page</p>} /></Routes></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, start in fullscreen" }));
+    expect(await screen.findByText(/before starting: Physics, Chemistry/)).toBeTruthy();
+    expect(calls.some((u) => u.endsWith("/tests/t1/start"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Choose Papers" }));
+    expect(await screen.findByText("details page")).toBeTruthy();
+  });
+
+  function stubStart(start: () => Response, extra: (url: string) => Response | null = () => null) {
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "GET", body: null });
+      const special = extra(url);
+      if (special) return special;
+      if (url.endsWith("/attempts/start")) return start();
+      if (url.endsWith("/tests/t1/start")) return json(200, globalTest);
+      return json(200, {});
+    }));
+    render(<MemoryRouter initialEntries={["/tests/t1/attempt"]}><Routes><Route path="/tests/:testId/attempt" element={<TestAttemptPage />} /></Routes></MemoryRouter>);
+    return calls;
+  }
+
+  it("loads no questions when the attempt cannot be started", async () => {
+    const calls = stubStart(() => json(503, { detail: "Paper selection is temporarily unavailable" }),
+      (url) => (url.endsWith("/attempts/test/t1") ? json(404, { detail: "Not found" }) : null));
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, start in fullscreen" }));
+    expect(await screen.findByText("Unable to Load Test")).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith("/tests/t1/start"))).toBe(false);
+  });
+
+  it("shows an already submitted attempt as submitted and never starts it again", async () => {
+    const calls = stubStart(() => json(400, { detail: "You have already attempted this test" }), (url) => {
+      if (url.endsWith("/attempts/test/t1")) return json(200, { attempt_id: "a1", test_id: "t1", status: "SUBMITTED", expires_at: new Date().toISOString() });
+      if (url.endsWith("/attempts/a1/integrity")) return json(200, state(0, { status: "SUBMITTED" }));
+      return null;
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, start in fullscreen" }));
+    expect(await screen.findByText("Test Submitted")).toBeTruthy();
+    expect(screen.queryByText("Unable to Load Test")).toBeNull();
+    expect(calls.filter((c) => c.url.endsWith("/attempts/start"))).toHaveLength(1);
+    expect(calls.some((c) => c.url.endsWith("/attempts/a1/answers"))).toBe(false);
+  });
+
+  it("resumes a running attempt after a reload with its saved answers", async () => {
+    const expires = new Date(Date.now() + 3600_000).toISOString();
+    const calls = stubStart(() => json(200, { attempt_id: "a1", test_id: "t1", started_at: expires, expires_at: expires, status: "IN_PROGRESS" }),
+      (url) => (url.endsWith("/attempts/a1/answers") ? json(200, [{ question_id: "q2", selected_answer: "B" }]) : null));
+    await begin();
+    const urls = calls.map((c) => c.url);
+    expect(urls.filter((u) => u.endsWith("/attempts/start"))).toHaveLength(1);                     // the same attempt is returned, never a second
+    expect(urls.findIndex((u) => u.endsWith("/tests/t1/start"))).toBeGreaterThan(urls.findIndex((u) => u.endsWith("/attempts/start")));
+    expect(urls.findIndex((u) => u.endsWith("/attempts/a1/answers"))).toBeGreaterThan(urls.findIndex((u) => u.endsWith("/tests/t1/start")));
+    await waitFor(() => expect((document.querySelector('input[name="question-q2"][value="b"]') as HTMLInputElement)?.checked).toBe(true));
+  });
+
+  it("loads an ordinary test (no papers) the same way", async () => {
+    const ordinary = { ...globalTest, global_occurrence_id: null, sections: null, name: "Weekly Test" };
+    const expires = new Date(Date.now() + 3600_000).toISOString();
+    const calls = stubStart(() => json(200, { attempt_id: "a1", test_id: "t1", started_at: expires, expires_at: expires, status: "IN_PROGRESS" }),
+      (url) => (url.endsWith("/tests/t1/start") ? json(200, ordinary) : url.endsWith("/attempts/a1/answers") ? json(200, []) : null));
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, start in fullscreen" }));
+    expect(await screen.findByText("Weekly Test")).toBeTruthy();
+    expect(screen.getByText("Physics question q2")).toBeTruthy();
+    expect(calls.some((c) => c.url.includes("/papers") || c.url.includes("/selection"))).toBe(false);
+  });
+});
+
 describe("Exam integrity", () => {
   it("explains the rules first and starts nothing (no attempt, no timer) until the student accepts them", async () => {
     const calls = renderAttempt();

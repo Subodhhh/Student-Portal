@@ -18,12 +18,21 @@ class BranchResponse(BaseModel):
     state: str | None
 
 
+class SectionPaperResponse(BaseModel):
+    paper_id: UUID
+    label: str
+    provider_name: str | None = None
+    question_count: int
+    total_marks: int
+
+
 class SectionResponse(BaseModel):
     position: int
     subject: str
-    status: str                       # PAPER, or NOT_ENROLLED / NO_SUBMISSION / NOT_APPROVED / NOT_COVERED / CONFLICT
+    status: str                       # PAPER, SELECTABLE (choose one), or NOT_ENROLLED / NO_SUBMISSION / NOT_APPROVED / NOT_COVERED / CONFLICT
     message: str | None = None        # why there is no paper (None for PAPER)
     question_count: int = 0
+    papers: list[SectionPaperResponse] | None = None   # paper choice only: the student's eligible papers (after Start: the attempt's paper)
 
 
 class TestResponse(BaseModel):
@@ -33,8 +42,8 @@ class TestResponse(BaseModel):
     name: str
     description: str | None
     duration_minutes: int
-    total_questions: int
-    total_marks: int
+    total_questions: int | None       # None only for a Global Test whose paper choice is not fixed yet
+    total_marks: int | None
     start_at: datetime | None
     end_at: datetime | None
     status: str

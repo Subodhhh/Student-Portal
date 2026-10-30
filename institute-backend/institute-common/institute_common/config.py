@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     student_notification_service_api_key: str = ""
     student_test_service_url: str = ""
     student_test_service_api_key: str = ""
+    # Most questions one Global Test exam may hold (every paper of the date); never truncated: generation stops above it
+    global_test_max_questions: int = 5000
     # Read projection of Institute-owned reference data (providers, branches, batches, enrollments) kept in the Student database
     # through the Student enrollment service's internal API. Pushed by the Institute enrollment service.
     student_enrollment_service_url: str = ""

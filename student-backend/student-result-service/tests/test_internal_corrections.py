@@ -25,6 +25,7 @@ def env(monkeypatch):
     Base.metadata.create_all(engine)
     with engine.begin() as conn:   # owned by the attempt service; the official-result rule reads it
         conn.exec_driver_sql("CREATE TABLE test_attempts (attempt_id CHAR(32) PRIMARY KEY, retake_of_attempt_id CHAR(32))")
+        conn.exec_driver_sql("CREATE TABLE tests (test_id CHAR(32) PRIMARY KEY, sections TEXT, global_occurrence_id CHAR(32))")   # not a Global Test
     Session = sessionmaker(bind=engine, autoflush=False)
 
     def override():

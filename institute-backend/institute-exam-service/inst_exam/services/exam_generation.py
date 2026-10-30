@@ -192,36 +192,18 @@ def unified_sources(db: Session, plan_id: UUID) -> list[GlobalPaperSubmission]:
 
 
 def unified_students(db: Session, plan: ExamPlan) -> list[tuple[str, str, UUID | None]]:
-    """A unified plan's audience: its listed students (each resolved by every contributing submission at the deadline) who are still
-    actively enrolled with EVERY provider whose paper they receive. The plan's own provider/branch play no part. The assignment
-    records the enrollment of the first subject's provider (preferring that submission's branch) only as a reference."""
-    sources = unified_sources(db, plan.plan_id)
+    """A unified plan's audience: its listed students (frozen when the date was generated, each with the papers they were eligible for
+    at that moment), as long as they still hold an ACTIVE enrollment. A student who left one institute keeps every other paper (that
+    institute's papers were never theirs at the freeze). The assignment records the student's reference enrollment while it is active,
+    else any active one; it is a reference only and grants nothing. The plan's own provider/branch play no part."""
     listed = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id)
                                            .order_by(ExamPlanStudent.student_id))]
-    if not sources:
-        # a group without any usable paper: still enrolled (reference enrollment, else any ACTIVE one) -> a card that cannot be started
-        ref = dict(db.execute(select(GlobalTestStudent.student_id, GlobalTestStudent.enrollment_id).where(GlobalTestStudent.plan_id == plan.plan_id)).all())
-        current: dict[str, list[str]] = {}
-        for sid, eid in db.execute(select(Enrollment.student_id, Enrollment.enrollment_id).where(Enrollment.status == "ACTIVE", Enrollment.student_id.in_(listed or [""]))
-                                   .order_by(Enrollment.enrolled_at, Enrollment.enrollment_id)):
-            current.setdefault(sid, []).append(eid)
-        return [(sid, ref[sid] if ref.get(sid) in current[sid] else current[sid][0], None) for sid in listed if sid in current]
-    active: dict[UUID, dict[str, list[tuple[str, UUID]]]] = {}
-    for prov in {s.provider_id for s in sources}:
-        rows: dict[str, list[tuple[str, UUID]]] = {}
-        for sid, eid, br in db.execute(select(Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id)
-                                       .where(Enrollment.provider_id == prov, Enrollment.status == "ACTIVE", Enrollment.student_id.in_(listed or [""]))
-                                       .order_by(Enrollment.enrollment_id)):
-            rows.setdefault(sid, []).append((eid, br))
-        active[prov] = rows
-    first = sources[0] if sources else None
-    out = []
-    for sid in listed:
-        if first and all(sid in active[prov] for prov in active):
-            mine = active[first.provider_id][sid]
-            eid = next((e for e, br in mine if br == first.branch_id), mine[0][0])
-            out.append((sid, eid, None))
-    return out
+    ref = dict(db.execute(select(GlobalTestStudent.student_id, GlobalTestStudent.enrollment_id).where(GlobalTestStudent.plan_id == plan.plan_id)).all())
+    current: dict[str, list[str]] = {}
+    for sid, eid in db.execute(select(Enrollment.student_id, Enrollment.enrollment_id).where(Enrollment.status == "ACTIVE", Enrollment.student_id.in_(listed or [""]))
+                               .order_by(Enrollment.enrolled_at, Enrollment.enrollment_id)):
+        current.setdefault(sid, []).append(eid)
+    return [(sid, ref[sid] if ref.get(sid) in current[sid] else current[sid][0], None) for sid in listed if sid in current]
 
 
 def subjects_taken(db: Session, enrollment_ids) -> dict[tuple[str, UUID], set[UUID]]:

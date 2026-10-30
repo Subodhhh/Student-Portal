@@ -152,6 +152,8 @@ def start_retake(db: Session, original: TestAttempt, duration_minutes: int) -> T
                          status=AttemptStatus.IN_PROGRESS, retake_of_attempt_id=original.attempt_id)
     db.add(retake)
     db.flush()
+    from app.services.paper_selection import copy_snapshot
+    copy_snapshot(db, original.attempt_id, retake.attempt_id)     # the same papers, committed with the retake
     review.retake_attempt_id = retake.attempt_id
     try:
         db.commit()

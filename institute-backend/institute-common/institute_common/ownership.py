@@ -28,7 +28,7 @@ OWNED: dict[str, frozenset[str]] = {
                        "result_corrections", "exam_notification_outbox", "composite_requests", "composite_request_slots",
                        "exam_plan_students", "exam_plan_branches", "global_tests", "global_test_contributions", "global_test_sections",
                        "test_series", "global_test_subjects", "global_test_occurrences", "global_paper_submissions",
-                       "global_test_students", "global_test_student_subjects"}),
+                       "global_test_students", "global_test_student_subjects", "global_test_student_subject_papers"}),
     "operations": frozenset({"institute_notifications", "support_tickets", "support_ticket_messages", "subscription_plans", "provider_subscriptions",
                              "invoices", "payment_records", "billing_adjustments", "institute_settings"}),
 }

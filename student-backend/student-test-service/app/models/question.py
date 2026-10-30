@@ -34,6 +34,11 @@ class Question(Base):
             "test_id",
             "subject",
         ),
+        Index(
+            "ix_questions_test_paper",
+            "test_id",
+            "paper_id",
+        ),
     )
 
     question_id: Mapped[UUID] = mapped_column(
@@ -49,6 +54,12 @@ class Question(Base):
 
     subject: Mapped[str | None] = mapped_column(
         String(100),
+        nullable=True,
+    )
+
+    # Global Test with paper choice: the contribution (Institute submission id) this question belongs to; NULL for every other test.
+    paper_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=True,
     )
 

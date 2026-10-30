@@ -32,6 +32,7 @@ class Test(Base):
     global_occurrence_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         nullable=True,
+        index=True,     # the occurrence ranking scans by it
     )
 
     # Unified Global Test: every configured subject in order, with its delivered question count or why there is no paper.

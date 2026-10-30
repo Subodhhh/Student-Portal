@@ -35,7 +35,7 @@ Temporary development demo on Cloudflare Pages + Quick Tunnel (no custom domain)
 ```bash
 cp deploy/student/student.env.example   deploy/student/student.env     # DATABASE_URL of subodh_dev (never commit)
 cp deploy/institute/institute.env.example deploy/institute/institute.env   # DATABASE_URL of institute_portal_test (never commit)
-# root .env: one random key per service contract (INSTITUTE_*_KEY, STUDENT_*_SERVICE_KEY) — see docker-compose.yml
+# root .env: one random key per service contract (INSTITUTE_*_KEY, STUDENT_*_SERVICE_KEY, STUDENT_ATTEMPT_TEST_SERVICE_KEY) — see docker-compose.yml
 docker compose up -d --build
 ```
 

@@ -125,6 +125,7 @@ function TestAttemptPage() {
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectionRequired, setSelectionRequired] = useState<string[] | null>(null);   // Global Test with paper choice: subjects without a chosen paper
 
   // Exam integrity: the rules are accepted (and fullscreen offered) before the attempt starts or resumes; warnings are counted by the
   // server, which submits the attempt automatically at its threshold.
@@ -236,6 +237,55 @@ function TestAttemptPage() {
         setError("");
 
         /*
+         * Start or resume the backend attempt FIRST: for a Global Test with paper choice the attempt's papers decide which questions the
+         * test service serves (it serves none before the attempt exists). Every other test is served exactly as before.
+         */
+        const attemptResponse = await fetch(
+          `${ATTEMPT_API_URL}/attempts/start`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              test_id: currentTestId,
+            }),
+          }
+        );
+
+        let attemptData: AttemptResponse | null = null;
+        let finished = false;
+
+        if (!attemptResponse.ok) {
+          const refusal = attemptResponse.status === 409 ? await attemptResponse.json().catch(() => null) : null;
+          if (refusal?.detail?.code === "SELECTION_REQUIRED") {
+            setSelectionRequired(refusal.detail.subjects ?? []);       // papers still to choose: never started, nothing loaded
+            return;
+          }
+          // already finished (e.g. submitted automatically after warnings, then the page was reloaded): show that state, never an error
+          const finishedResponse = await fetch(`${ATTEMPT_API_URL}/attempts/test/${currentTestId}`, { credentials: "include" });
+          const last: AttemptResponse | null = finishedResponse.ok ? await finishedResponse.json() : null;
+          if (!last || last.status === "IN_PROGRESS") {
+            throw new Error(
+              `Failed to start attempt: ${attemptResponse.status}`
+            );
+          }
+          setAttemptId(last.attempt_id);
+          const st = await fetch(`${ATTEMPT_API_URL}/attempts/${last.attempt_id}/integrity`, { credentials: "include" });
+          const integrityState: IntegrityState | null = st.ok ? await st.json() : null;
+          if (integrityState?.submit_reason === "WARNING_THRESHOLD") setAutoSubmitted(integrityState);
+          finished = true;
+        } else {
+          attemptData = await attemptResponse.json();
+          if (attemptData) {
+            setAttemptId(attemptData.attempt_id);
+            setAttemptExpiresAt(new Date(attemptData.expires_at).getTime());
+            finished = attemptData.status === "SUBMITTED" || attemptData.status === "AUTO_SUBMITTED";
+          }
+        }
+
+        /*
          * Load test from M4.
          */
         const testResponse = await fetch(
@@ -329,58 +379,11 @@ function TestAttemptPage() {
           );
         }
 
-        /*
-         * Start or resume backend attempt.
-         */
-        const attemptResponse = await fetch(
-          `${ATTEMPT_API_URL}/attempts/start`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            credentials: "include",
-            body: JSON.stringify({
-              test_id: currentTestId,
-            }),
-          }
-        );
-
-        if (!attemptResponse.ok) {
-          // already finished (e.g. submitted automatically after warnings, then the page was reloaded): show that state, never an error
-          const finished = await fetch(`${ATTEMPT_API_URL}/attempts/test/${currentTestId}`, { credentials: "include" });
-          const last: AttemptResponse | null = finished.ok ? await finished.json() : null;
-          if (last && last.status !== "IN_PROGRESS") {
-            setAttemptId(last.attempt_id);
-            const st = await fetch(`${ATTEMPT_API_URL}/attempts/${last.attempt_id}/integrity`, { credentials: "include" });
-            const integrityState: IntegrityState | null = st.ok ? await st.json() : null;
-            if (integrityState?.submit_reason === "WARNING_THRESHOLD") setAutoSubmitted(integrityState);
-            setSubmitted(true);
-            return;
-          }
-          throw new Error(
-            `Failed to start attempt: ${attemptResponse.status}`
-          );
-        }
-
-        const attemptData: AttemptResponse =
-          await attemptResponse.json();
-
-        setAttemptId(attemptData.attempt_id);
-
-        setAttemptExpiresAt(
-          new Date(
-            attemptData.expires_at
-          ).getTime()
-        );
-
-        if (
-          attemptData.status === "SUBMITTED" ||
-          attemptData.status === "AUTO_SUBMITTED"
-        ) {
+        if (finished || !attemptData) {
           setSubmitted(true);
           return;
         }
+
 
         /*
          * Load saved answers.
@@ -908,6 +911,29 @@ function TestAttemptPage() {
             Please wait while we load the
             test and questions.
           </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (selectionRequired) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>Choose Your Papers</h2>
+
+          <p>
+            Choose one paper for each of these subjects before starting: {selectionRequired.join(", ")}.
+          </p>
+
+          <button
+            type="button"
+            onClick={() =>
+              navigate(`/tests/${currentTestId}`)
+            }
+          >
+            Choose Papers
+          </button>
         </div>
       </section>
     );

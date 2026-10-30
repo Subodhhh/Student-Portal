@@ -101,6 +101,7 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
     order = 0
     for p in papers:
         subject = db.get(Subject, p.subject_id)
+        p_id = str(p.source_submission_id) if p.source_submission_id else None
         rows = db.execute(
             select(QuestionVersion).join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
             .where(PaperVersionQuestion.paper_version_id == p.paper_version_id).order_by(PaperVersionQuestion.position)
@@ -118,9 +119,12 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
                 "order": order, "subject": subject.name if subject else None, "text": q.stem,
                 "options": {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d},
                 "correct": q.correct_option, "marks": marks, "negative_marks": negative,
+                **({"paper_id": p_id} if p_id else {}),
             })
     payload["total_questions"] = len(payload["questions"])
     payload["total_marks"] = sum(q["marks"] for q in payload["questions"])
+    if plan.global_occurrence_id and _paper_choice(db, payload, exam, plan, papers):
+        return payload
     if sections:     # every configured subject, in order: its delivered question count, or why the student has no paper for it
         from inst_exam.services.global_layout import message
         delivered: dict[str, int] = {}
@@ -130,6 +134,69 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
                                 "message": None if c["status"] == "PAPER" else message(c["status"], c["subject"]),
                                 "question_count": delivered.get(c["subject"], 0) if c["status"] == "PAPER" else 0} for c in sections]
     return payload
+
+
+def _paper_choice(db: Session, payload: dict, exam: Exam, plan: ExamPlan, papers: list[ExamVersionPaper]) -> bool:
+    """A Global Test exam whose students have per-student rows (one exam for a whole date, or a group exam of an earlier date): deliver
+    every configured subject with its papers and each student's frozen eligibility, as audiences of students with identical cells. The
+    Student services serve each student only the papers they choose. False (nothing changed) when the exam has no such rows."""
+    from institute_common.models.exams import (GlobalTestStudent, GlobalTestStudentSubject, GlobalTestStudentSubjectPaper,
+                                               GlobalTestSubject)
+    from institute_common.models.org import Provider
+    from institute_common.models.papers import Paper, PaperVersion
+    from inst_exam.services.global_layout import message
+    students = payload["student_ids"]
+    if not students or not db.scalar(select(GlobalTestStudent.student_id).where(GlobalTestStudent.exam_id == exam.exam_id).limit(1)):
+        return False
+    if len(payload["questions"]) > settings.global_test_max_questions:
+        raise PermanentPublishError(f"QUESTION_LIMIT_EXCEEDED: {len(payload['questions'])} questions; one exam may hold at most "
+                                    f"{settings.global_test_max_questions} (questions are never cut).")
+    configured = db.execute(select(GlobalTestSubject.subject_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
+                            .where(GlobalTestSubject.test_id == plan.global_test_id).order_by(GlobalTestSubject.position)).all()
+    name_of = dict(configured)
+    marks: dict[str, int] = {}
+    counts: dict[str, int] = {}
+    for q in payload["questions"]:
+        marks[q.get("paper_id")] = marks.get(q.get("paper_id"), 0) + q["marks"]
+        counts[q.get("paper_id")] = counts.get(q.get("paper_id"), 0) + 1
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name)).all())
+    delivered: dict[UUID, list[dict]] = {}
+    for p in papers:
+        title = db.scalar(select(Paper.title).join(PaperVersion, PaperVersion.paper_id == Paper.paper_id)
+                          .where(PaperVersion.paper_version_id == p.paper_version_id))
+        delivered.setdefault(p.subject_id, []).append({"paper_id": str(p.source_submission_id), "label": title or name_of.get(p.subject_id, "Paper"),
+                                                       "provider_name": providers.get(p.source_provider_id),
+                                                       "question_count": counts.get(str(p.source_submission_id), 0),
+                                                       "total_marks": marks.get(str(p.source_submission_id), 0)})
+    payload["sections"] = [{"position": i, "subject": name, "papers": delivered.get(sid, [])} for i, (sid, name) in enumerate(configured, start=1)]
+    occ = plan.global_occurrence_id
+    eligible: dict[tuple[str, UUID], list[str]] = {}
+    for c in db.scalars(select(GlobalTestStudentSubjectPaper).where(GlobalTestStudentSubjectPaper.occurrence_id == occ,
+                                                                   GlobalTestStudentSubjectPaper.student_id.in_(students))):
+        eligible.setdefault((c.student_id, c.subject_id), []).append(str(c.submission_id))
+    usable = {x["paper_id"] for ps in delivered.values() for x in ps}
+    audiences: dict[tuple, dict] = {}
+    members: dict[str, list[str]] = {}
+    cells_of: dict[str, list] = {}
+    for c in db.scalars(select(GlobalTestStudentSubject).where(GlobalTestStudentSubject.occurrence_id == occ,
+                                                              GlobalTestStudentSubject.student_id.in_(students))
+                        .order_by(GlobalTestStudentSubject.student_id, GlobalTestStudentSubject.position)):
+        cells_of.setdefault(c.student_id, []).append(c)
+    for sid in sorted(students):
+        cells = []
+        for c in cells_of.get(sid, []):
+            # the delivered papers only (a paper that could not be generated is not offered): one is PAPER, several SELECTABLE
+            paper_ids = sorted(x for x in eligible.get((sid, c.subject_id), [str(c.submission_id)] if c.submission_id else []) if x in usable)
+            status = ("PAPER" if len(paper_ids) == 1 else "SELECTABLE") if paper_ids else ("NOT_APPROVED" if c.status in ("PAPER", "SELECTABLE") else c.status)
+            name = name_of.get(c.subject_id)
+            cells.append({"subject": name, "status": status, "message": None if paper_ids else message(status, name), "paper_ids": paper_ids})
+        key = tuple((x["subject"], x["status"], tuple(x["paper_ids"])) for x in cells)
+        audience = audiences.setdefault(key, {"audience_id": f"a{len(audiences) + 1}", "cells": cells})
+        members.setdefault(audience["audience_id"], []).append(sid)
+    payload["audiences"] = list(audiences.values())
+    payload["student_audiences"] = members
+    payload["student_ids"] = []                            # the audiences name the students
+    return True
 
 
 def deliver_due(db: Session, publisher: ExamPublisher | None = None, now=None) -> dict:
@@ -174,7 +241,13 @@ def _refresh_reference_projection() -> None:
 def _alert(db: Session, row: ExamOutbox, message: str) -> None:
     ev = db.get(ExamVersion, row.exam_version_id)
     exam = db.get(Exam, ev.exam_id)
-    notify(db, responsible_staff(db, exam.provider_id, exam.branch_id), kind="EXAM_PUBLISH_FAILED",
+    staff = responsible_staff(db, exam.provider_id, exam.branch_id)
+    contributors = {p for (p,) in db.execute(select(ExamVersionPaper.source_provider_id).where(
+        ExamVersionPaper.exam_version_id == ev.exam_version_id, ExamVersionPaper.source_submission_id.is_not(None)))}
+    if contributors:     # a Global Test exam: its anchor is no owner; the platform and every contributing provider are told
+        from inst_exam.routes.global_contributions import _platform_staff
+        staff = sorted(set(_platform_staff(db)) | {s for prov in contributors for s in responsible_staff(db, prov, None)}, key=str)
+    notify(db, staff, kind="EXAM_PUBLISH_FAILED",
            title=f"Exam could not be delivered to students: {exam.name}", body=message,
            dedupe=f"publishfail:{row.outbox_id}", provider_id=exam.provider_id)
 

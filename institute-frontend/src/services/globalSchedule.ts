@@ -11,7 +11,7 @@ export type Occurrence = {
   occurrence_id: string; test_id: string; test_name: string; test_status: string; exam_type: string | null; target_class: string | null;
   duration_minutes: number; marking: { mode: string; correct: number | null; wrong: number | null }; start_at: string; end_at: string;
   status: "DRAFT" | "PUBLISHED" | "CANCELLED"; submission_deadline: string; submissions_open: boolean; generated_at: string | null;
-  generation_error: string | null; cancel_reason: string | null; subjects: OccurrenceSubject[]; submissions: { active: number; withdrawn: number };
+  generation_error: string | null; generation_failed_at?: string | null; generation_attempts?: number | null; cancel_reason: string | null; subjects: OccurrenceSubject[]; submissions: { active: number; withdrawn: number };
 };
 export type Submission = {
   submission_id: string; subject_id: string; subject: string | null; provider_id: string; provider_name: string | null; branch_name: string | null;
@@ -20,8 +20,10 @@ export type Submission = {
   students_now: number; submitted_by_name: string | null; submitted_at: string; withdraw_reason: string | null; can_withdraw: boolean;
 };
 export type CoverageRow = { provider_id: string; provider_name: string | null; subject_id: string; subject: string; submissions: number; ready: number;
-  students_covered: number; ambiguous: number; missing: boolean };
-export type OccurrenceDetail = Occurrence & { submission_list: Submission[]; coverage: CoverageRow[];
+  students_covered: number; choosing: number; missing: boolean };
+/** The date's one exam against the question limit (a warning only; generation stops above it, never cuts questions). */
+export type QuestionLimit = { limit: number; exceeded: boolean; projected: number | null; mine: number | null };
+export type OccurrenceDetail = Occurrence & { submission_list: Submission[]; coverage: CoverageRow[]; question_limit?: QuestionLimit;
   exams?: { exam_id: string; name: string; status: string; assigned: number }[] };
 export type SubmittablePaper = { paper_id: string; title: string; paper_version_id: string; version_no: number; version_status: string; ready: boolean; question_count: number };
 

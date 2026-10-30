@@ -57,8 +57,8 @@ type Test = {
   };
   description: string | null;
   duration_minutes: number;
-  total_questions: number;
-  total_marks: number;
+  total_questions: number | null;   // null: a Global Test with paper choice whose papers are not chosen yet
+  total_marks: number | null;
   start_at: string | null;
   end_at: string | null;
   status: string;
@@ -390,17 +390,24 @@ function TestsPage() {
                     </span>
 
                     <span>
-                      {test.total_questions} Questions
+                      {test.total_questions === null ? "Questions depend on your papers" : `${test.total_questions} Questions`}
                     </span>
 
-                    <span>
-                      {test.total_marks} Marks
-                    </span>
+                    {test.total_marks !== null && (
+                      <span>
+                        {test.total_marks} Marks
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 <div className="test-card-action">
-                  {test.total_questions === 0 ? (
+                  {test.total_questions === null ? (
+                    // a Global Test with paper choice: the student chooses their papers on the details page first
+                    <button type="button" onClick={() => window.location.assign(`/tests/${test.test_id}`)}>
+                      Choose Papers
+                    </button>
+                  ) : test.total_questions === 0 ? (
                     // a Global Test card without any paper for this student: it explains each subject, nothing to start
                     <button type="button" className="test-details-link" onClick={() => window.location.assign(`/tests/${test.test_id}`)}>
                       No paper available · View Details
@@ -414,12 +421,13 @@ function TestsPage() {
                         : ""
                     }
                     onClick={() =>
-                      openTest(test.test_id)
+                      // a Global Test is started from its details page, where the student reviews their papers first
+                      test.global_occurrence_id && !isResume ? window.location.assign(`/tests/${test.test_id}`) : openTest(test.test_id)
                     }
                   >
                     {isResume
                       ? "Resume Test"
-                      : "Start Test"}
+                      : test.global_occurrence_id ? "View Papers" : "Start Test"}
                   </button>
                   )}
                 </div>

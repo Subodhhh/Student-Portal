@@ -5,7 +5,7 @@ overlap, and the reported student count was inflated. World: tests.test_global_s
 tC Chemistry all of p1-b1; STU000001 in A, STU000002 in B)."""
 from uuid import UUID, uuid4
 
-from tests.test_global_schedule import aud, exams_of, gs, published, run_generation, submit  # noqa: F401
+from tests.test_global_schedule import eligible_of, aud, exams_of, gs, published, run_generation, submit  # noqa: F401
 from tests.test_global_contributions import client, login  # noqa: F401
 
 
@@ -63,9 +63,9 @@ def test_no_false_overlap_and_each_student_gets_the_right_teachers_paper(client,
     assert a.status_code == 201, a.text                                      # before: 409 AUDIENCE_OVERLAP (STU000001)
     assert a.json()["students_now"] == 1                                     # only STU000005 takes Physics in A
     run_generation(db_factory, t, occ)
-    got = exams_of(db_factory, UUID(occ["occurrence_id"]))
-    assert got["STU000001"] == [(world["p1"], [gs["paperB"]])]               # exactly tB's paper, once
-    assert got["STU000005"] == [(world["p1"], [gs["paperA"]])]
+    eligible = eligible_of(db_factory, UUID(occ["occurrence_id"]))
+    assert eligible["STU000001"]["Physics"] == [gs["paperB"]]                 # exactly tB's paper, once
+    assert eligible["STU000005"]["Physics"] == [gs["paperA"]]
 
 
 def test_the_tests_class_limits_who_a_submission_reaches(client, world, gs, login, db_factory):  # noqa: F811

@@ -17,6 +17,7 @@ from app.repositories.attempt_answer_repository import (
     update_answer,
 )
 from app.repositories.attempt_repository import get_attempt_by_id
+from app.services.paper_selection import SNAPSHOT_FILTER
 
 
 def get_active_attempt_or_raise(
@@ -66,17 +67,21 @@ def validate_question(
     db: Session,
     test_id: UUID,
     question_id: UUID,
+    attempt_id: UUID,
 ):
+    # Global Test with paper choice: only the attempt's own papers (a question of another contribution "does not belong" to it)
     question = db.execute(
-        text("""
-            SELECT question_id
-            FROM questions
-            WHERE question_id = :question_id
-              AND test_id = :test_id
+        text(f"""
+            SELECT q.question_id
+            FROM questions q
+            WHERE q.question_id = :question_id
+              AND q.test_id = :test_id
+              AND {SNAPSHOT_FILTER}
         """),
         {
             "question_id": question_id,
             "test_id": test_id,
+            "attempt_id": attempt_id,
         },
     ).first()
 
@@ -104,6 +109,7 @@ def visit_question(
         db=db,
         test_id=attempt.test_id,
         question_id=question_id,
+        attempt_id=attempt.attempt_id,
     )
 
     answer = get_answer(
@@ -154,6 +160,7 @@ def save_answer(
         db=db,
         test_id=attempt.test_id,
         question_id=question_id,
+        attempt_id=attempt.attempt_id,
     )
 
     answer = get_answer(
@@ -227,6 +234,7 @@ def mark_for_review(
         db=db,
         test_id=attempt.test_id,
         question_id=question_id,
+        attempt_id=attempt.attempt_id,
     )
 
     answer = get_answer(

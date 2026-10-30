@@ -28,6 +28,13 @@ class SubjectScope:
     """A provider's view of a unified exam: these students, these subjects only."""
     ids: frozenset[str]
     subject_ids: frozenset[UUID]
+    # The caller's own papers in this exam and all of its papers (submission ids, as the Student services report them in an
+    # attempt's selected_papers). Readers show only attempts that sat one of the caller's papers.
+    paper_ids: frozenset[str] = frozenset()
+    exam_paper_ids: frozenset[str] = frozenset()
+
+    def sat_mine(self, selected_papers: dict | None) -> bool:
+        return bool(papers_sat(selected_papers, self.exam_paper_ids) & self.paper_ids)
 
 
 def unified_plan_clause(plan_id_column):
@@ -76,6 +83,43 @@ def prefetch_unified_exams(db: Session, exam_ids) -> None:
         cache.update({i: i in found for i in wanted})
 
 
+def papers_sat(selected_papers: dict | None, exam_paper_ids) -> set[str]:
+    """The papers an attempt sat: its snapshot when the student chose papers, otherwise every paper of its exam (an exam made for
+    one combination of papers, as every Global Test exam generated before paper choice)."""
+    return set((selected_papers or {}).values()) or set(exam_paper_ids)
+
+
+def exam_papers(db: Session, exam_id: UUID) -> dict[str, UUID]:
+    """submission id -> provider of every contributed paper of a unified exam (its frozen manifest)."""
+    return {str(sub_id): prov for sub_id, prov in db.execute(
+        select(ExamVersionPaper.source_submission_id, GlobalPaperSubmission.provider_id)
+        .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+        .join(ExamVersion, ExamVersion.exam_version_id == ExamVersionPaper.exam_version_id).where(ExamVersion.exam_id == exam_id))}
+
+
+def paper_orders(db: Session, exam_version_id: UUID) -> list[tuple[range, ExamVersionPaper, GlobalPaperSubmission | None]]:
+    """Each paper of a version with the question orders it holds: orders follow the papers' positions (cumulative counts)."""
+    out, start = [], 1
+    for evp in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == exam_version_id).order_by(ExamVersionPaper.position)):
+        sub = db.get(GlobalPaperSubmission, evp.source_submission_id) if evp.source_submission_id else None
+        out.append((range(start, start + evp.question_count), evp, sub))
+        start += evp.question_count
+    return out
+
+
+def may_correct_own(p: Principal, sub: GlobalPaperSubmission) -> bool:
+    """result.correct.own on one contribution of a Global Test: a Provider Admin of its provider; a Branch Admin when EVERY branch of its audience
+    is theirs; the Teacher who submitted it, while still allowed to upload papers for that provider."""
+    perm = "result.correct.own"
+    if p.can(perm, exclude_roles=(Role.BRANCH_ADMIN, Role.TEACHER), provider_id=sub.provider_id):
+        return True
+    branches = (sub.audience or {}).get("branch_ids") or []
+    if branches and all(p.can(perm, exclude_roles=(Role.TEACHER,), provider_id=sub.provider_id, branch_id=UUID(str(b))) for b in branches):
+        return True
+    return (p.has_role(Role.TEACHER) and sub.submitted_by == p.staff_id and p.can(perm, provider_id=sub.provider_id)
+            and p.can("paper.upload", provider_id=sub.provider_id))
+
+
 def is_platform(p: Principal, perm: str) -> bool:
     return p.is_global and p.has_perm(perm)
 
@@ -108,6 +152,13 @@ def _scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope:
     assigned = [sid for (sid,) in db.execute(select(StudentExamAssignment.student_id).where(StudentExamAssignment.exam_id == exam.exam_id))]
     students: set[str] = set()
     subjects: set[UUID] = set()
+    papers: set[str] = set()
+    own = {}                                                                     # provider -> its (submission, subject) in this exam
+    for sub_id, prov, subject in db.execute(
+            select(ExamVersionPaper.source_submission_id, GlobalPaperSubmission.provider_id, ExamVersionPaper.subject_id)
+            .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+            .join(ExamVersion, ExamVersion.exam_version_id == ExamVersionPaper.exam_version_id).where(ExamVersion.exam_id == exam.exam_id)):
+        own.setdefault(prov, []).append((str(sub_id), subject))
     for prov, provided in contributions(db, exam.exam_id).items():
         enrolled = [(sid, eid, br) for sid, eid, br in db.execute(
             select(Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id)
@@ -127,4 +178,6 @@ def _scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope:
         if mine and seen:
             students |= mine
             subjects |= seen
-    return SubjectScope(frozenset(students), frozenset(subjects))
+            papers |= {sub_id for sub_id, subject in own.get(prov, []) if subject in seen}
+    return SubjectScope(frozenset(students), frozenset(subjects), frozenset(papers),
+                        frozenset(sub_id for subs in own.values() for sub_id, _subject in subs))

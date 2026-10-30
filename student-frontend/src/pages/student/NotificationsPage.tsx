@@ -151,8 +151,9 @@ function NotificationsPage() {
         break;
 
       case "TEST_STARTED":
+        // the details page first: a Global Test's papers are reviewed there, and the metadata cannot tell a Global Test apart
         if (testId) {
-          navigate(`/tests/${testId}/attempt`);
+          navigate(`/tests/${testId}`);
         }
         break;
 

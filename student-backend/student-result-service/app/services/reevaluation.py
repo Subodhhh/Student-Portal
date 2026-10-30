@@ -4,7 +4,7 @@
 answers compared case/space-insensitively). Every change is written to the immutable result_history first-class record."""
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
 from app.models.result_history import ResultHistory
@@ -45,6 +45,8 @@ def snapshot(result: TestResult) -> dict:
 def apply(db: Session, result: TestResult, new: dict, *, kind: str, correction_ref: str, reason: str, actor: str) -> ResultHistory:
     """Write the history row (with the full previous values) and the new effective values together."""
     previous = snapshot(result)
+    if "subject_adjustments" in new:            # Global Test attribution: kept with the history like the marks
+        previous["subject_adjustments"] = result.subject_adjustments
     row = ResultHistory(result_id=result.result_id, test_id=result.test_id, student_id=result.student_id, kind=kind, correction_ref=correction_ref,
                         previous=previous, new={**previous, **new}, reason=reason, actor=actor)
     db.add(row)
@@ -53,9 +55,19 @@ def apply(db: Session, result: TestResult, new: dict, *, kind: str, correction_r
     return row
 
 
-def reevaluate_test(db: Session, test_id: uuid.UUID, *, correction_ref: str, reason: str, actor: str) -> dict:
+def reevaluate_test(db: Session, test_id: uuid.UUID, *, correction_ref: str, reason: str, actor: str, paper_ids=None) -> dict:
     out = {"changed": [], "unchanged": 0, "skipped_manual": [], "already_applied": 0, "no_questions": 0}
     results = db.scalars(select(TestResult).where(TestResult.test_id == test_id).order_by(TestResult.student_id).limit(MAX_RESULTS)).all()
+    if paper_ids is not None:
+        # a corrected paper re-scores only the attempts that sat it; nobody else's result is touched or given a history row. An
+        # attempt without a snapshot sat every paper of its test (a test made for one combination of papers), so it is included.
+        snapped = text("SELECT attempt_id FROM attempt_selected_papers WHERE attempt_id IN :a").bindparams(bindparam("a", expanding=True))
+        with_snapshot = {str(a) for a in db.scalars(snapped, {"a": [r.attempt_id for r in results] or [None]})}
+        sat = {str(a) for a in db.scalars(text("SELECT attempt_id FROM attempt_selected_papers WHERE paper_id IN :p").bindparams(
+            bindparam("p", expanding=True)), {"p": list(paper_ids)})}
+        affected = [r for r in results if str(r.attempt_id) in sat or str(r.attempt_id) not in with_snapshot]
+        out["not_affected"] = len(results) - len(affected)
+        results = affected
     for r in results:
         done = db.scalar(select(ResultHistory.history_id).where(ResultHistory.result_id == r.result_id, ResultHistory.correction_ref == correction_ref))
         if done:

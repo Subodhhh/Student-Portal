@@ -1,6 +1,7 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/renderApp";
+import { CorrectionsCard } from "./ResultsPages";
 import { me, page, stubApi } from "../test/stubApi";
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 0 }, "/api/v1/providers": page([{ provider_id: "p1", name: "Alpha", status: "ACTIVE", email: "a@x.io" }]),
@@ -36,5 +37,45 @@ describe("Results", () => {
     fireEvent.change(screen.getByLabelText("Search students"), { target: { value: "zoya" } });
     expect(within(table).getAllByRole("row")).toHaveLength(2);                          // header + Zoya
     expect(screen.getByRole("link", { name: "Exam" }).getAttribute("href")).toBe("/exams/ex1");
+  });
+});
+
+const globalRow = { rank: 1, student_id: "STU000001", name: "Asha K", obtained_marks: 7, total_marks: 16, accuracy: 50,
+  subjects: [{ subject: "Physics", obtained_marks: 4, total_marks: 8, paper_id: "pa" }, { subject: "Chemistry", obtained_marks: 3, total_marks: 8, paper_id: "pc" }] };
+
+describe("Result corrections of a Global Test", () => {
+  it("lets a contributor correct only the answer key (their own papers), without marks or history", async () => {
+    const calls = stubApi({ "POST /api/v1/exams/e1/answer-key-corrections": { status: "APPLIED" } });
+    render(<CorrectionsCard examId="e1" platform={false} globalTest rows={[]} onChanged={() => {}} />);
+    expect(screen.getByText("You can correct the answer key of your own papers only.")).toBeTruthy();
+    expect(screen.queryByText("Correct one student's marks")).toBeNull();
+    expect(screen.queryByText("History")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Question number"), { target: { value: "3" } });
+    fireEvent.change(screen.getAllByLabelText("Reason (required)")[0], { target: { value: "Key printed wrongly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Correct key and re-evaluate" }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(calls.some((c) => c.path.endsWith("/result-corrections"))).toBe(false);   // the platform-only history is never asked for
+  });
+
+  it("asks the platform for the marks per subject of the student's attempt and sends their total", async () => {
+    const calls = stubApi({ "/api/v1/exams/e1/result-corrections": [], "POST /api/v1/exams/e1/results/STU000001/adjustments": { status: "APPLIED" } });
+    render(<CorrectionsCard examId="e1" platform globalTest rows={[globalRow]} onChanged={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Student ID"), { target: { value: "stu000001" } });
+    fireEvent.change(screen.getByLabelText("Physics marks (out of 8, now 4)"), { target: { value: "6" } });
+    fireEvent.change(screen.getByLabelText("Chemistry marks (out of 8, now 3)"), { target: { value: "3" } });
+    expect(screen.getByText("New total: 9")).toBeTruthy();
+    fireEvent.change(screen.getAllByLabelText("Reason (required)")[0], { target: { value: "Re-checked by hand" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply correction" }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ obtained_marks: 9, reason: "Re-checked by hand",
+      subjects: [{ subject: "Physics", obtained_marks: 6 }, { subject: "Chemistry", obtained_marks: 3 }] });
+  });
+
+  it("keeps the single marks field for every other exam", () => {
+    stubApi({ "/api/v1/exams/e1/result-corrections": [] });
+    render(<CorrectionsCard examId="e1" platform globalTest={false} rows={[globalRow]} onChanged={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Student ID"), { target: { value: "STU000001" } });
+    expect(screen.getByLabelText("Correct marks")).toBeTruthy();
+    expect(screen.queryByLabelText(/Physics marks/)).toBeNull();
   });
 });

@@ -258,6 +258,8 @@ def test_each_public_route_is_served_by_exactly_one_service():
 
 # Public routes that did not exist in the monolith (new features). Adding one means adding it here on purpose.
 NEW_ROUTES = {
+    ("POST", f"{API}/global-occurrences/{{occurrence_id}}/generation/retry"),     # Super Admin: retry a stopped Global Test date
+    ("POST", f"{API}/exams/{{exam_id}}/outbox/requeue"),                          # Super Admin: send a failed delivery again
     ("PATCH", f"{API}/enrollments/{{enrollment_id}}/academic-profile"),          # Class / Academic Year per enrollment
     ("POST", f"{API}/enrollments/{{enrollment_id}}/password-setup-link"),         # staff-initiated password setup link
     ("POST", f"{API}/paper-versions/{{pv_id}}/revisions"),

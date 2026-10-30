@@ -13,6 +13,7 @@ from app.repositories.result_repository import (
     get_review_window,
     get_student_results,
 )
+from app.services import global_results
 from app.services.question_order import section_order
 from app.services.reevaluation import score
 
@@ -247,6 +248,17 @@ def get_result_details(
         subject_performance.append(subject_data)
 
     sections = _sections(db, result["test_id"])
+    unattributed = None
+    if global_results.is_global_test(db, result["test_id"]):
+        if global_results.has_paper_choice(sections):            # the student's own sections (their papers, or why none)
+            sections = global_results.student_sections(db, sections, result["test_id"], student_id, global_results.snapshot(db, attempt_id))
+        # each subject's marks include its attributed manual adjustment
+        deltas = global_results.deltas(db, result["result_id"], result["subject_adjustments"])
+        for x in subject_performance:
+            x["adjustment"] = (deltas or {}).get(x["subject"], 0)
+            x["obtained_marks"] += x["adjustment"]
+        if deltas is None:              # never guessed: the official total minus the scored subjects, shown on its own line
+            unattributed = result["obtained_marks"] - sum(x["obtained_marks"] for x in subject_performance)
     if sections:
         # a unified Global Test: every configured subject in the configured order; one without a paper is shown as unavailable with
         # no questions and no marks (nothing is invented); the subjects with questions are exactly the ones scored above
@@ -264,4 +276,5 @@ def get_result_details(
         "questions": question_reviews if review_available else [],
         "review_available": review_available,
         "review_available_at": None if review_available or review is None else review["end_at"],
+        "unattributed_adjustment": unattributed,
     }

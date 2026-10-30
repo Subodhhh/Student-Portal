@@ -4,7 +4,9 @@ student's review request.
 Visibility follows the exam's results exactly (exam_access with result.read): platform roles see every student; provider and branch
 staff only their own students; a provider's view of a unified Global Test exam only the students of its contributed subjects.
 Deciding is narrower: the Platform Admin, or a Provider Admin of a provider the student is enrolled with (for a unified exam, one that
-contributed to it). Branch admins and teachers may look, not decide. The attempt service keeps the records and the decision; nothing
+contributed to it). Branch admins and teachers may look, not decide. A unified Global Test exam is scoped by the papers an attempt sat
+(services/unified.papers_sat): contributors see only attempts that sat one of their papers, and a Provider Admin decides only when
+EVERY paper of the attempt is their provider's (a retake re-sits all of them); a mixed attempt is decided by the platform. The attempt service keeps the records and the decision; nothing
 here changes an attempt's answers or result. Browser events are evidence of activity in the browser, not proof of intent."""
 from uuid import UUID
 
@@ -56,27 +58,27 @@ def exam_integrity(exam_id: UUID, p: Principal = Depends(get_principal), db: Ses
         reviews = {r["attempt_id"]: r for r in ac.test_reviews(str(ev.exam_version_id))}
     except InternalServiceError:
         raise _unavailable()
-    rows = [a for a in attempts if a["student_id"] in allowed
+    rows = [a for a in attempts if a["student_id"] in allowed and _sat_mine(_scope, a)
             and (a.get("warnings") or a.get("submit_reason") == "WARNING_THRESHOLD" or a.get("retake_of_attempt_id") or a["attempt_id"] in reviews)]
     try:
         names = sc.get_many(sorted({a["student_id"] for a in rows})[:200])
     except StudentServiceError:
         names = {}
-    can_decide = {a["student_id"]: _may_decide(db, p, e, a["student_id"]) for a in rows}
+    can_decide = {a["attempt_id"]: _may_decide(db, p, e, a["student_id"], a.get("selected_papers")) for a in rows}
     return {"exam_id": str(exam_id), "items": [{
         **{k: a.get(k) for k in ("student_id", "attempt_id", "status", "started_at", "submitted_at", "submit_reason", "review_status",
                                  "warnings", "retake_of_attempt_id")},
         "name": f"{names[a['student_id']].first_name} {names[a['student_id']].last_name}".strip() if a["student_id"] in names else None,
-        "review": reviews.get(a["attempt_id"]), "can_decide": can_decide[a["student_id"]]} for a in rows]}
+        "review": reviews.get(a["attempt_id"]), "can_decide": can_decide[a["attempt_id"]]} for a in rows]}
 
 
 @router.get("/exams/{exam_id}/integrity/{attempt_id}")
 def attempt_integrity(exam_id: UUID, attempt_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
                       ac: AttemptClient = Depends(get_attempt_client)):
     """The full record of one attempt: every reported event (counted or not), the automatic submission, the review and any retake."""
-    e, ev, _scope, allowed = _context(db, p, exam_id)
-    detail = _attempt_of(ac, ev, attempt_id, allowed)
-    return {**detail, "can_decide": _may_decide(db, p, e, detail["student_id"])}
+    e, ev, scope, allowed = _context(db, p, exam_id)
+    detail = _attempt_of(ac, ev, attempt_id, allowed, scope)
+    return {**detail, "can_decide": _may_decide(db, p, e, detail["student_id"], detail.get("selected_papers"))}
 
 
 class DecisionIn(Strict):
@@ -89,9 +91,9 @@ def decide(exam_id: UUID, attempt_id: UUID, body: DecisionIn, p: Principal = Dep
            ac: AttemptClient = Depends(get_attempt_client)):
     """RETAKE authorizes ONE new, separate attempt for this student and exam (the original stays as it is, permanently); UPHOLD keeps
     the automatic submission. Decided once."""
-    e, ev, _scope, allowed = _context(db, p, exam_id)
-    detail = _attempt_of(ac, ev, attempt_id, allowed)
-    if not _may_decide(db, p, e, detail["student_id"]):
+    e, ev, scope, allowed = _context(db, p, exam_id)
+    detail = _attempt_of(ac, ev, attempt_id, allowed, scope)
+    if not _may_decide(db, p, e, detail["student_id"], detail.get("selected_papers")):
         audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": "integrity.decide", "exam_id": str(exam_id)})
         raise api_error(403, "FORBIDDEN", "Only the Platform Admin or a Provider Admin of the student's institute can decide a review.")
     try:
@@ -109,23 +111,37 @@ def decide(exam_id: UUID, attempt_id: UUID, body: DecisionIn, p: Principal = Dep
     return out
 
 
-def _attempt_of(ac: AttemptClient, ev: ExamVersion, attempt_id: UUID, allowed: set[str]) -> dict:
+def _sat_mine(scope, attempt: dict) -> bool:
+    """A Global Test contributor sees an attempt only if it sat one of their papers (other scopes: unchanged)."""
+    return not isinstance(scope, unified.SubjectScope) or scope.sat_mine(attempt.get("selected_papers"))
+
+
+def _attempt_of(ac: AttemptClient, ev: ExamVersion, attempt_id: UUID, allowed: set[str], scope=None) -> dict:
     try:
         detail = ac.attempt_integrity(str(attempt_id))
     except InternalServiceError:
         raise _unavailable()
     # an attempt of another exam, or of a student outside the caller's scope, does not exist for the caller
-    if not detail or str(detail["test_id"]) != str(ev.exam_version_id) or detail["student_id"] not in allowed:
+    if (not detail or str(detail["test_id"]) != str(ev.exam_version_id) or detail["student_id"] not in allowed
+            or not _sat_mine(scope, detail)):
         raise api_error(404, "NOT_FOUND", "Attempt not found.")
     return detail
 
 
-def _may_decide(db: Session, p: Principal, e, student_id: str) -> bool:
+def _may_decide(db: Session, p: Principal, e, student_id: str, selected_papers: dict | None = None) -> bool:
     if p.is_global and any(Role(a.role) in GLOBAL_ROLES for a in p.assignments):
         return True
     admin_of = {a.provider_id for a in p.assignments if Role(a.role) == Role.PROVIDER_ADMIN}
     if not admin_of:
         return False
-    providers = set(unified.contributions(db, e.exam_id)) if unified.is_unified_exam(db, e.exam_id) else {e.provider_id}
+    if unified.is_unified_exam(db, e.exam_id):
+        # a retake re-sits EVERY paper of the attempt: only when they are all this provider's (a mixed attempt is the platform's)
+        provider_of = unified.exam_papers(db, e.exam_id)
+        sat = unified.papers_sat(selected_papers, provider_of)
+        providers = {provider_of.get(x) for x in sat}
+        if not sat or None in providers or len(providers) != 1:                       # every paper known, all one provider's
+            return False
+    else:
+        providers = {e.provider_id}
     enrolled = set(db.scalars(select(Enrollment.provider_id).where(Enrollment.student_id == student_id, Enrollment.status == "ACTIVE")))
     return bool(admin_of & providers & enrolled)

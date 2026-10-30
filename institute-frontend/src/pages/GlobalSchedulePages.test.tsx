@@ -105,15 +105,36 @@ describe("Global Tests for provider staff", () => {
   it("shows submissions and coverage, and closes papers after the deadline", async () => {
     stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["paper.read", "paper.upload", "exam.read", "examplan.manage"]),
       "/api/v1/global-occurrences/o1": { ...occ({ submissions_open: false, generated_at: "2030-01-05T02:31:00Z" }), submission_list: [{ ...SUB, can_withdraw: true }],
-        coverage: [{ provider_id: "p1", provider_name: "Alpha", subject_id: "chem", subject: "Chemistry", submissions: 0, ready: 0, students_covered: 0, ambiguous: 0, missing: true }],
+        coverage: [{ provider_id: "p1", provider_name: "Alpha", subject_id: "chem", subject: "Chemistry", submissions: 0, ready: 0, students_covered: 0, choosing: 0, missing: true }],
         exams: [{ exam_id: "e1", name: "National Mock (2030-01-05)", status: "PUBLISHED", assigned: 2 }] } });
     renderApp("/tests/global/occurrences/o1");
     expect(await screen.findByText("Physics A v1")).toBeTruthy();
     expect(screen.getByText("Missing paper")).toBeTruthy();
-    expect(screen.getByText(/every student received their own paper/)).toBeTruthy();
+    expect(screen.getByText(/each student sits their own papers/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Submit a paper" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
     expect(screen.getByRole("link", { name: "National Mock (2030-01-05)" }).getAttribute("href")).toBe("/exams/e1");
+  });
+
+  it("warns about the question limit and lets only the Super Admin retry a stopped date", async () => {
+    const stoppedDate = { ...occ({ submissions_open: false, generation_failed_at: "2030-01-05T02:40:00Z", generation_error: "QUESTION_LIMIT_EXCEEDED: 5200" }),
+      submission_list: [], coverage: [], question_limit: { limit: 5000, exceeded: true, projected: 5200, mine: null } };
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-occurrences/o1": stoppedDate,
+      "POST /api/v1/global-occurrences/o1/generation/retry": { retried: true } });
+    renderApp("/tests/global/occurrences/o1");
+    expect(await screen.findByText(/more questions than one exam may \(5200 of 5000/)).toBeTruthy();
+    expect(screen.getByText("Generation stopped")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
+    await waitFor(() => expect(posts(calls, "/api/v1/global-occurrences/o1/generation/retry")).toHaveLength(1));
+    expect(posts(calls, "/api/v1/global-occurrences/o1/generation/retry")[0].headers["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("shows no retry to a provider", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["paper.read", "paper.upload", "exam.read"]),
+      "/api/v1/global-occurrences/o1": { ...occ({ submissions_open: false, generation_failed_at: "2030-01-05T02:40:00Z" }), submission_list: [], coverage: [] } });
+    renderApp("/tests/global/occurrences/o1");
+    expect(await screen.findByText(/Generating this date stopped/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
   });
 
   const generated = { ...occ({ submissions_open: false, generated_at: "2030-01-05T02:31:00Z" }), submission_list: [], coverage: [], exams: [] };
@@ -137,7 +158,7 @@ describe("Global Tests for provider staff", () => {
     const calls = stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["paper.read", "paper.upload", "exam.read"]), "/api/v1/global-occurrences/o1": generated,
       "/api/v1/global-occurrences/o1/student-subjects": LAYOUT });
     renderApp("/tests/global/occurrences/o1");
-    await screen.findByText(/every student received their own paper/);
+    await screen.findByText(/each student sits their own papers/);
     expect(calls.some((c) => c.path.endsWith("/student-subjects"))).toBe(false);
     expect(screen.queryByRole("heading", { name: "Students" })).toBeNull();
   });

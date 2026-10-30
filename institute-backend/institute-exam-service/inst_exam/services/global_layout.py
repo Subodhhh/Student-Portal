@@ -9,16 +9,18 @@ reason there is none. Eligibility reuses the existing rules only:
     still gets a card that explains each subject instead of being silently left out.
 
 Status of one (student, subject), first match wins:
-  PAPER          exactly one usable (approved/published) submission reaches the student for the subject: that paper is used;
-  CONFLICT       two usable submissions reach the student (two teachers of one institute, or two institutes): neither is used;
-  NOT_APPROVED   a submission reaches the student but its paper was not approved/published by the deadline;
+  PAPER          exactly one usable submission reaches the student for the subject: that paper is used;
+  SELECTABLE     two or more usable submissions reach the student (two teachers of one institute, or two institutes): the student
+                 chooses one of them before starting;
+  NOT_APPROVED   a submission reaches the student but its paper was not usable (not approved/published by the deadline, or invalid);
   NOT_COVERED    an institute the student takes the subject with submitted a paper for it, but for other batches/students;
   NO_SUBMISSION  the student takes the subject with an institute that submitted nothing for it;
   NOT_ENROLLED   none of the student's institutes teaches them the subject.
 "Takes a subject with an institute": the institute offers it and the student has an ACTIVE enrollment there with a membership in an ACTIVE
 batch of that enrollment's branch that takes it: the subjects chosen in that membership, or, without a selection, the subjects that batch
 offers. An enrollment in no active batch takes no subject (each institute is resolved independently).
-Messages never name another institute."""
+Messages never name another institute. (CONFLICT is the status of dates generated before students could choose; it is never produced
+any more.)"""
 from collections import defaultdict
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -49,8 +51,9 @@ class Cell:
     subject_id: UUID
     position: int
     status: str
-    submission: GlobalPaperSubmission | None = None
+    submission: GlobalPaperSubmission | None = None             # PAPER: the one paper
     detail: dict | None = None
+    submissions: list[GlobalPaperSubmission] = field(default_factory=list)   # PAPER / SELECTABLE: every eligible paper
 
 
 @dataclass
@@ -63,8 +66,9 @@ class StudentLayout:
         """Students with the same key get the same exam: same subjects' papers AND the same reasons for the others."""
         return tuple((c.subject_id, c.status, c.submission.submission_id if c.submission else None) for c in self.cells)
 
-    def papers(self) -> dict[UUID, GlobalPaperSubmission]:
-        return {c.subject_id: c.submission for c in self.cells if c.status == "PAPER"}
+    def papers(self) -> dict[UUID, list[GlobalPaperSubmission]]:
+        """subject -> every eligible paper (PAPER and SELECTABLE subjects)."""
+        return {c.subject_id: c.submissions for c in self.cells if c.submissions}
 
 
 def _population(db: Session, offering: dict[UUID, set[UUID]], class_level) -> dict[str, str]:
@@ -103,9 +107,9 @@ def _takes(db: Session, students: set[str], offering: dict[UUID, set[UUID]]) -> 
 
 
 def layouts(db: Session, occurrence_id: UUID, subject_order: list[UUID], class_level, per_provider: dict[UUID, dict],
-            papers: dict[str, dict[UUID, tuple]], conflicts: dict[tuple[str, UUID], set[UUID]]) -> dict[str, StudentLayout]:
-    """The layout of every eligible student (see module docstring). per_provider/papers/conflicts come from
-    global_generation.assignments/merge for the same date."""
+            papers: dict[str, dict[UUID, list[tuple]]]) -> dict[str, StudentLayout]:
+    """The layout of every eligible student (see module docstring). per_provider/papers come from global_generation.assignments/merge
+    for the same date."""
     from inst_exam.services.global_generation import resolve_submission
     offering: dict[UUID, set[UUID]] = defaultdict(set)
     for prov, subject in db.execute(select(ProviderSubject.provider_id, ProviderSubject.subject_id)
@@ -115,20 +119,16 @@ def layouts(db: Session, occurrence_id: UUID, subject_order: list[UUID], class_l
                                                                  GlobalPaperSubmission.status == "ACTIVE")).all()
     submitted = {(s.provider_id, s.subject_id) for s in active_subs}
     enrollment: dict[str, str] = {}
-    ambiguous: dict[tuple[str, UUID], set[UUID]] = defaultdict(set)
     not_approved: dict[tuple[str, UUID], set[UUID]] = defaultdict(set)
     for prov, a in per_provider.items():
         for sid, per in a["papers"].items():
-            for _subject, (_sub, eid) in per.items():
-                enrollment.setdefault(sid, eid)
-        for sid, subject in a["ambiguous"]:
-            ambiguous[(sid, subject)].add(prov)
+            for picks in per.values():
+                for _sub, eid in picks:
+                    enrollment.setdefault(sid, eid)
         for sub in a["not_ready"]:
             for sid, eid, _bid in resolve_submission(db, sub, class_level):
                 not_approved[(sid, sub.subject_id)].add(prov)
                 enrollment.setdefault(sid, eid)
-    for (sid, _subject) in list(ambiguous) + list(conflicts):
-        enrollment.setdefault(sid, None)
     for sid, eid in _population(db, offering, class_level).items():
         enrollment.setdefault(sid, eid)
     for sid in papers:
@@ -149,12 +149,13 @@ def layouts(db: Session, occurrence_id: UUID, subject_order: list[UUID], class_l
         mine = papers.get(sid, {})
         for pos, subject in enumerate(subject_order, start=1):
             if subject in mine:
-                sub, eid = mine[subject]
-                lay.cells.append(Cell(subject, pos, "PAPER", sub))
-                lay.enrollment_id = lay.enrollment_id or eid
-            elif (sid, subject) in conflicts or (sid, subject) in ambiguous:
-                provs = sorted(str(p) for p in conflicts.get((sid, subject), set()) | ambiguous.get((sid, subject), set()))
-                lay.cells.append(Cell(subject, pos, "CONFLICT", detail={"providers": provs}))
+                subs = [sub for sub, _eid in mine[subject]]
+                lay.enrollment_id = lay.enrollment_id or mine[subject][0][1]
+                if len(subs) == 1:
+                    lay.cells.append(Cell(subject, pos, "PAPER", subs[0], submissions=subs))
+                else:
+                    lay.cells.append(Cell(subject, pos, "SELECTABLE", detail={"providers": sorted({str(x.provider_id) for x in subs})},
+                                          submissions=subs))
             elif (sid, subject) in not_approved:
                 lay.cells.append(Cell(subject, pos, "NOT_APPROVED", detail={"providers": sorted(str(p) for p in not_approved[(sid, subject)])}))
             elif takes[sid].get(subject):

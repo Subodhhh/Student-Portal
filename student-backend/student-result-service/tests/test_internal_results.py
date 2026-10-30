@@ -21,6 +21,7 @@ def env(monkeypatch):
     Base.metadata.create_all(engine)
     with engine.begin() as conn:   # owned by the attempt service; the official-result rule reads it
         conn.exec_driver_sql("CREATE TABLE test_attempts (attempt_id CHAR(32) PRIMARY KEY, retake_of_attempt_id CHAR(32))")
+        conn.exec_driver_sql("CREATE TABLE tests (test_id CHAR(32) PRIMARY KEY, sections TEXT, global_occurrence_id CHAR(32))")   # not a Global Test
     Session = sessionmaker(bind=engine, autoflush=False)
 
     def override():
@@ -98,10 +99,13 @@ def test_result_details_list_every_configured_subject_in_order_and_reconcile(mon
                 {"position": 2, "subject": "Chemistry", "status": "PAPER", "message": None, "question_count": 2},
                 {"position": 3, "subject": "Biology", "status": "NO_SUBMISSION", "message": "Your institute has not submitted a Biology paper.",
                  "question_count": 0}]
-    monkeypatch.setattr(rs, "get_result", lambda db, attempt_id, student_id: {"test_id": test_id, "obtained_marks": 11, "total_marks": 20})
+    monkeypatch.setattr(rs, "get_result", lambda db, attempt_id, student_id: {"test_id": test_id, "obtained_marks": 11, "total_marks": 20,
+                                                                    "result_id": "r1", "subject_adjustments": None})
     monkeypatch.setattr(rs, "get_review_window", lambda db, test_id: None)
     monkeypatch.setattr(rs, "get_questions_with_answers", lambda db, attempt_id: questions)
     monkeypatch.setattr(rs, "_sections", lambda db, tid: sections)
+    monkeypatch.setattr(rs.global_results, "is_global_test", lambda db, tid: True)              # a Global Test made for one combination
+    monkeypatch.setattr(rs.global_results, "deltas", lambda db, result_id, adjustments: {})         # never adjusted
     out = rs.get_result_details(db=None, attempt_id=attempt_id, student_id="STU000001")
     subjects = [(s["subject"], s["status"], s["total_questions"], s["obtained_marks"], s["total_marks"]) for s in out["subjects"]]
     assert subjects == [("Physics", "PAPER", 3, 8, 12), ("Chemistry", "PAPER", 2, 3, 8), ("Biology", "NO_SUBMISSION", 0, 0, 0)]

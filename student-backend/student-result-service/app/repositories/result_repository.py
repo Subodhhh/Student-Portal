@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.global_results import SNAPSHOT_FILTER
 from app.services.official import OFFICIAL_SQL
 from app.models.test_result import TestResult
 
@@ -53,7 +54,8 @@ def get_questions_with_answers(
     db: Session,
     attempt_id: UUID,
 ):
-    query = text("""
+    # a Global Test with paper choice: only the attempt's snapshot papers are delivered, scored and reviewed (services/global_results)
+    query = text(f"""
         WITH latest_answers AS (
             SELECT DISTINCT ON (attempt_id, question_id)
                 attempt_id,
@@ -82,6 +84,7 @@ def get_questions_with_answers(
             q.marks,
             q.negative_marks,
             q.image_reference,
+            q.paper_id,
             la.selected_answer
         FROM questions q
         LEFT JOIN latest_answers la
@@ -91,6 +94,7 @@ def get_questions_with_answers(
             FROM test_attempts
             WHERE attempt_id = :attempt_id
         )
+          AND {SNAPSHOT_FILTER}
         ORDER BY q.question_order
     """)
 

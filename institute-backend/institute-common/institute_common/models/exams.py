@@ -571,6 +571,9 @@ class GlobalTestOccurrence(Base):
     generation_error: Mapped[str | None] = mapped_column(String(1000))
     cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     cancel_reason: Mapped[str | None] = mapped_column(String(1000))
+    # bounded generation retries: after the last one the date waits for a Super Admin's manual retry (generation_failed_at)
+    generation_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    generation_failed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class GlobalPaperSubmission(Base):
@@ -601,7 +604,8 @@ class GlobalPaperSubmission(Base):
     withdraw_reason: Mapped[str | None] = mapped_column(String(1000))
 
 
-GLOBAL_SUBJECT_STATUSES = ("PAPER", "NOT_ENROLLED", "NO_SUBMISSION", "NOT_APPROVED", "NOT_COVERED", "CONFLICT")
+# SELECTABLE: two or more eligible papers, the student chooses one (no submission_id); CONFLICT: dates generated before paper choice
+GLOBAL_SUBJECT_STATUSES = ("PAPER", "SELECTABLE", "NOT_ENROLLED", "NO_SUBMISSION", "NOT_APPROVED", "NOT_COVERED", "CONFLICT")
 
 
 class GlobalTestStudent(Base):
@@ -644,3 +648,22 @@ class GlobalTestStudentSubject(Base):
     provider_id: Mapped[UUID | None] = mapped_column()          # the paper's provider (PAPER only)
     detail: Mapped[dict | None] = mapped_column(JSONType)        # internal: e.g. {"providers": [...]} of a conflict; never shown to students
 
+
+class GlobalTestStudentSubjectPaper(Base):
+    """Every eligible paper of one student's PAPER (one) or SELECTABLE (two or more) subject on a Global Test date, frozen at generation:
+    the papers the student may sit (the choice itself is the student's, kept by the Student services)."""
+
+    __tablename__ = "global_test_student_subject_papers"
+    __table_args__ = (
+        PrimaryKeyConstraint("occurrence_id", "student_id", "subject_id", "submission_id", name="pk_global_test_student_subject_papers"),
+        ForeignKeyConstraint(["occurrence_id", "student_id", "subject_id"],
+                             ["global_test_student_subjects.occurrence_id", "global_test_student_subjects.student_id",
+                              "global_test_student_subjects.subject_id"], name="fk_global_test_student_subject_papers_subject"),
+    )
+
+    occurrence_id: Mapped[UUID] = mapped_column(nullable=False)
+    student_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(nullable=False)
+    submission_id: Mapped[UUID] = mapped_column(ForeignKey("global_paper_submissions.submission_id"), nullable=False)
+    paper_version_id: Mapped[UUID] = mapped_column(nullable=False)
+    provider_id: Mapped[UUID] = mapped_column(nullable=False)

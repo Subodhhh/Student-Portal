@@ -129,6 +129,17 @@ def exams_of(db_factory, occurrence_id):
     return out
 
 
+def eligible_of(db_factory, occurrence_id):
+    """{student: {subject name: [paper_version_id...]}}: every paper each student may sit on a generated date (frozen eligibility)."""
+    from institute_common.models.academics import Subject
+    from institute_common.models.exams import GlobalTestStudentSubjectPaper as P
+    out: dict = {}
+    with db_factory() as db:
+        for c, name in db.query(P, Subject.name).join(Subject, Subject.subject_id == P.subject_id).filter(P.occurrence_id == UUID(str(occurrence_id))):
+            out.setdefault(c.student_id, {}).setdefault(name, []).append(str(c.paper_version_id))
+    return {sid: {k: sorted(v) for k, v in per.items()} for sid, per in out.items()}
+
+
 def layout_of(db_factory, occurrence_id):
     """{student: {subject name: status}} of a generated date: every configured subject of every eligible student (global_test_student_subjects)."""
     from institute_common.models.academics import Subject
@@ -222,12 +233,14 @@ def test_teachers_submit_their_own_papers_for_their_own_batches(client, world, g
     assert submit(client, login, gs["sa"], occ, gs["phy"], gs["paperA"], aud(world, gs, batches=("batch_a",)), key="x-platform").status_code == 403
 
 
-def test_an_overlapping_audience_is_refused_instead_of_overriding_a_teacher(client, world, gs, login):
+def test_the_same_paper_twice_for_the_same_students_is_refused_but_different_papers_are_a_choice(client, world, gs, login):
     t, occ = published(client, login, gs)
     assert submit(client, login, gs["tA"], occ, gs["phy"], gs["paperA"], aud(world, gs, batches=("batch_a",))).status_code == 201
-    r = submit(client, login, gs["ba"], occ, gs["phy"], gs["paperB"], aud(world, gs, whole=("p1b1",)), key="ba-whole-branch")
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "AUDIENCE_OVERLAP" and r.json()["detail"]["overlapping_students"] == 1
-    assert submit(client, login, gs["ba"], occ, gs["phy"], gs["paperB"], aud(world, gs, batches=("batch_b",)), key="ba-batch-b").status_code == 201
+    r = submit(client, login, gs["ba"], occ, gs["phy"], gs["paperA"], aud(world, gs, whole=("p1b1",)), key="ba-same-paper")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "DUPLICATE_PAPER_SUBMISSION" and r.json()["detail"]["overlapping_students"] == 1
+    assert submit(client, login, gs["ba"], occ, gs["phy"], gs["paperA"], aud(world, gs, batches=("batch_b",)), key="ba-same-other").status_code == 201
+    r = submit(client, login, gs["ba"], occ, gs["phy"], gs["paperB"], aud(world, gs, whole=("p1b1",)), key="ba-other-paper")
+    assert r.status_code == 201, r.text                                     # another paper for the same students: they will choose
 
 
 def test_a_tutor_without_batches_submits_for_students_listed_individually(client, world, gs, login):
@@ -258,7 +271,7 @@ def test_submissions_are_visible_only_within_scope(client, world, gs, login):
 
 # ------------------------------------------------------------------ Stage D/E: isolation, generation, stability
 
-def test_each_student_receives_only_their_own_teachers_paper(client, world, gs, login, db_factory):
+def test_each_student_is_eligible_only_for_their_own_teachers_papers(client, world, gs, login, db_factory):
     from institute_common.models.exams import ExamNotificationOutbox, ExamOutbox, ExamPlan
     test, occ = published(client, login, gs)
     assert submit(client, login, gs["tA"], occ, gs["phy"], gs["paperA"], aud(world, gs, batches=("batch_a",))).status_code == 201
@@ -267,25 +280,23 @@ def test_each_student_receives_only_their_own_teachers_paper(client, world, gs, 
     assert submit(client, login, gs["tutor"], occ, gs["phy"], gs["paperT"], aud(world, gs, provider="p2", branches=("p2b1",),
                   students=("STU000004", "STU000001"))).status_code == 201
     [run] = run_generation(db_factory, test, occ)
-    assert not run["failed"] and run["students"] == 4 and run["conflicts"] == 1 and run["without_paper"] == 1, run
+    assert not run["failed"] and run["students"] == 4 and run["without_paper"] == 1, run
     got = exams_of(db_factory, occ["occurrence_id"])
-    p1, p2 = world["p1"], world["p2"]
-    # STU000001 studies Physics with p1 (paper A, batch A) AND p2 (tutor's paper T): a cross-provider conflict, so neither Physics
-    # paper; Chemistry (only p1) still arrives. ONE unified exam for the date, never one per provider.
-    assert got["STU000001"] == [(p1, [gs["paperC"]])]
-    assert got["STU000002"] == [(p1, [gs["paperB"], gs["paperC"]])]
-    assert got["STU000004"] == [(p2, [gs["paperT"]])]
-    # no submission covers batch C: STU000003 still gets ONE card, with no paper at all (never another batch's paper)
-    assert got["STU000003"] == [(p1, [])]
+    assert len({tuple(papers) for rows in got.values() for _p, papers in rows}) == 1 and all(len(x) == 1 for x in got.values())   # ONE exam
+    assert got["STU000001"][0][1] == [gs["paperA"], gs["paperB"], gs["paperT"], gs["paperC"]]   # every paper of the date, subject order
+    # STU000001 studies Physics with p1 (paper A, batch A) AND p2 (the tutor's paper T): both are eligible, the student chooses one;
+    # every other student is eligible only for their own teachers' papers (never another batch's)
+    assert eligible_of(db_factory, occ["occurrence_id"]) == {
+        "STU000001": {"Physics": sorted([gs["paperA"], gs["paperT"]]), "Chemistry": [gs["paperC"]]},
+        "STU000002": {"Physics": [gs["paperB"]], "Chemistry": [gs["paperC"]]},
+        "STU000004": {"Physics": [gs["paperT"]]}}
     assert layout_of(db_factory, occ["occurrence_id"]) == {
-        "STU000001": {"Physics": "CONFLICT", "Chemistry": "PAPER"}, "STU000002": {"Physics": "PAPER", "Chemistry": "PAPER"},
+        "STU000001": {"Physics": "SELECTABLE", "Chemistry": "PAPER"}, "STU000002": {"Physics": "PAPER", "Chemistry": "PAPER"},
         "STU000003": {"Physics": "NOT_COVERED", "Chemistry": "NOT_COVERED"}, "STU000004": {"Physics": "PAPER", "Chemistry": "NOT_ENROLLED"}}
     with db_factory() as db:
-        plans = db.query(ExamPlan).filter_by(global_occurrence_id=UUID(occ["occurrence_id"])).count()
-        assert plans == 4 and db.query(ExamOutbox).count() == 4                       # one exam per layout, each delivered
-        bodies = {o.payload["provider_id"]: o.payload["body"] for o in db.query(ExamNotificationOutbox)
-                  if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"}
-        assert all("another provider's paper" in bodies[str(p)] for p in (p1, p2)), bodies   # every provider in the conflict is told
+        assert db.query(ExamPlan).filter_by(global_occurrence_id=UUID(occ["occurrence_id"])).count() == 1 and db.query(ExamOutbox).count() == 1
+        bodies = [o.payload["body"] for o in db.query(ExamNotificationOutbox) if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"]
+        assert not any("neither paper" in b for b in bodies), bodies         # nothing was taken away from anyone
     assert run_generation(db_factory, test, occ) == []                               # generated once: a retry does nothing
     assert exams_of(db_factory, occ["occurrence_id"]) == got
 
@@ -303,24 +314,24 @@ def test_after_the_deadline_exams_are_fixed_even_if_teaching_changes(client, wor
     assert exams_of(db_factory, occ["occurrence_id"]) == before and before["STU000001"] == [(world["p1"], [gs["paperA"]])]
 
 
-def test_ambiguous_students_get_neither_paper_and_unapproved_papers_are_not_used(client, world, gs, login, db_factory):
+def test_two_teachers_papers_for_one_student_are_a_choice_and_unapproved_papers_are_not_used(client, world, gs, login, db_factory):
     from institute_common.models.exams import ExamNotificationOutbox
     from institute_common.models.org import EnrollmentBatch
     test, occ = published(client, login, gs)
     submit(client, login, gs["tA"], occ, gs["phy"], gs["paperA"], aud(world, gs, batches=("batch_a",)))
     submit(client, login, gs["tB"], occ, gs["phy"], gs["paperB"], aud(world, gs, batches=("batch_b",)))
-    with db_factory() as db:                       # after both submissions STU000002 also joins batch A: now covered twice for Physics
+    with db_factory() as db:                       # after both submissions STU000002 also joins batch A: now reached twice for Physics
         db.add(EnrollmentBatch(enrollment_id="g2", batch_id=gs["batch_a"]))
         db.commit()
     [run] = run_generation(db_factory, test, occ)
-    got = exams_of(db_factory, occ["occurrence_id"])
-    assert run["ambiguous"] == 1 and got["STU000001"] == [(world["p1"], [gs["paperA"]])]
-    assert got["STU000002"] == [(world["p1"], [])]                                    # neither paper: a card that explains why
+    assert not run["failed"], run
+    assert eligible_of(db_factory, occ["occurrence_id"])["STU000002"] == {"Physics": sorted([gs["paperA"], gs["paperB"]])}
+    assert eligible_of(db_factory, occ["occurrence_id"])["STU000001"] == {"Physics": [gs["paperA"]]}
     lay = layout_of(db_factory, occ["occurrence_id"])
-    assert lay["STU000002"] == {"Physics": "CONFLICT", "Chemistry": "NO_SUBMISSION"} and lay["STU000001"]["Physics"] == "PAPER"
+    assert lay["STU000002"] == {"Physics": "SELECTABLE", "Chemistry": "NO_SUBMISSION"} and lay["STU000001"]["Physics"] == "PAPER"
     with db_factory() as db:
         bodies = [o.payload["body"] for o in db.query(ExamNotificationOutbox) if o.payload["kind"] == "GLOBAL_TEST_MISSING_PAPERS"]
-        assert any("received neither paper" in b for b in bodies)
+        assert not any("neither paper" in b for b in bodies)
 
     test2, occ2 = published(client, login, gs)
     submit(client, login, gs["tA"], occ2, gs["phy"], gs["paperDraft"], aud(world, gs, batches=("batch_a",)), key="draft-paper")

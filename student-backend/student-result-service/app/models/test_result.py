@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, UUID
+from sqlalchemy import JSON, DateTime, Float, Integer, String, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -45,6 +46,10 @@ class TestResult(Base):
     obtained_marks: Mapped[int] = mapped_column(Integer, nullable=False)
 
     accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Global Test results only: the current manual adjustment per subject ({subject: delta}); obtained_marks already includes it.
+    # NULL = no adjustment, or an older adjustment that was never attributed to a subject.
+    subject_adjustments: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
