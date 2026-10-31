@@ -27,7 +27,7 @@ from institute_common.models.papers import (
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
-from inst_paper.services import documents, extraction
+from inst_paper.services import documents, extraction, paper_pdf
 from inst_paper.services.filestore import get_store
 
 router = APIRouter(prefix="/api/v1", tags=["Questions & Papers"])
@@ -1006,6 +1006,202 @@ def get_paper_version(pv_id: UUID, p: Principal = Depends(get_principal), db: Se
     base["latest_version"] = PaperVersionOut.model_validate(v)
     policy = AnswerPolicy(db, p, db.scalars(select(Question).where(Question.question_id.in_({q.question_id for q in qs}))).all())
     return PaperDetail(**base, questions=[policy.version_out(q) for q in qs], history=hist)
+
+
+# ---------------------------------------------------------------- PDF downloads: question paper (never the answers) and answer key
+
+MAX_PDF_PAPERS = 30          # papers per bulk request
+
+
+def _may_read(p: Principal, paper: Paper) -> bool:
+    """`paper.read` exactly as _scope grants it (platform papers: every holder; provider papers: the paper's provider/branch/subject,
+    teachers through their teaching assignments), without raising: used to filter a bulk download."""
+    if paper.scope == "GLOBAL":
+        return p.has_perm("paper.read")
+    return p.can("paper.read", provider_id=paper.provider_id, branch_id=paper.branch_id, subject_id=paper.subject_id)
+
+
+def _versions_questions(db: Session, version_ids) -> list[tuple[UUID, QuestionVersion, UUID]]:
+    """(paper_version_id, question version, subject_id) of every question of these versions, in paper order."""
+    return list(db.execute(
+        select(PaperVersionQuestion.paper_version_id, QuestionVersion, Question.subject_id)
+        .join(QuestionVersion, QuestionVersion.question_version_id == PaperVersionQuestion.question_version_id)
+        .join(Question, Question.question_id == QuestionVersion.question_id)
+        .where(PaperVersionQuestion.paper_version_id.in_(list(version_ids) or [None]))
+        .order_by(PaperVersionQuestion.paper_version_id, PaperVersionQuestion.position)).tuples())
+
+
+def _require_answer_key(db: Session, p: Principal, version_ids, rows) -> None:
+    """The answer key needs the paper (checked by the caller) AND the correct answers, by the same rule as the paper's detail page
+    (AnswerPolicy: a platform paper reserved for a Global Test keeps its answers from non-platform staff until an exam of theirs using it
+    has closed). Any withheld answer refuses the whole request, so a bulk download never yields a key its paper would not."""
+    hidden = AnswerPolicy(db, p, [qv for _vid, qv, _s in rows]).hidden
+    if hidden:
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip,
+                     details={"permission": "paper.answer_key", "reason": "answers_withheld", "paper_versions": len(set(version_ids))})
+        raise api_error(403, "FORBIDDEN", "The answer key is not available to you for this paper.")
+
+
+def _global_tests(db: Session, p: Principal, version_ids) -> dict:
+    """Global Tests each version belongs to: a platform test's own sections, or a provider paper submitted for a date (withdrawn
+    submissions excluded). Draft tests only for the platform."""
+    from institute_common.models.exams import GlobalPaperSubmission, GlobalTest, GlobalTestOccurrence, GlobalTestSection
+    ids = list(version_ids) or [None]
+    rows = list(db.execute(select(GlobalTestSection.paper_version_id, GlobalTest).join(GlobalTest, GlobalTest.test_id == GlobalTestSection.test_id)
+                           .where(GlobalTestSection.paper_version_id.in_(ids))).tuples())
+    rows += list(db.execute(select(GlobalPaperSubmission.paper_version_id, GlobalTest)
+                            .join(GlobalTestOccurrence, GlobalTestOccurrence.occurrence_id == GlobalPaperSubmission.occurrence_id)
+                            .join(GlobalTest, GlobalTest.test_id == GlobalTestOccurrence.test_id)
+                            .where(GlobalPaperSubmission.paper_version_id.in_(ids), GlobalPaperSubmission.status == "ACTIVE")).tuples())
+    out: dict = {}
+    for vid, test in rows:
+        if (test.status != "DRAFT" or p.is_global) and test not in out.setdefault(vid, []):
+            out[vid].append(test)
+    return {vid: sorted(tests, key=lambda t: t.name) for vid, tests in out.items()}
+
+
+def _marking(tests) -> tuple[tuple[Decimal, Decimal] | None, list[str]]:
+    """The marks that apply: one uniform scheme when every Global Test of the paper uses the same uniform marks; otherwise each
+    question's own marks, with a note for each Global Test that applies uniform marks of its own."""
+    uniform = [t for t in tests if t.marking_mode == "UNIFORM"]
+    schemes = {(t.marking_mode, t.marks_correct, t.marks_wrong) for t in tests}
+    if uniform and len(schemes) == 1:
+        t = uniform[0]
+        return (Decimal(t.marks_correct), Decimal(t.marks_wrong)), [
+            f"Marking of {', '.join(x.name for x in tests)}: the same marks for every question."]
+    return None, [f"In {t.name}: every question {paper_pdf.plus_marks(t.marks_correct)} / {paper_pdf.minus_marks(t.marks_wrong)} "
+                  "(uniform marking of that test)." for t in uniform]
+
+
+def _pdf_papers(db: Session, p: Principal, items: list[tuple[Paper, PaperVersion]], rows, with_answers: bool) -> list[dict]:
+    """What a PDF shows of each (paper, version): names instead of ids, each paper's OWN provider and branch (never the provider that
+    used it in a test), its Global Tests, the subject-wise marking scheme and its questions in paper order. Correct answers and
+    explanations are read only when with_answers (the answer key); a question paper's data never holds them."""
+    from institute_common.models.org import Provider
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({x.provider_id for x, _v in items} or {None}))).all())
+    branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({x.branch_id for x, _v in items} or {None}))).all())
+    subjects = dict(db.execute(select(Subject.subject_id, Subject.name).where(
+        Subject.subject_id.in_({x.subject_id for x, _v in items} | {s for _v, _q, s in rows} or {None}))).all())
+    tests = _global_tests(db, p, [v.paper_version_id for _x, v in items])
+    by_version: dict = {}
+    for vid, qv, subject_id in rows:
+        by_version.setdefault(vid, []).append((qv, subject_id))
+    out = []
+    for paper, v in items:
+        linked = tests.get(v.paper_version_id, [])
+        uniform, notes = _marking(linked)
+        questions, per_subject = [], {}
+        for qv, subject_id in by_version.get(v.paper_version_id, []):
+            pos, neg = uniform or (qv.marks_positive, qv.marks_negative)
+            q = {"stem": qv.stem, "options": [qv.option_a, qv.option_b, qv.option_c, qv.option_d], "marks_positive": pos, "marks_negative": neg}
+            if with_answers:
+                q.update(answer=qv.correct_option, explanation=qv.explanation)
+            questions.append(q)
+            per_subject.setdefault(subjects.get(subject_id) or subjects.get(paper.subject_id, ""), []).append((pos, neg))
+        marking = [{"subject": name, "questions": len(m), "max_marks": sum(x for x, _y in m), "correct": (min(x for x, _y in m), max(x for x, _y in m)),
+                    "incorrect": (min(y for _x, y in m), max(y for _x, y in m))} for name, m in per_subject.items()]
+        out.append({"title": paper.title, "version_no": v.version_no, "subject": subjects.get(paper.subject_id, ""),
+                    "provider": "Platform paper" if paper.scope == "GLOBAL" else providers.get(paper.provider_id),
+                    "branch": None if paper.scope == "GLOBAL" else branches.get(paper.branch_id),
+                    "global_tests": [t.name for t in linked], "exam_type": paper.exam_type, "target_class": paper.target_class,
+                    "total_questions": len(questions), "total_marks": sum(m["max_marks"] for m in marking), "marking": marking,
+                    "marking_notes": notes, "questions": questions})
+    return out
+
+
+def _download(content: bytes, media_type: str, name: str) -> Response:
+    return Response(content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+def _one(db: Session, p: Principal, pv_id: UUID, answer_key: bool) -> Response:
+    v, paper = _pv(db, pv_id)
+    _scope(p, "paper.read", paper, db)
+    rows = _versions_questions(db, [pv_id])
+    if answer_key:
+        _require_answer_key(db, p, [pv_id], rows)
+    [doc] = _pdf_papers(db, p, [(paper, v)], rows, with_answers=answer_key)
+    audit.record(db, "paper.answer_key.download" if answer_key else "paper.download", "SUCCESS", actor=p.staff_id, target_type="paper_version",
+                 target_id=pv_id, provider_id=paper.provider_id, branch_id=paper.branch_id, ip=p.ip, details={"format": "pdf", "papers": 1})
+    return _download(paper_pdf.render(doc, answer_key), "application/pdf", paper_pdf.filename(doc, answer_key))
+
+
+@router.get("/paper-versions/{pv_id}/pdf")
+def paper_version_pdf(pv_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """The question paper as a PDF (questions, options, marks, marking scheme and instructions; never the answers), for exactly the
+    staff who may open the paper (GET /paper-versions/{id})."""
+    return _one(db, p, pv_id, answer_key=False)
+
+
+@router.get("/paper-versions/{pv_id}/answer-key")
+def paper_version_answer_key(pv_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """The answer key as a PDF: the paper's questions with each correct option and explanation. Needs the paper AND its answers
+    (see _require_answer_key); refused with 403 otherwise."""
+    return _one(db, p, pv_id, answer_key=True)
+
+
+def _bulk(db: Session, p: Principal, answer_key: bool, scope: str, provider_id: UUID | None, branch_id: UUID | None, subject_id: UUID | None,
+          status: str | None, q: str | None) -> Response:
+    """Every paper the caller may read that matches the Papers list's filters, one PDF each in a ZIP: a branch, or a whole provider
+    (all of its branches the caller may read), or the platform papers. Each paper's latest version (with `status`: its latest version in
+    that status). An explicitly named provider or branch outside the caller's scope is refused, never silently emptied."""
+    if not p.has_perm("paper.read"):
+        p.require(db, "paper.read")
+    stmt = select(Paper).where(Paper.scope == scope)
+    if scope == "PROVIDER":
+        if branch_id:
+            br = _branch(db, branch_id)
+            if not p.can("paper.read", provider_id=br.provider_id, branch_id=branch_id):
+                p.require(db, "paper.read", provider_id=br.provider_id, branch_id=branch_id)
+            stmt = stmt.where(Paper.branch_id == branch_id)
+        provs = p.scope_provider_ids("paper.read")
+        if provider_id:
+            if provs is not None and provider_id not in provs:
+                p.require(db, "paper.read", provider_id=provider_id)
+            stmt = stmt.where(Paper.provider_id == provider_id)
+        if provs is not None:
+            stmt = stmt.where(Paper.provider_id.in_(provs or [None]))
+    if subject_id:
+        stmt = stmt.where(Paper.subject_id == subject_id)
+    if q:
+        stmt = stmt.where(Paper.title.ilike(f"%{escape_like(q)}%", escape="\\"))
+    items = []
+    for paper in db.scalars(stmt.order_by(Paper.title, Paper.created_at)):
+        if not _may_read(p, paper):
+            continue
+        vq = select(PaperVersion).where(PaperVersion.paper_id == paper.paper_id)
+        v = db.scalar((vq.where(PaperVersion.status == status) if status else vq).order_by(PaperVersion.version_no.desc()).limit(1))
+        if v:
+            items.append((paper, v))
+    if not items:
+        raise api_error(404, "NO_PAPERS", "There is no paper you may download with these filters.")
+    if len(items) > MAX_PDF_PAPERS:
+        raise api_error(422, "TOO_MANY_PAPERS", f"{len(items)} papers match; download at most {MAX_PDF_PAPERS} at once (choose a branch or a subject).")
+    version_ids = [v.paper_version_id for _x, v in items]
+    rows = _versions_questions(db, version_ids)
+    if answer_key:
+        _require_answer_key(db, p, version_ids, rows)
+    audit.record(db, "paper.answer_key.download" if answer_key else "paper.download", "SUCCESS", actor=p.staff_id, target_type="papers",
+                 provider_id=provider_id, branch_id=branch_id, ip=p.ip,
+                 details={"format": "zip", "papers": len(items), "scope": scope, "subject_id": str(subject_id) if subject_id else None})
+    name = "answer-keys.zip" if answer_key else "question-papers.zip"
+    return _download(paper_pdf.bundle(_pdf_papers(db, p, items, rows, with_answers=answer_key), answer_key), "application/zip", name)
+
+
+@router.get("/papers/pdf")
+def papers_pdf(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PROVIDER)$"), provider_id: UUID | None = None, branch_id: UUID | None = None,
+               subject_id: UUID | None = None, status: str | None = Query(default=None, pattern="^(VALIDATED|APPROVED|PUBLISHED|SUPERSEDED|WITHDRAWN)$"),
+               q: str | None = Query(default=None, max_length=100), p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Question papers (ZIP of PDFs) of the filter; see _bulk."""
+    return _bulk(db, p, False, scope, provider_id, branch_id, subject_id, status, q)
+
+
+@router.get("/papers/answer-keys")
+def papers_answer_keys(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PROVIDER)$"), provider_id: UUID | None = None,
+                       branch_id: UUID | None = None, subject_id: UUID | None = None,
+                       status: str | None = Query(default=None, pattern="^(VALIDATED|APPROVED|PUBLISHED|SUPERSEDED|WITHDRAWN)$"),
+                       q: str | None = Query(default=None, max_length=100), p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Answer keys (ZIP of PDFs) of the same papers as GET /papers/pdf; refused with 403 if any of their answers is withheld."""
+    return _bulk(db, p, True, scope, provider_id, branch_id, subject_id, status, q)
 
 
 @router.post("/paper-versions/{pv_id}/revisions", response_model=PaperVersionOut, status_code=201)

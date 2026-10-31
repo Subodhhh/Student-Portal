@@ -8,7 +8,7 @@ import { AddQuestion, BuildPapersDialog, QuestionBrowser } from "../components/q
 import type { BankQuestion, BuiltPaper, Source } from "../services/questions";
 import { Alert, Button, Card, DataTable, EmptyState, Field, PageHeader, Pagination, SearchField, SelectField, Spinner, StatusBadge, Tabs } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
-import { ApiError, api, type Page } from "../services/api";
+import { ApiError, api, downloadFile, type Page } from "../services/api";
 
 type Subject = { subject_id: string; code: string; name: string };
 type PV = { paper_version_id: string; version_no: number; status: string; question_count: number; total_marks: string };
@@ -115,12 +115,15 @@ function PapersTab() {
           <option value="GLOBAL">Platform papers</option><option value="PROVIDER">A provider branch</option>
         </SelectField>
       </div>
-      {source === "GLOBAL" ? <PaperList scope="GLOBAL" /> : <NeedBranch>{({ branchId }) => <PaperList scope="PROVIDER" branchId={branchId} />}</NeedBranch>}
+      {source === "GLOBAL" ? <PaperList scope="GLOBAL" /> : <NeedBranch>{({ providerId, branchId }) => <PaperList scope="PROVIDER" providerId={providerId} branchId={branchId} />}</NeedBranch>}
     </>
   );
 }
 
-function PaperList({ scope, branchId }: { scope: "GLOBAL" | "PROVIDER"; branchId?: string }) {
+function PaperList({ scope, providerId, branchId }: { scope: "GLOBAL" | "PROVIDER"; providerId?: string; branchId?: string }) {
+  const { me } = useAuth();
+  const dl = useAction();
+  const [downloadFrom, setDownloadFrom] = useState<"BRANCH" | "ALL">("BRANCH");
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -132,6 +135,19 @@ function PaperList({ scope, branchId }: { scope: "GLOBAL" | "PROVIDER"; branchId
   if (status) params.set("status", status);
   if (subjectId) params.set("subject_id", subjectId);
   const list = useApi<Page<PaperRow>>(`/api/v1/papers?${params.toString()}`);
+  // the same filters, every page: one PDF per paper in a ZIP (the server includes only the papers the viewer may read)
+  const bulk = new URLSearchParams(params);
+  bulk.delete("page");
+  bulk.delete("page_size");
+  const wholeProvider = new URLSearchParams(bulk);
+  wholeProvider.delete("branch_id");
+  if (providerId) wholeProvider.set("provider_id", providerId);
+  const providerWide = scope === "PROVIDER" && providerId && (me?.primary_role === "PROVIDER_ADMIN" || isGlobalRole(me?.primary_role));
+  const target = providerWide && downloadFrom === "ALL" ? wholeProvider : bulk;
+  // the server decides what is included and refuses answer keys the caller may not have (hiding a button protects nothing)
+  const download = (answerKeys: boolean) => void dl.run(() => (answerKeys
+    ? downloadFile(`/api/v1/papers/answer-keys?${target.toString()}`, "answer-keys.zip")
+    : downloadFile(`/api/v1/papers/pdf?${target.toString()}`, "question-papers.zip")));
   const sName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "—";
   return (
     <div className="stack">
@@ -143,7 +159,15 @@ function PaperList({ scope, branchId }: { scope: "GLOBAL" | "PROVIDER"; branchId
         <SelectField label="Has a version that is" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
           <option value="">Any status</option>{["VALIDATED", "APPROVED", "PUBLISHED", "SUPERSEDED", "WITHDRAWN"].map((s) => <option key={s} value={s}>{s.toLowerCase()}</option>)}
         </SelectField>
+        {providerWide && <SelectField label="Download from" value={downloadFrom} onChange={(e) => setDownloadFrom(e.target.value as "BRANCH" | "ALL")}>
+          <option value="BRANCH">This branch</option><option value="ALL">All branches</option>
+        </SelectField>}
+        <div className="row">
+          <Button variant="secondary" busy={dl.busy} disabled={!list.data?.total && target === bulk} onClick={() => download(false)}>Download Question Papers (ZIP)</Button>
+          <Button variant="secondary" busy={dl.busy} disabled={!list.data?.total && target === bulk} onClick={() => download(true)}>Download Answer Keys (ZIP)</Button>
+        </div>
       </div>
+      {dl.error && <Alert kind="error">{dl.error}</Alert>}
       {list.error && <Alert kind="error">{list.error} <Button small variant="secondary" onClick={list.reload}>Retry</Button></Alert>}
       {list.loading && !list.data ? <Spinner /> : (
         <>

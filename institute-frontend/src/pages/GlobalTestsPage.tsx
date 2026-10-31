@@ -234,7 +234,7 @@ export function GlobalTestDetailPage() {
         <p className="muted small">Each schedule assigns this exact test to one branch's students for one window. Exams are generated automatically at the chosen time, or now.</p>
         {schedules.error && <Alert kind="error">{schedules.error}</Alert>}
         {schedules.loading && !schedules.data ? <Spinner /> : (
-          <DataTable rows={schedules.data?.items ?? []} rowKey={(x) => x.plan_id} empty={<EmptyState title="Not scheduled yet" />} columns={[
+          <DataTable rows={schedules.data?.items ?? []} rowKey={(x) => x.plan_id ?? `occ-${x.occurrence_id}`} empty={<EmptyState title="Not scheduled yet" />} columns={[
             { header: "Schedule", render: (x) => (x.exam_id ? <Link to={`/exams/${x.exam_id}`}>{x.name}</Link> : x.name) },
             { header: "Provider / branch", render: (x) => [x.provider_name, x.home_branch].filter(Boolean).join(" · ") },
             { header: "Window", render: (x) => `${fmt(x.start_at)} – ${fmt(x.end_at)}` },

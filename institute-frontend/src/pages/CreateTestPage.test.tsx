@@ -41,7 +41,7 @@ const file = (name: string, text = "x") => new File([text], name, { type: "text/
 const post = (calls: Call[], path: string) => calls.filter((c) => c.method === "POST" && c.path === path);
 afterEach(() => { vi.unstubAllGlobals(); pvStatus = "VALIDATED"; });
 
-async function throughFiles() {
+async function throughFiles(shuffle?: "YES" | "NO") {
   renderApp("/tests/new");
   const steps = within(await screen.findByRole("list", { name: "Steps" })).getAllByRole("listitem").map((li) => li.textContent);
   expect(steps).toEqual(["1. Audience", "2. Test name", "3. Subjects", "4. Details & schedule", "5. Question papers", "6. Import & validate", "7. Review & publish"]);
@@ -55,6 +55,12 @@ async function throughFiles() {
   fireEvent.click(await screen.findByLabelText("Physics"));
   next();
   expect(await screen.findByLabelText("Duration (minutes)")).toBeTruthy();
+  if (shuffle) {
+    const select = screen.getByLabelText("Shuffle Questions") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["No", "Yes"]);
+    expect(select.value).toBe("NO");                                                                     // existing behaviour unless chosen
+    fireEvent.change(select, { target: { value: shuffle } });
+  }
   next();
   expect(await screen.findByLabelText("Question paper")).toBeTruthy();
   expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);    // both files required
@@ -98,8 +104,23 @@ describe("Create Test wizard", () => {
     expect(order.indexOf("/api/v1/paper-versions/pv1/publish")).toBeLessThan(order.indexOf("/api/v1/tests"));
     const pub = post(calls, "/api/v1/tests")[0];
     expect(pub.headers["Idempotency-Key"]).toBeTruthy();
-    expect(pub.body).toMatchObject({ name: "Weekly Physics", subjects: [{ subject_id: "phy", paper_version_id: "pv1" }], marking_mode: "UNIFORM", marks_correct: 4, marks_wrong: 1 });
+    expect(pub.body).toMatchObject({ name: "Weekly Physics", subjects: [{ subject_id: "phy", paper_version_id: "pv1" }], marking_mode: "UNIFORM", marks_correct: 4, marks_wrong: 1,
+      shuffle_questions: false });                                                                        // No unless chosen: the paper order
     expect(String((pub.body as { start_at: string }).start_at)).toMatch(/Z$/);                           // stored in UTC
+  });
+
+  it("offers Shuffle Questions with exactly Yes and No, and publishes Yes when chosen", async () => {
+    const calls = stubApi(routes());
+    await throughFiles("YES");
+    expect(post(calls, "/api/v1/tests/check")[0].body).toMatchObject({ shuffle_questions: true });        // validated with the choice
+    fireEvent.click(screen.getByRole("button", { name: "Import & Validate" }));
+    expect(await screen.findByText("Passed")).toBeTruthy();
+    next();
+    expect(await screen.findByText("Yes (each student's own fixed order)")).toBeTruthy();                  // the review states it
+    fireEvent.click(screen.getByRole("button", { name: "Publish test" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }));
+    expect(await screen.findByText("Daily Test published")).toBeTruthy();
+    expect(post(calls, "/api/v1/tests")[0].body).toMatchObject({ shuffle_questions: true });
   });
 
   it("shows the validation report for rejected files and only lets corrected files through", async () => {

@@ -85,6 +85,29 @@ export function uploadWithProgress<T = unknown>(path: string, form: FormData, on
   });
 }
 
+/** Saves a file the API returns (a GET with the session cookie; the server authorizes it), named as the server says. */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  } catch {
+    throw new ApiError(0, "NETWORK", "Cannot reach the server. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    const { code, message, extra } = messageFrom(data?.detail);
+    if (response.status === 401) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    throw new ApiError(response.status, code, message, extra);
+  }
+  const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await response.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : "Something went wrong.");
 
 export type Page<T> = { items: T[]; total: number; page: number; page_size: number };

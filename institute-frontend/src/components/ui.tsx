@@ -106,12 +106,13 @@ export function Field({ label, error, hint, ...rest }: FieldProps & InputHTMLAtt
     </div>
   );
 }
-export function SelectField({ label, error, children, ...rest }: FieldProps & SelectHTMLAttributes<HTMLSelectElement>) {
+export function SelectField({ label, error, hint, children, ...rest }: FieldProps & SelectHTMLAttributes<HTMLSelectElement>) {
   const id = useId();
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
       <select id={id} aria-invalid={!!error} {...rest}>{children}</select>
+      {hint && <small className="muted">{hint}</small>}
       {error && <div className="err">{error}</div>}
     </div>
   );

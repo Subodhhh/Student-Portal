@@ -47,6 +47,8 @@ class ExamPlan(Base):
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
     marks_correct: Mapped[int | None] = mapped_column(Integer)
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # Daily/Weekly Test option: each student gets their own fixed question order (Student services); False keeps the paper order.
+    shuffle_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     exam_type: Mapped[str | None] = mapped_column(String(80))
     target_class: Mapped[str | None] = mapped_column(String(80))
     # Set when the plan schedules a published Global Test: its papers, duration and marking are locked to the test's.
@@ -517,6 +519,8 @@ class TestSeries(Base):
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="UNIFORM", server_default="UNIFORM")
     marks_correct: Mapped[int | None] = mapped_column(Integer)
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # Daily/Weekly Test option: each student gets their own fixed question order (Student services); False keeps the paper order.
+    shuffle_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     exam_type: Mapped[str | None] = mapped_column(String(80))
     target_class: Mapped[str | None] = mapped_column(String(80))
     audience: Mapped[dict] = mapped_column(JSONType, nullable=False)          # TestAudienceIn as validated at creation

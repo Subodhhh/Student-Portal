@@ -5,7 +5,7 @@ from decimal import Decimal
 from fractions import Fraction
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -22,7 +22,7 @@ from institute_common.models.exams import (
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
     ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, StudentExamAssignment,
 )
-from institute_common.models.org import Batch, Branch, Enrollment
+from institute_common.models.org import Batch, Branch, Enrollment, Provider
 from institute_common.models.papers import Paper, PaperVersion
 from institute_common.util import need_reason, paginate
 from institute_common.util import Strict
@@ -202,6 +202,8 @@ class ExamOut(BaseModel):
     institute_wide: bool = False      # whole-institute exam: visible to every branch admin of the provider (own students only)
     unified_global: bool = False      # one exam per student for a Global Test date, assembled from several providers' papers
     visible_subject_ids: list[UUID] | None = None   # a provider's view of a unified exam: only these subjects (None = all)
+    provider_name: str | None = None  # GET /exams only (no branch chosen): where the exam belongs; None for a unified Global Test exam
+    branch_name: str | None = None
 
 
 class AssignmentOut(BaseModel):
@@ -567,15 +569,17 @@ def is_institute_wide(db: Session, e: Exam) -> bool:
     return bool(plan and plan.audience_type in ("INSTITUTE", "TARGETED"))   # TARGETED: Create Test, may span the provider's branches
 
 
-def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | OnlyStudents | None:
+def exam_access(db: Session, p: Principal, perm: str, e: Exam, *, record: bool = True) -> set[UUID] | OnlyStudents | None:
     """Authorise `perm` on exam `e` (403 otherwise). Returns None when the caller may see every assigned student, the set of
     branches whose enrolled students they may see (branch admins of an institute-wide exam), or OnlyStudents (teachers). A unified
     Global Test exam returns None for platform roles and otherwise a SubjectScope: the caller's own contributed subjects and students
-    (services/unified.py); its anchor provider/branch grant nothing."""
+    (services/unified.py); its anchor provider/branch grant nothing. record=False: a list skipping exams the caller may not read
+    refuses them without an authz.denied entry for each (nothing was requested by name)."""
     if unified.is_unified_exam(db, e.exam_id):
         s = unified.scope(db, p, perm, e)
         if s is not None and not s.ids:
-            audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": perm, "exam_id": str(e.exam_id), "unified": True})
+            if record:
+                audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, details={"permission": perm, "exam_id": str(e.exam_id), "unified": True})
             raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
         return s
     if p.can(perm, exclude_roles=(Role.BRANCH_ADMIN, Role.TEACHER), provider_id=e.provider_id):
@@ -589,8 +593,9 @@ def exam_access(db: Session, p: Principal, perm: str, e: Exam) -> set[UUID] | On
         return {e.branch_id} if is_institute_wide(db, e) else None
     students = teacher_scope.exam_students(db, p, e) if p.has_role(Role.TEACHER) and p.can(perm, provider_id=e.provider_id) else set()
     if not students:
-        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
-                     details={"permission": perm, "exam_id": str(e.exam_id)})
+        if record:
+            audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=e.provider_id, branch_id=e.branch_id,
+                         details={"permission": perm, "exam_id": str(e.exam_id)})
         raise api_error(403, "FORBIDDEN", "You do not have permission for this action.")
     return OnlyStudents(frozenset(students))
 
@@ -679,6 +684,49 @@ def _build_exam_out(db: Session, exam: Exam, branches, ev: ExamVersion | None, p
         if out.settings:
             out.settings = {k: v for k, v in out.settings.items() if k != "skipped_duplicates"}
     return out
+
+
+@router.get("/exams", response_model=Page[ExamOut])
+def list_my_exams(status: str | None = Query(default=None, pattern="^(SCHEDULED|PUBLISHED|CANCELLED)$"), q: str | None = Query(default=None, max_length=100),
+                  page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Every exam the caller may read across all of their providers and branches, newest first (the Results page, which has no branch
+    to choose). Each exam is authorised and narrowed exactly as GET /exams/{id} (exam_access), so a row's counts are its detail page's."""
+    if not p.has_perm("exam.read"):
+        p.require(db, "exam.read")
+    stmt = select(Exam)
+    if status:
+        stmt = stmt.where(Exam.status == status)
+    term = (q or "").strip().lower()
+    if term:
+        stmt = stmt.where(func.lower(Exam.name).contains(term))
+    provs = p.scope_provider_ids("exam.read")
+    if provs is None:                                   # platform roles: every exam, the whole of each
+        res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
+        _prefetch(db, res["items"])
+        res["items"] = _exam_outs(db, [(e, exam_access(db, p, "exam.read", e)) for e in res["items"]])
+        return _named(db, res)
+    contributed = (select(ExamVersion.exam_id).join(ExamVersionPaper, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id)
+                   .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+                   .where(GlobalPaperSubmission.provider_id.in_(provs or [None])))
+    candidates = db.scalars(stmt.where(Exam.provider_id.in_(provs or [None]) | Exam.exam_id.in_(contributed)).order_by(Exam.created_at.desc())).all()
+    _prefetch(db, candidates)
+    rows = []
+    for e in candidates:
+        try:
+            rows.append((e, exam_access(db, p, "exam.read", e, record=False)))
+        except HTTPException:
+            continue
+    return _named(db, _page_of(db, rows, page, page_size))
+
+
+def _named(db: Session, res: dict) -> dict:
+    """Provider and branch names of a page of exams (a unified Global Test exam's anchor is not where it belongs: left empty)."""
+    shown = [x for x in res["items"] if not x.unified_global and x.provider_id]
+    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({x.provider_id for x in shown} or {None}))).all())
+    branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({x.branch_id for x in shown} or {None}))).all())
+    for x in shown:
+        x.provider_name, x.branch_name = providers.get(x.provider_id), branches.get(x.branch_id)
+    return res
 
 
 @router.get("/branches/{branch_id}/exams", response_model=Page[ExamOut])

@@ -65,6 +65,7 @@ class SeriesIn(Strict):
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
     exam_type: Label = None
     target_class: TargetClass = None
+    shuffle_questions: bool = False      # copied to every occurrence's plan (see routes/tests.TestDraftIn)
 
     @field_validator("name")
     @classmethod
@@ -256,7 +257,8 @@ def _new_plan(db: Session, s: TestSeries, a: daily.TestAudienceIn, d: date, star
                     duration_minutes=s.duration_minutes, start_at=start, end_at=end,
                     generate_at=start - timedelta(minutes=s.generate_lead_minutes), auto_publish=True, status="ACTIVE",
                     audience_type="TARGETED", marking_mode=s.marking_mode, marks_correct=s.marks_correct, marks_wrong=s.marks_wrong,
-                    exam_type=s.exam_type, target_class=s.target_class, series_id=s.series_id, created_by=s.created_by)
+                    exam_type=s.exam_type, target_class=s.target_class, shuffle_questions=s.shuffle_questions, series_id=s.series_id,
+                    created_by=s.created_by)
     db.add(plan)
     db.flush()
     for b in a.whole_branch_ids:
@@ -292,7 +294,7 @@ def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal
            "branch_id": s.branch_id, "month": s.month, "weekdays": s.weekdays, "start_time": s.start_time, "timezone": s.timezone,
            "window_minutes": s.window_minutes, "duration_minutes": s.duration_minutes, "generate_lead_minutes": s.generate_lead_minutes,
            "marking_mode": s.marking_mode, "marks_correct": s.marks_correct, "marks_wrong": s.marks_wrong, "exam_type": s.exam_type,
-           "target_class": s.target_class, "subjects": s.subjects, "branches": sorted(names.values()),
+           "target_class": s.target_class, "shuffle_questions": s.shuffle_questions, "subjects": s.subjects, "branches": sorted(names.values()),
            "audience": s.audience, "planned_count": len(planned), "scheduled_count": len(plans), "missing_occurrences": missing,
            "states": states, "last_generated_at": s.last_generated_at, "last_generation_error": s.last_generation_error,
            "created_by": s.created_by, "created_at": s.created_at, "cancelled_at": s.cancelled_at, "cancel_reason": s.cancel_reason}
@@ -353,7 +355,7 @@ def create_series(body: SeriesIn, idempotency_key: str = Header(min_length=8, ma
                        weekdays=sorted(body.weekdays), start_time=body.start_time, timezone=body.timezone, window_minutes=body.window_minutes,
                        duration_minutes=body.duration_minutes, generate_lead_minutes=body.generate_lead_minutes, marking_mode=body.marking_mode,
                        marks_correct=body.marks_correct, marks_wrong=body.marks_wrong, exam_type=body.exam_type, target_class=body.target_class,
-                       audience=a.model_dump(mode="json"), subjects=[x.model_dump(mode="json") for x in body.subjects],
+                       shuffle_questions=body.shuffle_questions, audience=a.model_dump(mode="json"), subjects=[x.model_dump(mode="json") for x in body.subjects],
                        client_request_id=idempotency_key, created_by=p.staff_id)
         db.add(s)
         try:

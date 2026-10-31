@@ -27,10 +27,11 @@ export type TestPaper = {
   published_version: { paper_version_id: string; version_no: number; question_count: number; total_marks: string } | null;
 };
 export type ScheduledTest = {
-  plan_id: string; test_type: TestType; series_id: string | null; global_test_id: string | null; exam_id: string | null; exam_version_id: string | null; name: string; state: string; plan_status?: string; exam_status: string | null; delivery_status: string | null;
+  plan_id: string | null; occurrence_id?: string; test_type: TestType; series_id: string | null; global_test_id: string | null; exam_id: string | null; exam_version_id: string | null; name: string; state: string; plan_status?: string; exam_status: string | null; delivery_status: string | null;
   error: string | null; provider_name: string | null; home_branch: string | null; start_at: string; end_at: string; duration_minutes: number; subjects: string[];
   audience: { type: string; branches: string[]; batches: string[]; students: number }; assigned_students: number; question_count: number | null; total_marks: string | null;
-  marking: { mode: string; correct?: number; wrong?: number } | null; created_at: string;
+  marking: { mode: string; correct?: number; wrong?: number } | null; created_at: string; shuffle_questions?: boolean;
+  submission_deadline?: string;   // a Global Test date listed before its exam exists (plan_id null): papers are accepted until then
 };
 
 // ---- audience selection shared by the Daily and Weekly Test pages (components/testAudience.tsx renders it)
@@ -57,7 +58,8 @@ export const localToIso = (v: string) => (v ? new Date(v).toISOString() : "");
 
 export function draftBody(d: {
   audience: ReturnType<typeof audienceBody>; name: string; description: string; subjectIds: string[];
-  meta: { duration: string; start: string; end: string; marking: "UNIFORM" | "PER_QUESTION"; correct: string; wrong: string; exam_type: string; target_class: string };
+  meta: { duration: string; start: string; end: string; marking: "UNIFORM" | "PER_QUESTION"; correct: string; wrong: string; exam_type: string; target_class: string;
+    shuffle: "YES" | "NO" };
   versions: Record<string, string | null>;
 }) {
   const uniform = d.meta.marking === "UNIFORM";
@@ -66,7 +68,7 @@ export function draftBody(d: {
     subjects: d.subjectIds.map((sid) => ({ subject_id: sid, paper_version_id: d.versions[sid] ?? null })),
     duration_minutes: Number(d.meta.duration), start_at: localToIso(d.meta.start), end_at: localToIso(d.meta.end), marking_mode: d.meta.marking,
     marks_correct: uniform ? Number(d.meta.correct) : null, marks_wrong: uniform ? Number(d.meta.wrong) : null,
-    exam_type: d.meta.exam_type.trim() || null, target_class: d.meta.target_class.trim() || null,
+    exam_type: d.meta.exam_type.trim() || null, target_class: d.meta.target_class.trim() || null, shuffle_questions: d.meta.shuffle === "YES",
   };
 }
 

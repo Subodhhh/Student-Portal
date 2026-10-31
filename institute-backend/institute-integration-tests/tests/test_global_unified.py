@@ -291,7 +291,8 @@ def test_listings_show_unified_exams_by_contribution_never_by_anchor(client, wor
     # plans are the platform's: never in a provider's plan list or Scheduled Tests list
     assert all(not x["global_test_id"] for x in client.get(f"{API}/branches/{world['p1b1']}/exam-plans", headers=login(gs["pa"])).json()["items"])
     assert [x for x in client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["pa"])).json()["items"]] == []
-    plans = client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["sa"])).json()["items"]
+    listed = client.get(f"{API}/tests?test_type=GLOBAL", headers=login(gs["sa"])).json()["items"]
+    plans = [x for x in listed if x["plan_id"]]          # the test's later, ungenerated dates are listed on their own (no plan yet)
     assert len(plans) == 1 and {(x["unified_global"], x["provider_name"], x["home_branch"]) for x in plans} == {(True, "Global Test", None)}
     # the date's page: each provider sees the exams with its students, counted for its students only
     occ_p2 = client.get(f"{API}/global-occurrences/{occ['occurrence_id']}", headers=login(gs["tutor"])).json()

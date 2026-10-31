@@ -6,8 +6,8 @@ WORKDIR /app
 # Build context is ./backend so the shared library can be installed: docker compose build institute-paper-service
 COPY institute-common /opt/institute-common
 RUN pip install --no-cache-dir -r /opt/institute-common/requirements.txt && pip install --no-cache-dir --no-deps /opt/institute-common
-# Printed-text OCR for scanned papers (used only when OCR_ENGINE=tesseract).
-RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr && rm -rf /var/lib/apt/lists/*
+# Printed-text OCR for scanned papers (used only when OCR_ENGINE=tesseract); DejaVu fonts for Unicode in downloaded paper PDFs.
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 COPY institute-paper-service/requirements-ocr.txt /tmp/requirements-ocr.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-ocr.txt
 

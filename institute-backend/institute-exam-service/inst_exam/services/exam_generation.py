@@ -66,7 +66,7 @@ FIXED_POLICIES = {
     "timer": "SHARED_FULL_DURATION",          # one timer across all subjects; starting inside the window gives the full duration
     "results": "AFTER_EVALUATION",            # results appear once the submission is evaluated
     "answer_review": "AFTER_WINDOW_CLOSES",   # correct answers are revealed only when nobody can still start the exam
-    "shuffle": "NONE",                        # question order is the paper order
+    "shuffle": "NONE",                        # question order is the paper order (PER_STUDENT when the plan shuffles: plan_settings)
 }
 
 
@@ -74,7 +74,9 @@ def plan_settings(plan: ExamPlan) -> dict:
     marking = {"mode": plan.marking_mode}
     if plan.marking_mode == "UNIFORM":
         marking.update(correct=plan.marks_correct, wrong=plan.marks_wrong)
-    return {"marking": marking, "policies": FIXED_POLICIES, "audience_type": plan.audience_type,
+    # Shuffle Questions: frozen with the exam; the Student services give each student their own fixed order of the same questions
+    policies = {**FIXED_POLICIES, "shuffle": "PER_STUDENT"} if plan.shuffle_questions else FIXED_POLICIES
+    return {"marking": marking, "policies": policies, "shuffle_questions": plan.shuffle_questions, "audience_type": plan.audience_type,
             "global_test_id": str(plan.global_test_id) if plan.global_test_id else None,
             "exam_type": plan.exam_type, "target_class": plan.target_class}
 
