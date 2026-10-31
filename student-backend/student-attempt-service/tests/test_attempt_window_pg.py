@@ -122,3 +122,50 @@ def test_a_student_outside_the_audience_cannot_start(env):
     with engine.begin() as c:
         c.execute(text("DELETE FROM test_audiences WHERE test_id = :t"), {"t": tid})
     assert client.post("/attempts/start", json={"test_id": str(tid)}).status_code == 403
+
+
+def test_the_window_holds_when_the_database_session_is_in_ist(env):
+    """A non-UTC session (Asia/Kolkata): the times are stored the way delivery stores them (the instant in the session's zone) and the
+    route compares them with NOW() in that same zone, so an hour ahead is refused and an hour ago is open."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.database import get_db
+    from app.main import app
+
+    client, _, make_test, sid, _ = env
+    ist = create_engine(URL, connect_args={"options": "-c timezone=Asia/Kolkata"})
+    IstSession = sessionmaker(bind=ist, autoflush=False)
+
+    def override():
+        db = IstSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override
+    now = datetime.now(timezone.utc)
+
+    def schedule(tid, start, end):
+        with ist.begin() as c:     # as the test service's delivery writes them (routes/internal._to_session_naive)
+            assert c.execute(text("SHOW TimeZone")).scalar() == "Asia/Kolkata"
+            c.execute(text("""UPDATE tests SET start_at = CAST(:s AS timestamptz) AT TIME ZONE current_setting('TimeZone'),
+                                               end_at = CAST(:e AS timestamptz) AT TIME ZONE current_setting('TimeZone')
+                              WHERE test_id = :t"""), {"s": start, "e": end, "t": tid})
+
+    def count(tid):
+        with ist.connect() as c:
+            return c.execute(text("SELECT count(*) FROM test_attempts WHERE test_id = :t AND student_id = :s"), {"t": tid, "s": sid}).scalar()
+
+    early = make_test("1 hour", "2 hours")
+    schedule(early, now + timedelta(hours=1), now + timedelta(hours=2))
+    r = client.post("/attempts/start", json={"test_id": str(early)})
+    assert r.status_code == 400 and r.json()["detail"] == "This test has not opened yet"
+    assert count(early) == 0
+
+    # control: opened an hour ago. Its stored IST wall-clock time is ahead of UTC, so a UTC comparison would wrongly refuse it.
+    opened = make_test("-1 hour", "2 hours")
+    schedule(opened, now - timedelta(hours=1), now + timedelta(hours=2))
+    assert client.post("/attempts/start", json={"test_id": str(opened)}).status_code == 200
+    assert count(opened) == 1
+    ist.dispose()
