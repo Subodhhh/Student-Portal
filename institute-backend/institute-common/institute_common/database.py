@@ -40,7 +40,8 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-engine = create_engine(settings.database_url)
+# engine = create_engine(settings.database_url)
+engine = create_engine(settings.database_url,pool_size=20,max_overflow=10,pool_timeout=10)
 
 
 @event.listens_for(engine, "checkin")
