@@ -347,6 +347,11 @@
   background: #eff6ff;
   color: #2563eb;
 }
+
+.test-details-status-closed {
+  background: #f1f5f9;
+  color: #475569;
+}
 /* v2 unified Global Test: subjects with the papers a student may choose */
 .paper-selection ul {
   display: grid;

@@ -93,6 +93,20 @@ def test_paper_can_be_loaded_to_resume_after_the_window_closed_but_not_to_start(
     assert "correct_answer" not in r.json()["questions"][0]                # the key is never sent to the browser
 
 
+def test_missed_lists_only_active_tests_whose_window_ended_without_an_attempt(env):
+    client, engine, sid, p, b = env
+    now = datetime.now(timezone.utc)
+    ended, withdrawn = (exam(p, b, sid, now - timedelta(hours=2), now + timedelta(hours=1)) for _ in range(2))
+    for body in (ended, withdrawn):
+        assert client.post("/internal/v1/exams", json=body, headers={"X-Service-Key": KEY}).status_code == 201
+    with engine.begin() as c:
+        c.execute(text("UPDATE tests SET end_at = now() - interval '1 minute' WHERE test_id IN (:a, :b)"),
+                  {"a": ended["exam_version_id"], "b": withdrawn["exam_version_id"]})
+        c.execute(text("UPDATE tests SET status = 'INACTIVE' WHERE test_id = :t"), {"t": withdrawn["exam_version_id"]})
+    missed = {t["test_id"] for t in client.get("/tests/missed").json()}
+    assert ended["exam_version_id"] in missed and withdrawn["exam_version_id"] not in missed
+
+
 def test_a_student_session_cannot_touch_test_audiences(env):
     client, engine, sid, p, b = env
     tid = str(uuid.uuid4())

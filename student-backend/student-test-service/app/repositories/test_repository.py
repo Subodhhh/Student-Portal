@@ -376,7 +376,8 @@ def get_missed_tests(
         LEFT JOIN enrollment_batches eb
             ON eb.enrollment_id = e.enrollment_id
 
-        WHERE t.end_at < NOW()
+        WHERE t.status = 'ACTIVE'
+          AND t.end_at < NOW()
           AND (
                 (
                     ta.audience_type = 'PROVIDER'
