@@ -45,7 +45,9 @@ def require_internal_key(x_service_key: str | None = Header(default=None)) -> No
 class InternalHttp:
     RETRIES = 3
 
-    def __init__(self, base_url: str, api_key: str, *, timeout: float = 8.0, client: httpx.Client | None = None) -> None:
+    def __init__(self, base_url: str, api_key: str, *, timeout: float = 8.0, client: httpx.Client | None = None,
+                 retries: int = RETRIES) -> None:
+        self.retries = retries
         if client is not None:
             self._http = client
             self._http.headers.update({"X-Service-Key": api_key or "", "X-Service-Name": settings.service_name})
@@ -62,7 +64,7 @@ class InternalHttp:
 
     def request(self, method: str, path: str, **kw) -> httpx.Response:
         last: Exception | None = None
-        for attempt in range(self.RETRIES):
+        for attempt in range(self.retries):
             try:
                 r = self._http.request(method, self._prefix + path, **kw)
                 if r.status_code < 500:

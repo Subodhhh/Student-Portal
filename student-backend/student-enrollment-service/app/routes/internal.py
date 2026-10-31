@@ -4,6 +4,8 @@ Providers, branches, batches, enrollments and batch membership are owned by the 
 services still need them locally for eligibility, "My Institutes" and result listings, so the Institute pushes the current state
 here. Every write is an idempotent upsert keyed by the Institute's identifiers; batch membership is replaced as a set per
 enrollment. Rows are isolated with savepoints: one bad row (for example an unknown student) is reported and never blocks the rest.
+One sync runs at a time (a transaction-scoped advisory lock, released by commit, rollback or a lost connection): a concurrent request
+answers 409 at once instead of waiting on the first one's row locks, and the sender retries it on its next pass.
 Authenticated by X-Service-Key; the whole router answers 404 unless INSTITUTE_SERVICE_API_KEYS is configured."""
 import hmac
 import logging
@@ -41,6 +43,7 @@ def require_service_key(x_service_key: str | None = Header(default=None)) -> Non
 router = APIRouter(prefix="/internal/v1", tags=["Internal"], dependencies=[Depends(require_service_key)])
 
 STATUS = "^(ACTIVE|INACTIVE)$"
+SYNC_LOCK = 7_310_225_001          # advisory lock key of the reference sync; any constant unique within this database
 
 
 class ProviderIn(BaseModel):
@@ -149,6 +152,9 @@ def _apply(db: Session, kind: str, key: str, fn, errors: list[dict]) -> bool:
 
 @router.post("/reference/sync")
 def sync_reference(body: ReferenceIn, db: Session = Depends(_db)):
+    if not db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": SYNC_LOCK}).scalar():
+        db.rollback()
+        raise HTTPException(status_code=409, detail={"code": "SYNC_BUSY", "message": "Another reference sync is in progress."})
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     errors: list[dict] = []
     applied = {"providers": [], "branches": [], "batches": [], "enrollments": []}

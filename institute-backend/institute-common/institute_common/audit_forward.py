@@ -1,6 +1,8 @@
 """Delivery of a service's audit spool to the identity service (the audit log's single writer), and the ingestion side.
 
-Forwarding is at-least-once and idempotent: the spool row id becomes the audit row id, so a replay inserts nothing."""
+Forwarding is at-least-once and idempotent: the spool row id becomes the audit row id, so a replay inserts nothing. Several
+forwarders may share one spool (two processes of a service, or two deployments on one database): each claims its rows with
+FOR UPDATE SKIP LOCKED, so no event is sent by two forwarders at once."""
 import logging
 import threading
 import time
@@ -8,6 +10,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
 from institute_common.config import settings
@@ -25,8 +28,11 @@ KEEP_FORWARDED = timedelta(days=7)
 def forward_spool(db: Session, service: str, client=None) -> dict:
     """Send pending events to identity. Returns counts; never raises (the spool keeps what could not be delivered)."""
     spool = SPOOLS[service]
-    rows = db.scalars(select(spool).where(spool.forwarded_at.is_(None)).order_by(spool.created_at).limit(BATCH)).all()
+    # the claim (row locks) lasts one delivery attempt: it ends with the commit below, on success or failure
+    rows = db.scalars(select(spool).where(spool.forwarded_at.is_(None)).order_by(spool.created_at).limit(BATCH)
+                      .with_for_update(skip_locked=True)).all()
     if not rows:
+        db.commit()
         return {"sent": 0, "pending": 0}
     body = {"service": service, "events": [{"event_id": str(r.event_id), **r.payload} for r in rows]}
     try:
@@ -50,19 +56,25 @@ def forward_spool(db: Session, service: str, client=None) -> dict:
 
 
 def ingest_events(db: Session, service: str, events: list[dict]) -> int:
-    """Identity side: insert events (idempotent by event_id). `actor_service` is forced to the authenticated sender."""
+    """Identity side: insert events (idempotent by event_id). `actor_service` is forced to the authenticated sender. One lookup and
+    one insert per batch (not one round trip per event), and ON CONFLICT DO NOTHING: two senders delivering the same event at
+    once insert it once, and neither fails."""
     from datetime import datetime
-    inserted = 0
+    rows: dict[UUID, dict] = {}
     for e in events:
         eid = UUID(str(e["event_id"]))
-        if db.get(AuditLog, eid):
-            continue
-        db.add(AuditLog(
+        rows.setdefault(eid, dict(
             audit_id=eid, occurred_at=datetime.fromisoformat(e["occurred_at"]), actor_staff_id=_uuid(e.get("actor_staff_id")),
             actor_service=f"institute-{service}", action=str(e["action"])[:80], target_type=e.get("target_type"), target_id=e.get("target_id"),
             provider_id=_uuid(e.get("provider_id")), branch_id=_uuid(e.get("branch_id")), outcome=e["outcome"], reason=e.get("reason"),
             ip_address=e.get("ip_address"), details=e.get("details")))
-        inserted += 1
+    known = set(db.scalars(select(AuditLog.audit_id).where(AuditLog.audit_id.in_(list(rows))))) if rows else set()
+    new = [r for eid, r in rows.items() if eid not in known]
+    inserted = 0
+    if new:
+        dialect = postgresql if db.get_bind().dialect.name == "postgresql" else sqlite
+        inserted = len(db.execute(dialect.insert(AuditLog).values(new).on_conflict_do_nothing(index_elements=["audit_id"])
+                                  .returning(AuditLog.audit_id)).all())
     db.commit()
     return inserted
 
