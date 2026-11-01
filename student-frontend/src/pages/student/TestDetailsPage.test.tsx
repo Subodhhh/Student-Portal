@@ -49,6 +49,47 @@ describe("Test details", () => {
     expect(screen.queryByText("Take Test")).toBeNull();
   });
 
+  describe("status matches the Scheduled Tests lists", () => {
+    const status = async (label: string) => {
+      const badge = await screen.findByText(label, { selector: ".test-details-status" });
+      expect(badge.className).toContain(`test-details-status-${label.toLowerCase()}`);
+    };
+
+    it("shows an ended window as Closed, never Upcoming, without Take Test", async () => {
+      renderDetails("s1", test("s1", "Apex", "B", { start_at: "2020-01-01T00:00:00+00:00", end_at: "2020-01-01T03:00:00+00:00" }));
+      await status("Closed");
+      expect(screen.queryByText("Upcoming")).toBeNull();
+      expect(screen.queryByText("Take Test")).toBeNull();
+    });
+
+    it("shows a future window as Upcoming, without Take Test", async () => {
+      renderDetails("s2", test("s2", "Apex", "B", { start_at: "2099-01-01T00:00:00+00:00", end_at: "2099-01-01T03:00:00+00:00" }));
+      await status("Upcoming");
+      expect(screen.queryByText("Take Test")).toBeNull();
+    });
+
+    it("shows an open window as Available, with Take Test", async () => {
+      renderDetails("s3", test("s3", "Apex", "B", { start_at: "2020-01-01T00:00:00+00:00" }));
+      await status("Available");
+      expect(screen.getByText("Take Test")).toBeTruthy();
+    });
+
+    it("shows an ended Global Test as Closed and still lists its subjects", async () => {
+      const sections = [{ position: 1, subject: "Physics", status: "PAPER", message: null, question_count: 45 }];
+      renderDetails("s4", test("s4", "Anchor", "B", { global_occurrence_id: "occ-1", start_at: "2020-01-01T00:00:00+00:00",
+                                                      end_at: "2020-01-01T03:00:00+00:00", sections }));
+      await status("Closed");
+      expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Physics45 question(s)"]);
+      expect(screen.queryByText("Take Test")).toBeNull();
+    });
+
+    it("shows a test that is not ACTIVE as Closed, even inside its window", async () => {
+      renderDetails("s5", test("s5", "Apex", "B", { start_at: "2020-01-01T00:00:00+00:00", status: "INACTIVE" }));
+      await status("Closed");
+      expect(screen.queryByText("Take Test")).toBeNull();
+    });
+  });
+
   it("keeps an ordinary test's provider and branch", async () => {
     renderDetails("t2", test("t2", "Apex NEET Academy", "Thane Branch"));
     expect((await screen.findAllByText("Apex NEET Academy")).length).toBe(2);

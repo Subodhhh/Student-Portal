@@ -200,11 +200,12 @@ def get_attempt_workspace(
         },
     ).mappings().all()
 
-    sections = db.execute(text("SELECT sections FROM tests WHERE test_id = :t"), {"t": attempt.test_id}).scalar()
+    sections, shuffle = db.execute(text("SELECT sections, shuffle_questions FROM tests WHERE test_id = :t"), {"t": attempt.test_id}).one()
     if isinstance(sections, str):
         import json
         sections = json.loads(sections)
-    rows = section_order(rows, sections, student_id, attempt.test_id, subject_of=lambda r: r["subject"], id_of=lambda r: r["question_id"])
+    rows = section_order(rows, sections, student_id, attempt.test_id, subject_of=lambda r: r["subject"], id_of=lambda r: r["question_id"],
+                         shuffle=bool(shuffle))
 
     now = datetime.now(timezone.utc)
 

@@ -4,7 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { paperActions } from "../auth/roles";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, SelectField, Spinner, StatusBadge, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
-import { ApiError, API_URL, api } from "../services/api";
+import { ApiError, API_URL, api, downloadFile } from "../services/api";
 
 type PV = { paper_version_id: string; paper_id: string; version_no: number; status: string; question_count: number; total_marks: string; created_at: string; published_at?: string | null };
 type PaperRow = { paper_id: string; scope?: string; subject_id: string; title: string; latest_version: PV | null };
@@ -23,6 +23,7 @@ export function PaperDetailPage() {
   const [editing, setEditing] = useState<{ position: number; q: Q } | null>(null);
   const navigate = useNavigate();
   const act = useAction();
+  const dl = useAction();
   if (d.loading) return <Spinner />;
   if (d.error || !d.data) return <Alert kind="error">{d.error || "Not found"}</Alert>;
   const v = d.data.latest_version!;
@@ -36,10 +37,15 @@ export function PaperDetailPage() {
     <>
       <PageHeader crumbs={[<Link key="papers" to="/papers">Question Bank & Papers</Link>, d.data.title]} title={`${d.data.title} — v${v.version_no}`} subtitle={`${v.question_count} questions · ${v.total_marks} marks`}
         actions={<><StatusBadge status={v.status} />
+          <Button variant="secondary" busy={dl.busy} onClick={() => void dl.run(() => downloadFile(`/api/v1/paper-versions/${versionId}/pdf`, "question-paper.pdf"))}>Download Question Paper</Button>
+          {/* offered when this page shows the answers; the server refuses the key otherwise, whatever the page shows */}
+          {!d.data.questions.some((q) => q.answers_hidden) && <Button variant="secondary" busy={dl.busy}
+            onClick={() => void dl.run(() => downloadFile(`/api/v1/paper-versions/${versionId}/answer-key`, "answer-key.pdf"))}>Download Answer Key</Button>}
           {allow.approve && v.status === "VALIDATED" && <Button onClick={() => setConfirm("approve")}>Approve</Button>}
           {allow.publish && v.status === "APPROVED" && <Button onClick={() => setConfirm("publish")}>Publish</Button>}
           {allow.withdraw && (v.status === "VALIDATED" || v.status === "APPROVED" || v.status === "PUBLISHED") && <Button variant="danger" onClick={() => setConfirm("withdraw")}>{v.status === "VALIDATED" ? "Reject draft" : "Withdraw"}</Button>}
           {allow.override && <Button variant="secondary" onClick={() => setConfirm("override")}>Override status</Button>}</>} />
+      {dl.error && <Alert kind="error">{dl.error}</Alert>}
       <Alert kind="info">{v.status === "VALIDATED" ? "This is a draft extracted from your file. Check every question, correct anything that is wrong (a correction saves a new version, nothing is overwritten), then approve and publish." : "Versions are immutable. Exams already generated keep the exact version they used; a correction creates the next version, which you approve and publish again."}</Alert>
       <div style={{ height: "var(--space-4)" }} />
       <div className="stack">

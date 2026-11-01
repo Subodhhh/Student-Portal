@@ -44,13 +44,14 @@ from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import (
     Exam, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanBranch, ExamPlanStudent, ExamPlanSubject, ExamVersion,
-    StudentExamAssignment,
+    GlobalTest, GlobalTestOccurrence, GlobalTestSubject, StudentExamAssignment,
 )
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch, Provider
 from institute_common.models.papers import Paper, PaperShare, PaperUpload, PaperVersion
 from institute_common.util import Strict
 from inst_exam.routes.exams import api_error_detail
 from inst_exam.services import exam_generation as gen
+from inst_exam.services import global_generation as gg
 from inst_exam.services import teacher_scope, unified
 from inst_exam.services.test_policy import can_create_test
 
@@ -98,6 +99,7 @@ class TestDraftIn(Strict):
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
     exam_type: Label = None
     target_class: TargetClass = None
+    shuffle_questions: bool = False      # Yes: each student gets their own fixed question order (the paper itself never changes)
 
     @field_validator("name")
     @classmethod
@@ -468,6 +470,7 @@ def _summaries(db: Session, plans: list[ExamPlan], viewer: Principal | None = No
                                  "students": students.get(plan.plan_id, 0)},
                     "assigned_students": assigned.get(exam.exam_id, 0) if exam else 0, "question_count": ev.total_questions if ev else None,
                     "total_marks": str(ev.total_marks) if ev else None, "marking": ev.settings.get("marking") if ev and ev.settings else None,
+                    "shuffle_questions": plan.shuffle_questions,
                     "created_by": plan.created_by, "created_at": plan.created_at})
     return out
 
@@ -490,7 +493,8 @@ def publish_test(body: TestDraftIn, idempotency_key: str = Header(min_length=8, 
         plan = ExamPlan(provider_id=a.provider_id, branch_id=a.branch_ids[0], name=body.name, description=body.description,
                         duration_minutes=body.duration_minutes, start_at=body.start_at, end_at=body.end_at, auto_publish=False, status="ACTIVE",
                         audience_type="TARGETED", marking_mode=body.marking_mode, marks_correct=body.marks_correct, marks_wrong=body.marks_wrong,
-                        exam_type=body.exam_type, target_class=body.target_class, client_request_id=idempotency_key, created_by=p.staff_id)
+                        exam_type=body.exam_type, target_class=body.target_class, shuffle_questions=body.shuffle_questions,
+                        client_request_id=idempotency_key, created_by=p.staff_id)
         db.add(plan)
         try:
             db.flush()
@@ -600,9 +604,51 @@ def list_tests(provider_id: UUID | None = None, test_type: str | None = Query(de
     if provs is not None:
         stmt = stmt.where(ExamPlan.provider_id.in_(provs or [None]))
     visible = visible_plans(db, p, db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all())
+    rows: list = [(plan.created_at, plan) for plan in visible]
+    if test_type in (None, "GLOBAL") and provider_id is None and unified.is_platform(p, "exam.read"):
+        rows += [(occ.published_at or occ.created_at, (occ, test)) for occ, test in _ungenerated_dates(db, global_test_id)]
+        rows.sort(key=lambda r: r[0], reverse=True)
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
-    chunk = visible[(page - 1) * page_size: page * page_size]
-    return {"items": _summaries(db, chunk, viewer=p), "total": len(visible), "page": page, "page_size": page_size}
+    chunk = [x for _at, x in rows[(page - 1) * page_size: page * page_size]]
+    plans = {s["plan_id"]: s for s in _summaries(db, [x for x in chunk if isinstance(x, ExamPlan)], viewer=p)}
+    dates = _date_summaries(db, [x for x in chunk if not isinstance(x, ExamPlan)])
+    items = [plans[x.plan_id] if isinstance(x, ExamPlan) else dates[x[0].occurrence_id] for x in chunk]
+    return {"items": items, "total": len(rows), "page": page, "page_size": page_size}
+
+
+def _ungenerated_dates(db: Session, global_test_id: UUID | None) -> list[tuple[GlobalTestOccurrence, GlobalTest]]:
+    """Published dates of published Global Tests that have no exam plan yet (a date's plan is made only when its exam is generated
+    at the paper deadline): listed on their own so a date is in Scheduled Tests from publication. A date with any plan is listed by
+    that plan instead, so it never appears twice."""
+    stmt = (select(GlobalTestOccurrence, GlobalTest).join(GlobalTest, GlobalTest.test_id == GlobalTestOccurrence.test_id)
+            .where(GlobalTest.kind == "SCHEDULE", GlobalTest.status == "PUBLISHED", GlobalTestOccurrence.status.in_(("PUBLISHED", "CANCELLED")),
+                   ~select(ExamPlan.plan_id).where(ExamPlan.global_occurrence_id == GlobalTestOccurrence.occurrence_id).exists()))
+    if global_test_id:
+        stmt = stmt.where(GlobalTest.test_id == global_test_id)
+    return list(db.execute(stmt).tuples())
+
+
+def _date_summaries(db: Session, dates: list[tuple[GlobalTestOccurrence, GlobalTest]]) -> dict:
+    """The Scheduled Tests row of an ungenerated Global Test date: the same fields as a plan's (see _summaries), with no exam yet."""
+    subjects: dict = {}
+    for tid, name in db.execute(select(GlobalTestSubject.test_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
+                                .where(GlobalTestSubject.test_id.in_({t.test_id for _o, t in dates} or {None})).order_by(GlobalTestSubject.position)):
+        subjects.setdefault(tid, []).append(name)
+    out = {}
+    for occ, test in dates:
+        state = ("CANCELLED" if occ.status == "CANCELLED" else "GENERATION_FAILED" if occ.generation_failed_at
+                 else "NO_EXAM" if occ.generated_at else "SCHEDULED")
+        marking = {"mode": test.marking_mode, **({"correct": test.marks_correct, "wrong": test.marks_wrong} if test.marking_mode == "UNIFORM" else {})}
+        out[occ.occurrence_id] = {
+            "plan_id": None, "occurrence_id": occ.occurrence_id, "test_type": "GLOBAL", "series_id": None, "global_test_id": test.test_id,
+            "exam_id": None, "exam_version_id": None, "name": test.name, "state": state, "plan_status": None, "exam_status": None,
+            "delivery_status": None, "job_status": None, "error": occ.cancel_reason or occ.generation_error, "unified_global": True,
+            "provider_id": None, "provider_name": "Global Test", "home_branch": None, "start_at": occ.start_at, "end_at": occ.end_at,
+            "duration_minutes": test.duration_minutes, "subjects": subjects.get(test.test_id, []),
+            "audience": {"type": "GLOBAL", "branches": [], "batches": [], "students": 0}, "assigned_students": 0,
+            "question_count": None, "total_marks": None, "marking": marking, "shuffle_questions": False, "submission_deadline": gg.deadline(test, occ),
+            "created_by": occ.published_by or occ.created_by, "created_at": occ.published_at or occ.created_at}
+    return out
 
 
 @router.get("/tests/papers")

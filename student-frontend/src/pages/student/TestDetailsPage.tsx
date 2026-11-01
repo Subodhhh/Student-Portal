@@ -162,12 +162,14 @@ function TestDetailsPage() {
     );
   }
 
-  const isAvailable =
-    test.status === "ACTIVE" &&
-    test.start_at !== null &&
-    test.end_at !== null &&
-    new Date() >= new Date(test.start_at) &&
-    new Date() <= new Date(test.end_at);
+  // the same rules as the Scheduled Tests lists: before the window Upcoming, inside it Available, otherwise Closed
+  const now = new Date();
+  const phase =
+    test.status !== "ACTIVE" || test.start_at === null || test.end_at === null ? "closed"
+      : now < new Date(test.start_at) ? "upcoming"
+        : now > new Date(test.end_at) ? "closed"
+          : "available";
+  const isAvailable = phase === "available";
 
   // a Global Test with paper choice: the student chooses their papers here; the attempt service says when the choice is complete
   const choosesPapers = Boolean(test.sections?.length && test.sections.every((section) => Array.isArray(section.papers)));
@@ -224,14 +226,8 @@ function TestDetailsPage() {
           </p>
         </div>
 
-        <span
-          className={`test-details-status ${
-            isAvailable
-              ? "test-details-status-available"
-              : "test-details-status-upcoming"
-          }`}
-        >
-          {isAvailable ? "Available" : "Upcoming"}
+        <span className={`test-details-status test-details-status-${phase}`}>
+          {{ available: "Available", upcoming: "Upcoming", closed: "Closed" }[phase]}
         </span>
       </div>
 

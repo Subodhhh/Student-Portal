@@ -11,7 +11,7 @@ type Exam = { exam_id: string; name: string; status: string; start_at: string | 
   missing_subjects: { subject: string | null; reason: string; detail: string }[]; papers: { subject_id: string; source_provider_id: string | null; platform_paper?: boolean; paper_version_id: string; question_count: number }[];
   assigned_students: number; assignment_status?: Record<string, number>; delivery_status: string | null;
   unified_global?: boolean; visible_subject_ids?: string[] | null;   // a provider's view of a unified Global Test exam: its own subjects only
-  settings?: { marking?: { mode: string; correct?: number; wrong?: number }; audience_type?: string; global_test_id?: string | null; skipped_duplicates?: number } | null };
+  settings?: { marking?: { mode: string; correct?: number; wrong?: number }; policies?: { shuffle?: string }; audience_type?: string; global_test_id?: string | null; skipped_duplicates?: number } | null };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
 
@@ -92,6 +92,7 @@ export function ExamDetailPage() {
           <dl className="facts">
             <dt>Marking</dt><dd>{e.settings?.marking?.mode === "UNIFORM" ? `+${e.settings.marking.correct} correct, −${e.settings.marking.wrong} wrong, 0 unanswered` : "Each question's own marks, 0 unanswered"}</dd>
             <dt>Timer</dt><dd>One shared timer of {e.duration_minutes} minutes; starting inside the window gives the full duration</dd>
+            <dt>Question order</dt><dd>{e.settings?.policies?.shuffle === "PER_STUDENT" ? "Shuffled: each student has their own order, fixed for their attempt" : "The paper's order"}</dd>
             <dt>Attempts</dt><dd>One attempt per student, resumable; students who never start are marked missed</dd>
             <dt>Results</dt><dd>After evaluation; answers reviewable once the window has closed</dd>
             {e.settings?.global_test_id && <><dt>Source</dt><dd>{e.unified_global ? "Global Test date: each subject is the paper its institute submitted for the student" : "Global Test (platform papers, unchanged)"}</dd></>}

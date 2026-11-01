@@ -13,6 +13,9 @@ import { StudentCount } from "../components/StudentCount";
 const STATE_TEXT: Record<string, string> = {
   PUBLISHED: "Published and delivered", PUBLISHED_DELIVERY_PENDING: "Published, delivery in progress", DELIVERY_FAILED: "Published, delivery failed (retrying)",
   PUBLICATION_FAILED: "Not published (failed)", PUBLISHING: "Publishing", CANCELLED: "Cancelled", NOT_PUBLISHED: "Not published",
+  // a published Global Test date whose exam is generated at the paper deadline
+  SCHEDULED: "Published; the exam is generated at the paper deadline", GENERATION_FAILED: "Published; generation stopped (retry on the date's page)",
+  NO_EXAM: "Generated; no eligible students",
 };
 
 export default function ScheduledTestsPage() {
@@ -39,17 +42,19 @@ export default function ScheduledTestsPage() {
       </Alert>}
       {list.loading && !list.data ? <Spinner /> : (
         <>
-          <DataTable rows={list.data?.items ?? []} rowKey={(t) => t.plan_id}
+          <DataTable rows={list.data?.items ?? []} rowKey={(t) => t.plan_id ?? `occ-${t.occurrence_id}`}
             empty={<EmptyState title="No scheduled tests yet" hint={can("test.create") ? "Create a Daily or Weekly Test to see it here." : undefined} />}
             columns={[
-              { header: "Test", render: (t) => <>{t.exam_id ? <Link to={`/exams/${t.exam_id}`}>{t.name}</Link> : t.name}
+              { header: "Test", render: (t) => <>{t.exam_id ? <Link to={`/exams/${t.exam_id}`}>{t.name}</Link>
+                : t.occurrence_id ? <Link to={`/tests/global/occurrences/${t.occurrence_id}`}>{t.name}</Link> : t.name}
+                {t.submission_deadline && t.state === "SCHEDULED" && <div className="muted small">Papers accepted until {fmt(t.submission_deadline)}</div>}
                 {t.series_id && <div className="muted small"><Link to={`/tests/weekly/${t.series_id}`}>Weekly Test plan</Link></div>}</> },
               { header: "Type", render: (t) => <Badge tone={t.test_type === "GLOBAL" ? "info" : undefined}>{TEST_TYPE_LABEL[t.test_type] ?? t.test_type}</Badge> },
               { header: "State", render: (t) => <span title={t.error ?? undefined}><StatusBadge status={t.state} /> <span className="muted small">{STATE_TEXT[t.state] ?? ""}</span></span> },
               { header: "Window", render: (t) => `${fmt(t.start_at)} – ${fmt(t.end_at)}` },
               { header: "Subjects", render: (t) => t.subjects.join(", ") },
               { header: "Audience", render: (t) => [t.audience.branches.length ? `branches: ${t.audience.branches.join(", ")}` : "", t.audience.batches.length ? `batches: ${t.audience.batches.join(", ")}` : "",
-                t.audience.students ? `${t.audience.students} individual student(s)` : ""].filter(Boolean).join(" · ") || t.audience.type },
+                t.audience.students ? `${t.audience.students} individual student(s)` : ""].filter(Boolean).join(" · ") || (t.audience.type === "GLOBAL" ? "Eligible students of every contributing institute" : t.audience.type) },
               { header: "Assigned", render: (t) => (t.exam_id ? <StudentCount count={t.assigned_students} url={`/api/v1/exams/${t.exam_id}/assignments`} title={`Students assigned to ${t.name}`} context="The students this exam is assigned to that you may see, with their attempt status." /> : t.assigned_students) },
               { header: "Questions / marks", render: (t) => (t.question_count == null ? "—" : `${t.question_count} / ${t.total_marks}`) },
               { header: "Provider / branch", render: (t) => [t.provider_name, t.home_branch].filter(Boolean).join(" · ") },

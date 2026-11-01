@@ -260,6 +260,9 @@ def test_each_public_route_is_served_by_exactly_one_service():
 NEW_ROUTES = {
     ("POST", f"{API}/global-occurrences/{{occurrence_id}}/generation/retry"),     # Super Admin: retry a stopped Global Test date
     ("POST", f"{API}/exams/{{exam_id}}/outbox/requeue"),                          # Super Admin: send a failed delivery again
+    ("GET", f"{API}/exams"),                                                      # Results: every exam in scope, no branch to choose
+    ("GET", f"{API}/paper-versions/{{pv_id}}/pdf"), ("GET", f"{API}/papers/pdf"),  # question paper PDF (one, or a ZIP of a filter)
+    ("GET", f"{API}/paper-versions/{{pv_id}}/answer-key"), ("GET", f"{API}/papers/answer-keys"),   # answer key PDF, separately authorized
     ("PATCH", f"{API}/enrollments/{{enrollment_id}}/academic-profile"),          # Class / Academic Year per enrollment
     ("POST", f"{API}/enrollments/{{enrollment_id}}/password-setup-link"),         # staff-initiated password setup link
     ("POST", f"{API}/paper-versions/{{pv_id}}/revisions"),

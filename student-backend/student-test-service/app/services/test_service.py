@@ -1,8 +1,10 @@
 from datetime import timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+
+from app.models.test import Test
 
 from app.repositories.question_repository import (
     get_questions_by_test,
@@ -190,8 +192,9 @@ def get_test_for_start(
             return None
         paper_ids = set(snap.values())       # only the attempt's papers, never another contribution's questions
 
+    shuffle = bool(db.scalar(select(Test.shuffle_questions).where(Test.test_id == test_id)))
     questions = section_order(get_questions_by_test(db=db, test_id=test_id, paper_ids=paper_ids), test.get("sections"), student_id, test_id,
-                              subject_of=lambda q: q.subject, id_of=lambda q: q.question_id)
+                              subject_of=lambda q: q.subject, id_of=lambda q: q.question_id, shuffle=shuffle)
 
     test["questions"] = [
         {

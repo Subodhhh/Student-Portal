@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,6 +39,14 @@ class Test(Base):
     sections: Mapped[list | None] = mapped_column(
         JSON().with_variant(JSONB(), "postgresql"),     # jsonb: the listings use SELECT DISTINCT (plain json has no equality)
         nullable=True,
+    )
+
+    # Daily/Weekly Test with Shuffle Questions: each student gets their own fixed question order (services/question_order.py).
+    shuffle_questions: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
     )
 
     name: Mapped[str] = mapped_column(

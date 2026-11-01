@@ -13,14 +13,26 @@ const row = (rank: number, id: string, name: string, obtained: number) => ({ ran
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Results", () => {
-  it("lists published exams with a clear purpose and searches them on the server", async () => {
-    const calls = stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["result.read", "exam.read"]), "/api/v1/branches/b1/exams": page([exam]) });
+  it("lists published exams of every provider and branch in scope, without a Working In selector, and searches them on the server", async () => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["result.read", "exam.read"]),
+      "/api/v1/exams": page([{ ...exam, provider_name: "Alpha", branch_name: "Main" }, { ...exam, exam_id: "ex2", name: "National Mock", unified_global: true }]) });
     renderApp("/results");
     expect(await screen.findByText("Daily Physics")).toBeTruthy();
     expect(screen.getByText(/Submitted attempts and evaluated performance/)).toBeTruthy();
-    expect(calls.find((c) => c.path === "/api/v1/branches/b1/exams")?.search.get("status")).toBe("PUBLISHED");   // only exams with results
+    expect(screen.queryByRole("group", { name: "Working in" })).toBeNull();                     // the selector is gone
+    expect(screen.queryByText("Working in")).toBeNull();
+    expect(screen.queryByLabelText("Provider")).toBeNull();
+    expect(screen.queryByLabelText("Branch")).toBeNull();
+    expect(calls.some((c) => c.path.startsWith("/api/v1/branches/"))).toBe(false);              // no branch has to be chosen first
+    expect(calls.find((c) => c.path === "/api/v1/exams")?.search.get("status")).toBe("PUBLISHED");   // only exams with results
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Exam", "Provider / branch", "Available", "Assigned", "Completed", ""]);
+    expect(within(table).getByText("Alpha · Main")).toBeTruthy();
+    expect(within(table).getByText("Global Test")).toBeTruthy();
+    expect(within(table).getAllByRole("link", { name: "View results" })[0].getAttribute("href")).toBe("/results/ex1");
+    expect(within(table).getAllByText("2").length).toBeGreaterThan(0);                          // completed count kept
     fireEvent.change(screen.getByLabelText("Search exams"), { target: { value: "phys" } });
-    await vi.waitFor(() => expect(calls.some((c) => c.search.get("q") === "phys")).toBe(true));
+    await vi.waitFor(() => expect(calls.some((c) => c.path === "/api/v1/exams" && c.search.get("q") === "phys")).toBe(true));
   });
 
   it("shows one exam's results with the subject breakdown, student search and sorting", async () => {

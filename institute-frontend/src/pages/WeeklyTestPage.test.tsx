@@ -63,13 +63,28 @@ describe("Weekly Test", () => {
     expect(within(screen.getAllByRole("table").at(-1)!).getAllByRole("row")).toHaveLength(5);                       // header + 4 dates
     const body = posts(calls, "/api/v1/test-series/preview")[0].body;
     expect(body).toMatchObject({ month: "2030-01", weekdays: [5], start_time: "10:00", timezone: "Asia/Kolkata", window_minutes: 120, duration_minutes: 60,
-      subjects: [{ subject_id: "phy", paper_id: "pp1" }], audience: { provider_id: "p1", branch_ids: ["b1"], batch_ids: ["ba"] } });
+      subjects: [{ subject_id: "phy", paper_id: "pp1" }], audience: { provider_id: "p1", branch_ids: ["b1"], batch_ids: ["ba"] }, shuffle_questions: false });
     fireEvent.click(screen.getByRole("button", { name: "Create Weekly Test" }));
     expect(await screen.findByRole("heading", { level: 2, name: "Saturday Physics" })).toBeTruthy();                // the detail page
     const create = posts(calls, "/api/v1/test-series");
     expect(create).toHaveLength(1);
     expect(create[0].headers["Idempotency-Key"]).toBeTruthy();
   }, 15000);                                                                                // a long form: slower when the whole suite runs
+
+  it("offers Shuffle Questions with exactly Yes and No, sends the choice and shows it on the Weekly Test", async () => {
+    const calls = stubApi(routes({ "/api/v1/test-series/s1": { ...SERIES, shuffle_questions: true, tests: [TEST] } }));
+    await fillForm();
+    const select = screen.getByLabelText("Shuffle Questions") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["No", "Yes"]);
+    expect(select.value).toBe("NO");
+    fireEvent.change(select, { target: { value: "YES" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview dates" }));
+    expect(await screen.findByText(/has no published version yet/)).toBeTruthy();
+    expect(posts(calls, "/api/v1/test-series/preview")[0].body).toMatchObject({ shuffle_questions: true });
+    fireEvent.click(screen.getByRole("button", { name: "Create Weekly Test" }));
+    expect(await screen.findByText("Yes (each student's own fixed order)")).toBeTruthy();                // retrieved on the detail page
+    expect(posts(calls, "/api/v1/test-series")[0].body).toMatchObject({ shuffle_questions: true });
+  }, 15000);
 
   it("does not offer creation while the preview reports a problem", async () => {
     stubApi(routes({ "POST /api/v1/test-series/preview": { ...PREVIEW, ok: false, occurrences: [], warnings: [],

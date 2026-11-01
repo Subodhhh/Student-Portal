@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import NeedBranch from "../components/NeedBranch";
 import { Alert, Button, Card, DataTable, EmptyState, Field, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
@@ -13,37 +12,35 @@ import { StudentCount } from "../components/StudentCount";
 // teaching scope; a provider's view of a unified Global Test: only its own subjects, never the overall score).
 
 type ExamRow = { exam_id: string; name: string; status: string; start_at: string | null; end_at: string | null; assigned_students: number;
-  unified_global?: boolean; assignment_status?: Record<string, number> };
+  unified_global?: boolean; assignment_status?: Record<string, number>; provider_name?: string | null; branch_name?: string | null };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
 
+// Every published exam the viewer may read, across all of their providers and branches: no provider/branch to choose first.
 export function ResultsPage() {
-  return <NeedBranch>{({ branchId }) => <ResultExams branchId={branchId} />}</NeedBranch>;
-}
-
-function ResultExams({ branchId }: { branchId: string }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
-  const list = useApi<Page<ExamRow>>(`/api/v1/branches/${branchId}/exams?status=PUBLISHED&page=${page}&page_size=20${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ""}`);
+  const list = useApi<Page<ExamRow>>(`/api/v1/exams?status=PUBLISHED&page=${page}&page_size=20${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ""}`);
   return (
-    <>
+    <div className="stack">
       <PageHeader subtitle="Submitted attempts and evaluated performance: for each published exam, who submitted, their scores and subject-wise breakdown, and any result corrections. Exams themselves are managed on the Exams page." />
       <div className="toolbar"><Field label="Search exams" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Name" /></div>
       {list.error && <Alert kind="error">{list.error}</Alert>}
       {list.loading && !list.data ? <Spinner /> : (
-        <div className="stack">
+        <>
           <DataTable rows={list.data?.items ?? []} rowKey={(e) => e.exam_id} empty={<EmptyState title={q ? "No exam matches" : "No published exams yet"} />}
             columns={[
               { header: "Exam", render: (e) => <><Link to={`/results/${e.exam_id}`}>{e.name}</Link>{e.unified_global && <div className="muted small">Global Test date</div>}</> },
+              { header: "Provider / branch", render: (e) => (e.unified_global ? "Global Test" : [e.provider_name, e.branch_name].filter(Boolean).join(" · ") || "—") },
               { header: "Available", render: (e) => `${fmt(e.start_at)} → ${fmt(e.end_at)}` },
               { header: "Assigned", render: (e) => <StudentCount count={e.assigned_students} url={`/api/v1/exams/${e.exam_id}/assignments`} title={`Students assigned to ${e.name}`} context="The students this exam is assigned to that you may see, with their attempt status." /> },
               { header: "Completed", render: (e) => e.assignment_status?.COMPLETED ?? 0 },
               { header: "", render: (e) => <Link to={`/results/${e.exam_id}`}>View results</Link> },
             ]} />
           <Pagination page={page} pageSize={20} total={list.data?.total ?? 0} onChange={setPage} />
-        </div>
+        </>
       )}
-    </>
+    </div>
   );
 }
 

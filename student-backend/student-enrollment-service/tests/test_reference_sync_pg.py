@@ -101,3 +101,105 @@ def test_a_bad_row_is_reported_and_never_blocks_the_others(env):
     assert [e["id"] for e in out["errors"]] == [unknown["enrollment_id"]] and out["errors"][0]["reason"] == "constraint"
     assert len(out["applied"]["enrollments"]) == 1 and out["applied"]["providers"] == [p]
     assert "STU_UNKNOWN" not in r.text   # no row values echoed back
+
+
+# ------------------------------------------------------------------ one sync at a time (advisory lock)
+
+H = {"X-Service-Key": KEY}
+
+
+def lock_is_free(engine) -> bool:
+    from app.routes import internal
+    with engine.connect() as c:
+        free = c.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": internal.SYNC_LOCK}).scalar()
+        c.rollback()
+    return free
+
+
+def provider_exists(engine, p) -> bool:
+    with engine.connect() as c:
+        return bool(c.execute(text("SELECT count(*) FROM providers WHERE provider_id = :p"), {"p": p}).scalar())
+
+
+def test_a_sync_while_another_holds_the_lock_answers_409_and_writes_nothing(env):
+    from app.routes import internal
+    client, engine, run, sid = env
+    p, b, bt = ids()
+    body = payload(run, sid, p, b, bt, str(uuid.uuid4()), str(uuid.uuid4()))
+    with engine.connect() as holder:
+        holder.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": internal.SYNC_LOCK})
+        r = client.post("/internal/v1/reference/sync", json=body, headers=H)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "SYNC_BUSY"
+        holder.rollback()
+    assert not provider_exists(engine, p)                                     # nothing half-applied
+    r = client.post("/internal/v1/reference/sync", json=body, headers=H)     # the next attempt goes through
+    assert r.status_code == 200 and r.json()["errors"] == []
+    assert provider_exists(engine, p) and lock_is_free(engine)               # released by the commit
+
+
+def test_two_concurrent_syncs_one_applies_the_other_is_told_busy(env, monkeypatch):
+    import threading
+    import time
+
+    from app.main import app
+    from app.routes import internal
+    _client, engine, run, sid = env
+    p, b, bt = ids()
+    body = payload(run, sid, p, b, bt, str(uuid.uuid4()), str(uuid.uuid4()))
+    holding = threading.Event()
+    real = internal._apply
+
+    def slow(*a, **k):
+        holding.set()
+        time.sleep(0.3)
+        return real(*a, **k)
+
+    monkeypatch.setattr(internal, "_apply", slow)
+    first = {}
+    t = threading.Thread(target=lambda: first.setdefault("r", TestClient(app).post("/internal/v1/reference/sync", json=body, headers=H)))
+    t.start()
+    assert holding.wait(10)
+    second = TestClient(app).post("/internal/v1/reference/sync", json=body, headers=H)
+    t.join(30)
+    assert second.status_code == 409
+    assert first["r"].status_code == 200 and first["r"].json()["errors"] == []
+    with engine.connect() as c:                                               # applied once, nothing duplicated
+        assert c.execute(text("SELECT count(*) FROM enrollments WHERE provider_id = :p"), {"p": p}).scalar() == 1
+        assert c.execute(text("SELECT count(*) FROM enrollment_batches WHERE batch_id = :b"), {"b": bt}).scalar() == 1
+    assert lock_is_free(engine)
+
+
+def test_the_lock_is_released_when_a_sync_fails(env, monkeypatch):
+    from app.main import app
+    from app.routes import internal
+    _client, engine, run, sid = env
+    p, b, bt = ids()
+    body = payload(run, sid, p, b, bt, str(uuid.uuid4()), str(uuid.uuid4()))
+
+    real, calls = internal._apply, []
+
+    def boom(*a, **k):
+        calls.append(1)
+        if len(calls) > 1:                      # the provider row is written first, then the request fails
+            raise RuntimeError("unexpected")
+        return real(*a, **k)
+
+    monkeypatch.setattr(internal, "_apply", boom)
+    r = TestClient(app, raise_server_exceptions=False).post("/internal/v1/reference/sync", json=body, headers=H)
+    assert r.status_code == 500
+    assert lock_is_free(engine) and not provider_exists(engine, p)          # rolled back, lock gone
+
+
+def test_many_unknown_students_never_block_the_valid_rows_of_a_request(env):
+    client, engine, run, sid = env
+    p, b, bt = ids()
+    body = payload(run, sid, p, b, bt, str(uuid.uuid4()), str(uuid.uuid4()))
+    good = body["enrollments"][0]
+    unknown = [dict(good, enrollment_id=str(uuid.uuid4()), student_id=f"GONE{i}", batches=[]) for i in range(20)]
+    body["enrollments"] = unknown[:10] + [good] + unknown[10:]
+    r = client.post("/internal/v1/reference/sync", json=body, headers=H)
+    out = r.json()
+    assert r.status_code == 200
+    assert sorted(e["id"] for e in out["errors"]) == sorted(u["enrollment_id"] for u in unknown)
+    assert out["applied"]["enrollments"] == [good["enrollment_id"]]
+    assert lock_is_free(engine)

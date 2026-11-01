@@ -131,6 +131,11 @@ def _sections(db: Session, test_id):
     return value
 
 
+def _shuffled(db: Session, test_id) -> bool:
+    from sqlalchemy import text
+    return bool(db.execute(text("SELECT shuffle_questions FROM tests WHERE test_id = :t"), {"t": test_id}).scalar())
+
+
 def get_result_details(
     db: Session,
     attempt_id: UUID,
@@ -269,6 +274,9 @@ def get_result_details(
                                 "status": x["status"], "message": x.get("message")} for x in sections]
         question_reviews = section_order(question_reviews, sections, student_id, result["test_id"],
                                          subject_of=lambda q: q["subject"], id_of=lambda q: q["question_id"])
+    elif _shuffled(db, result["test_id"]):          # the review lists the questions in the order this student sat them
+        question_reviews = section_order(question_reviews, None, student_id, result["test_id"],
+                                         subject_of=lambda q: q["subject"], id_of=lambda q: q["question_id"], shuffle=True)
 
     return {
         "result": result,

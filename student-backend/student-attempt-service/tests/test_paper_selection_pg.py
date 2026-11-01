@@ -324,3 +324,19 @@ def test_an_authorized_retake_sits_exactly_the_original_papers(env):
     for att, subject, paper in rows:
         by.setdefault(str(att), {})[subject] = paper
     assert by[a["attempt_id"]] == by[r["attempt_id"]] == {"Physics": PB, "Chemistry": PC2, "Biology": PD}
+
+
+def test_a_start_before_the_window_opens_is_refused_before_any_paper_selection(env, monkeypatch):
+    from app.services import paper_selection
+    e = env
+    with e["engine"].begin() as c:
+        c.execute(text("UPDATE tests SET start_at = now() + interval '1 hour', end_at = now() + interval '3 hours' WHERE test_id = :t"),
+                  {"t": e["tid"]})
+    calls = []
+    monkeypatch.setattr(paper_selection, "fetch_eligibility", lambda test_id, student_id: calls.append(test_id) or SUBJECTS)
+    r = e["c"].post("/attempts/start", json={"test_id": str(e["tid"])})
+    assert r.status_code == 400 and r.json()["detail"] == "This test has not opened yet"
+    assert calls == []                                                   # refused before the paper-selection step
+    assert attempts(e) == [] and snapshot(e) == {}
+    with e["engine"].connect() as c:
+        assert c.execute(text("SELECT count(*) FROM paper_selections WHERE test_id = :t"), {"t": e["tid"]}).scalar() == 0

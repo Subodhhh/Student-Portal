@@ -93,6 +93,8 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
         payload["global_occurrence_id"] = str(plan.global_occurrence_id)
     if operation == "CANCEL":
         return payload
+    if (ev.settings or {}).get("shuffle_questions"):        # absent (paper order) for every other exam, so their payloads are unchanged
+        payload["shuffle_questions"] = True
     # Exam-level marking frozen at generation (exam_versions.settings). PER_QUESTION (the default, and every exam generated before
     # settings existed) keeps each question's own marks; UNIFORM gives every question +correct / -wrong. The Student result service
     # evaluates exactly the marks delivered here, so evaluation always matches the configured scheme.

@@ -7,11 +7,18 @@ database, so this job pushes the current state to the Student enrollment service
 State-based and idempotent: every pass computes a digest of each row and sends only rows whose digest changed since they were
 last accepted (everything once after a restart). Rows the receiver rejects are retried on the next pass and reported in
 `status()`, which the Service health page shows. Batch membership travels with its enrollment as a complete set, so removals
-propagate without tombstones. Safe to run from several processes at once."""
+propagate without tombstones. Safe to run from several processes at once: the receiver applies one sync at a time and answers 409
+to the others.
+
+Small requests with no automatic retry: a request the receiver is still working on is never sent again on top of it (that queued
+duplicate upserts on the same rows). A 409, a timeout or a transport error ends the pass as deferred; rows already accepted stay
+accepted and the next pass sends the rest. Rows the receiver rejected, unchanged since, go last and wait REJECTED_RETRY between
+attempts, so they never hold up valid rows; they stay listed in status() until accepted."""
 import hashlib
 import json
 import logging
 import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -25,12 +32,16 @@ from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBat
 
 log = logging.getLogger("institute.reference_sync")
 
-CHUNK = 200
+CHUNK = 25
+TIMEOUT = 120.0                 # a 25-row request takes ~30 s against a remote database
+REJECTED_RETRY = 1800.0         # seconds between attempts at an unchanged rejected row (a retry round costs the receiver minutes)
 KINDS = ("providers", "branches", "batches", "enrollments")
 SINGULAR = {"providers": "provider", "branches": "branch", "batches": "batch", "enrollments": "enrollment"}
 ID_FIELD = {"providers": "provider_id", "branches": "branch_id", "batches": "batch_id", "enrollments": "enrollment_id"}
 _accepted: dict[tuple[str, str], str] = {}     # (kind, id) -> digest last accepted by the receiver
+_rejected: dict[tuple[str, str], tuple[str, float, dict]] = {}   # (kind, id) -> (digest, when, the receiver's error)
 _lock = threading.Lock()
+_running = threading.Lock()                    # one pass at a time in this process (the loop and sync-now)
 _status: dict = {"last_run": None, "last_success": None, "last_error": None, "rejected": [], "sent": 0}
 _client_override: InternalHttp | None = None   # tests
 
@@ -43,11 +54,12 @@ def set_client(client: InternalHttp | None) -> None:
 def reset_cache() -> None:
     with _lock:
         _accepted.clear()
+        _rejected.clear()
 
 
 def status() -> dict:
     with _lock:
-        return {**_status, "rejected": list(_status["rejected"])[:20], "configured": _configured()}
+        return {**_status, "rejected": [err for _, _, err in _rejected.values()][:20], "configured": _configured()}
 
 
 def _configured() -> bool:
@@ -90,11 +102,40 @@ def _digest(row: dict) -> str:
 def _client() -> InternalHttp:
     if _client_override is not None:
         return _client_override
-    return InternalHttp(settings.student_enrollment_service_url, settings.student_enrollment_service_api_key, timeout=20.0)
+    return InternalHttp(settings.student_enrollment_service_url, settings.student_enrollment_service_api_key, timeout=TIMEOUT, retries=1)
+
+
+def _clock() -> float:
+    return time.monotonic()
 
 
 def run_once(db: Session | None = None, *, full: bool = False) -> dict:
     """Push every changed reference row. Returns counts; never raises for receiver/transport problems (they are reported)."""
+    if not _running.acquire(blocking=False):
+        return {"pending": 0, "sent": 0, "rejected": 0, "skipped": "already_running"}
+    try:
+        return _run(db, full)
+    finally:
+        _running.release()
+
+
+def _pending(rows: dict[str, dict], kind: str, full: bool, now: float) -> list[dict]:
+    """Changed rows, those never rejected first; an unchanged rejected row only once REJECTED_RETRY has passed."""
+    fresh, retry = [], []
+    for rid, row in rows.items():
+        digest = _digest(row)
+        if not full and _accepted.get((kind, rid)) == digest:
+            continue
+        rejected = _rejected.get((kind, rid))
+        if rejected and rejected[0] == digest:
+            if full or now - rejected[1] >= REJECTED_RETRY:
+                retry.append(row)
+        else:
+            fresh.append(row)
+    return fresh + retry
+
+
+def _run(db: Session | None, full: bool) -> dict:
     own = db is None
     db = db or new_session()
     now = datetime.now(timezone.utc).isoformat()
@@ -109,9 +150,11 @@ def run_once(db: Session | None = None, *, full: bool = False) -> dict:
             db.close()
 
     with _lock:
-        pending = {k: [row for rid, row in snap[k].items() if full or _accepted.get((k, rid)) != _digest(row)] for k in KINDS}
+        for key in [k for k in _rejected if k[1] not in snap[k[0]]]:      # gone from the Institute: nothing left to report
+            del _rejected[key]
+        pending = {k: _pending(snap[k], k, full, _clock()) for k in KINDS}
     total = sum(len(v) for v in pending.values())
-    sent, rejected = 0, []
+    sent, rejected = 0, 0
     try:
         client = _client()
         # Parents before children: providers, branches, batches, then enrollments (their membership references batches).
@@ -120,27 +163,36 @@ def run_once(db: Session | None = None, *, full: bool = False) -> dict:
             for i in range(0, len(rows), CHUNK):
                 chunk = rows[i:i + CHUNK]
                 r = client.request("POST", "/reference/sync", json={kind: chunk})
+                if r.status_code == 409:
+                    with _lock:
+                        _status.update(last_run=now, last_error="receiver busy: deferred to the next pass")
+                    log.info("reference sync deferred: the receiver is busy with another sync")
+                    return {"pending": total, "sent": sent, "rejected": rejected, "deferred": "busy"}
                 if r.status_code != 200:
                     raise InternalServiceError(f"receiver answered {r.status_code}")
-                body = r.json()
-                bad = {(e["kind"], e["id"]) for e in body.get("errors", [])}
-                rejected.extend(body.get("errors", []))
+                errors = {(e["kind"], e["id"]): e for e in r.json().get("errors", [])}
                 with _lock:
                     for row in chunk:
                         rid = row[ID_FIELD[kind]]
-                        if (SINGULAR[kind], rid) not in bad:
+                        err = errors.get((SINGULAR[kind], rid))
+                        if err:
+                            _rejected[(kind, rid)] = (_digest(row), _clock(), err)
+                            rejected += 1
+                        else:
                             _accepted[(kind, rid)] = _digest(row)
+                            _rejected.pop((kind, rid), None)
                             sent += 1
         with _lock:
-            _status.update(last_run=now, last_success=now, last_error=None, rejected=rejected, sent=_status["sent"] + sent)
+            _status.update(last_run=now, last_success=now, last_error=None, sent=_status["sent"] + sent)
         if rejected:
-            log.warning("reference sync: %d row(s) rejected by the Student service", len(rejected))
-        return {"pending": total, "sent": sent, "rejected": len(rejected)}
+            log.warning("reference sync: %d row(s) rejected by the Student service", rejected)
+        return {"pending": total, "sent": sent, "rejected": rejected}
     except (InternalServiceError, ValueError, KeyError) as exc:
+        # A timeout lands here too: deferred, never resent within this pass (the receiver may still be applying it).
         with _lock:
             _status.update(last_run=now, last_error=str(exc)[:200])
         log.warning("reference sync failed: %s", exc)
-        return {"pending": total, "sent": sent, "rejected": len(rejected), "error": str(exc)[:200]}
+        return {"pending": total, "sent": sent, "rejected": rejected, "error": str(exc)[:200], "deferred": "error"}
 
 
 _trigger = threading.Event()

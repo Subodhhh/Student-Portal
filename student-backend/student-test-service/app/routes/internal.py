@@ -96,6 +96,7 @@ class ExamIn(BaseModel):
     student_ids: list[str] = Field(default_factory=list, max_length=20000)
     global_occurrence_id: uuid.UUID | None = None      # a unified Global Test exam
     sections: list[SectionIn] | None = Field(default=None, max_length=100)   # unified Global Test: every configured subject, in order
+    shuffle_questions: bool = False      # a Daily/Weekly Test with Shuffle Questions: each student's own fixed order of these questions
     # A Global Test with paper choice (ONE exam per occurrence): each student's frozen eligibility, as audiences of identical cells
     # (audience_id -> its students). Absent for every other exam.
     audiences: list[AudienceIn] | None = None
@@ -165,7 +166,7 @@ def _store(db: Session, body, sections: list | None, student_ids, extra_rows=())
     (model, rows) bulk-inserted in the same transaction. Returns already_published when a concurrent replay won, else None."""
     db.add(test_models.Test(
         test_id=body.exam_version_id, provider_id=body.provider_id, branch_id=body.branch_id, name=body.name,
-        global_occurrence_id=body.global_occurrence_id, sections=sections,
+        global_occurrence_id=body.global_occurrence_id, sections=sections, shuffle_questions=body.shuffle_questions,
         description=body.description, duration_minutes=body.duration_minutes, total_questions=len(body.questions),
         total_marks=sum(q.marks for q in body.questions), start_at=_to_session_naive(db, body.start_at),
         end_at=_to_session_naive(db, body.end_at), status="ACTIVE",
