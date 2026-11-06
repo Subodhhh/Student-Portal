@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import './index.css';
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 export function Button({ variant = "primary", small, busy, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger"; small?: boolean; busy?: boolean }) {
@@ -11,8 +12,12 @@ export function Button({ variant = "primary", small, busy, children, ...rest }: 
   );
 }
 
-export function Card({ children, className = "", hover }: { children: ReactNode; className?: string; hover?: boolean }) {
-  return <section className={`card ${hover ? "hover" : ""} ${className}`}>{children}</section>;
+// export function Card({ children, className = "", hover }: { children: ReactNode; className?: string; hover?: boolean }) {
+//   return <section className={`card ${hover ? "hover" : ""} ${className}`}>{children}</section>;
+// }
+// Inside ui.tsx
+export function Card({ children, className = "", hover, style }: { children: ReactNode; className?: string; hover?: boolean; style?: React.CSSProperties }) {
+  return <section className={`card ${hover ? "hover" : ""} ${className}`} style={style}>{children}</section>;
 }
 
 export function Alert({ kind = "info", children }: { kind?: "error" | "success" | "warn" | "info"; children: ReactNode }) {
@@ -68,10 +73,23 @@ export function PageHeader({ title, subtitle, actions, crumbs }: { title?: strin
   );
 }
 
+// export function StatCard({ label, value, tone, hint, to }: { label: string; value: ReactNode; tone?: "danger" | "warn"; hint?: ReactNode; to?: string }) {
+//   const body = (
+//     <>
+//       <div className="value">{value}</div>
+//       <div className="label">{label}</div>
+//       {hint && <div className="hint">{hint}</div>}
+//     </>
+//   );
+//   const style = tone ? { borderColor: tone === "danger" ? "var(--c-danger)" : "var(--c-warn)" } : undefined;
+//   return to ? <Link className="stat stat-link" style={style} to={to}>{body}</Link> : <div className="stat" style={style}>{body}</div>;
+// }
+
 export function StatCard({ label, value, tone, hint, to }: { label: string; value: ReactNode; tone?: "danger" | "warn"; hint?: ReactNode; to?: string }) {
   const body = (
     <>
-      <div className="value">{value}</div>
+      {/* Add a min-height to the value to prevent jumping */}
+      <div className="value" style={{ minHeight: "2.5rem", display: "flex", alignItems: "center" }}>{value}</div>
       <div className="label">{label}</div>
       {hint && <div className="hint">{hint}</div>}
     </>

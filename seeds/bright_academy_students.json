@@ -1,0 +1,547 @@
+{
+    "items": [
+        {
+            "enrollment_id": "ae7ccff0-0aae-4ad5-99f7-46c8c86d8d36",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU16620",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Ankita Marathe",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "806ec695-f3cf-4f23-b1b4-94f596c270d0",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU78935",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Bhavna Oke",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "4edb043f-08cd-4370-a68d-e9ba8b370b11",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU10582",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Bhavna Marathe",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "c21e1807-26b7-4507-b7ef-53608b243fb8",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU73696",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Avani Deodhar",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "3d32fd5d-3753-4fe8-bf16-787f369d59ac",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU14303",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Alok Oke",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "1e738685-905e-42cb-8638-dca02c3679b5",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU85422",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Gopal Jain",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "dee34ca0-471e-41c7-b8f2-b1d363e39313",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU84607",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Gaurav Dandekar",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "b826bb23-96fc-4492-a496-27a7ef8ced0e",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU33989",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Kalpesh Karve",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "dfe13337-4853-498e-b1d8-c945c5a8fb34",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU56245",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Advait Ranade",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "a7d99876-60f5-4a99-9a14-eee83022e0a0",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU65405",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Lata Pande",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "436bf5f6-cd44-4e4b-8fe4-7e3893b768d4",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU81438",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Avani Bapat",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "89790be2-f31b-4bc4-a748-c363fb4c7035",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU82915",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Balaji Gadgil",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "cc273472-e091-493e-b9d2-b283b818ab84",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU66936",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Akash Borde",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "52d130dd-be4d-449a-b05d-01c5c7db9e5a",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU15418",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Hemant Chitale",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "f8166140-9049-483c-8cc5-f04d27311f31",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU76040",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Jitendra Jain",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "bb5666ea-fb7f-4c82-94c8-70d61fd071f2",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU83030",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Apurva Pande",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "d58e1807-b80a-4017-a5ca-29f99b0fbe83",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU82615",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Hemant Ranade",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "5ddf9fdc-9b21-41cb-bf28-3e4ac5327e12",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU43793",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Anand Tambe",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "fbc6ecda-7c5e-4d9f-a832-19067837aff3",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU60281",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Anup Jagtap",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "b0302f69-c1e3-4713-b088-28189b5acf05",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU21664",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Anup Naik",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "b521914e-6995-4d24-8795-29b8775db52c",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU11359",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Kunal Chavan",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "9dc7ddf0-1816-4234-8add-5ae90e23d728",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU97589",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Aarohi Wagh",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "cffd666d-f019-470c-9369-c9610cff524f",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU35521",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Gopal Naik",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "ed0ec560-52d4-47fb-8128-7ac48aab5411",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU17757",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Aniket Bapat",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "98709b0e-a684-4da1-b892-3c89db8effad",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU33361",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Hemant Kulkarni",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "5cac4a43-ffad-4ead-8361-8b2721e58300",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "7534d123-bcb1-44e1-bea4-16f708ba8bf6",
+            "student_id": "STU87521",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Aniket Tambe",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "b157f9dd-e68c-49ef-b71c-0f04f6e175c5",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "600ce640-fa18-4b50-91f7-0f43ed7571ec",
+            "student_id": "STU31561",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Kunal Naik",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "607994e0-7a1b-48b5-9083-ad806b18fb1e",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "a4039a03-e721-4754-b200-9c6b68931689",
+            "student_id": "STU20485",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Ankita Jagtap",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "e5042e9a-cc03-4da0-9dd4-d99dbfc77ec3",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "05ef80d2-68f2-4b1a-9928-258caeef9ba1",
+            "student_id": "STU63665",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Anup Dandekar",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "12TH",
+                "class_label": "12th",
+                "academic_year": "2027-2028",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        },
+        {
+            "enrollment_id": "739d0781-ce12-4c56-8154-a562aee577ca",
+            "provider_id": "d607f2ec-28d4-44a0-b37c-22612a47e5b9",
+            "branch_id": "aaaebe10-be88-437b-b5fe-1a3cb2a8a2f0",
+            "student_id": "STU56948",
+            "status": "ACTIVE",
+            "enrolled_at": "2026-11-03T12:15:23.643887Z",
+            "student_name": "Lata Gokhale",
+            "batch_ids": [],
+            "batch_subjects": {},
+            "academic": {
+                "class_level": "11TH",
+                "class_label": "11th",
+                "academic_year": "2026-2027",
+                "other_class_description": null,
+                "updated_at": "2026-11-03T12:15:23.643887Z"
+            }
+        }
+    ],
+    "total": 30,
+    "page": 1,
+    "page_size": 30
+}

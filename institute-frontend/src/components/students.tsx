@@ -12,38 +12,81 @@ export type DirEnrollment = {
 type Pair = { key: string; subject: string; provider: string; branch: string; batch: string; chosen: boolean; active: boolean };
 
 /** Which provider teaches the student which subject (the enrollments in the caller's scope only). Compact in the table; details on demand. */
+// export function SubjectProviders({ student }: { student: DirStudent }) {
+//   const [open, setOpen] = useState(false);
+//   const pairs: Pair[] = student.enrollments.flatMap((e) => (e.subjects ?? []).map((x) => ({
+//     key: `${e.enrollment_id}-${x.subject_id}-${x.batch}`, subject: x.subject ?? "Subject", provider: e.provider_name, branch: e.branch_name, batch: x.batch,
+//     chosen: x.chosen, active: e.status === "ACTIVE" })));
+//   const none = student.enrollments.filter((e) => !(e.subjects ?? []).length);
+//   if (!pairs.length && !none.length) return <>—</>;
+//   const providersOf = (subject: string) => new Set(pairs.filter((x) => x.subject === subject && x.active).map((x) => x.provider)).size;
+//   const lines = [...pairs].sort((a, b) => a.subject.localeCompare(b.subject) || Number(b.active) - Number(a.active));
+//   const shown = lines.slice(0, 3);
+//   return (
+//     <div className="subject-providers">
+//       {shown.map((x) => (
+//         <div key={x.key} className={x.active ? undefined : "muted"}>
+//           {x.subject} — {x.provider}{!x.active && " (inactive)"}{x.active && providersOf(x.subject) > 1 && <span className="muted small"> · taught by {providersOf(x.subject)} providers</span>}
+//         </div>
+//       ))}
+//       {none.map((e) => <div key={e.enrollment_id} className="muted small">{e.provider_name} / {e.branch_name}: no subject assigned (not in a batch)</div>)}
+//       {lines.length > 3 && <button type="button" className="link-button small" onClick={() => setOpen(true)}>+{lines.length - 3} more</button>}
+//       {open && (
+//         <Modal title={`Subjects of ${student.name ?? student.student_id}`} onClose={() => setOpen(false)}>
+//           <p className="muted small">From the student's batch memberships in the institutes you manage: the subjects chosen in a batch, or every subject the batch offers.</p>
+//           <DataTable rows={lines} rowKey={(x) => x.key} columns={[
+//             { header: "Subject", render: (x) => x.subject }, { header: "Provider", render: (x) => x.provider },
+//             { header: "Branch / batch", render: (x) => `${x.branch} · ${x.batch}` },
+//             { header: "Mapping", render: (x) => (x.chosen ? "Chosen in the batch" : "All subjects of the batch") },
+//             { header: "Enrollment", render: (x) => <StatusBadge status={x.active ? "ACTIVE" : "INACTIVE"} /> }]} />
+//         </Modal>
+//       )}
+//     </div>
+//   );
+// }
+
 export function SubjectProviders({ student }: { student: DirStudent }) {
   const [open, setOpen] = useState(false);
   const pairs: Pair[] = student.enrollments.flatMap((e) => (e.subjects ?? []).map((x) => ({
     key: `${e.enrollment_id}-${x.subject_id}-${x.batch}`, subject: x.subject ?? "Subject", provider: e.provider_name, branch: e.branch_name, batch: x.batch,
     chosen: x.chosen, active: e.status === "ACTIVE" })));
   const none = student.enrollments.filter((e) => !(e.subjects ?? []).length);
+  
   if (!pairs.length && !none.length) return <>—</>;
+  
   const providersOf = (subject: string) => new Set(pairs.filter((x) => x.subject === subject && x.active).map((x) => x.provider)).size;
   const lines = [...pairs].sort((a, b) => a.subject.localeCompare(b.subject) || Number(b.active) - Number(a.active));
   const shown = lines.slice(0, 3);
+  
   return (
-    <div className="subject-providers">
+    <div className="subject-providers" style={{ display: "flex", flexDirection: "column", gap: "4px", maxWidth: "300px" }}>
       {shown.map((x) => (
-        <div key={x.key} className={x.active ? undefined : "muted"}>
-          {x.subject} — {x.provider}{!x.active && " (inactive)"}{x.active && providersOf(x.subject) > 1 && <span className="muted small"> · taught by {providersOf(x.subject)} providers</span>}
+        <div key={x.key} className={x.active ? undefined : "muted"} style={{ fontSize: "0.85rem" }}>
+          <strong>{x.subject}</strong> — {x.provider}
+          {!x.active && " (inactive)"}
+          {x.active && providersOf(x.subject) > 1 && <span className="muted small"> · taught by {providersOf(x.subject)} providers</span>}
         </div>
       ))}
-      {none.map((e) => <div key={e.enrollment_id} className="muted small">{e.provider_name} / {e.branch_name}: no subject assigned (not in a batch)</div>)}
+      {none.map((e) => <div key={e.enrollment_id} className="muted small" style={{ fontSize: "0.85rem" }}>{e.provider_name} / {e.branch_name}: no subject assigned</div>)}
       {lines.length > 3 && <button type="button" className="link-button small" onClick={() => setOpen(true)}>+{lines.length - 3} more</button>}
+      
       {open && (
         <Modal title={`Subjects of ${student.name ?? student.student_id}`} onClose={() => setOpen(false)}>
-          <p className="muted small">From the student's batch memberships in the institutes you manage: the subjects chosen in a batch, or every subject the batch offers.</p>
+          <p className="muted small">From the student's batch memberships in the institutes you manage.</p>
           <DataTable rows={lines} rowKey={(x) => x.key} columns={[
-            { header: "Subject", render: (x) => x.subject }, { header: "Provider", render: (x) => x.provider },
+            { header: "Subject", render: (x) => x.subject }, 
+            { header: "Provider", render: (x) => x.provider },
             { header: "Branch / batch", render: (x) => `${x.branch} · ${x.batch}` },
             { header: "Mapping", render: (x) => (x.chosen ? "Chosen in the batch" : "All subjects of the batch") },
-            { header: "Enrollment", render: (x) => <StatusBadge status={x.active ? "ACTIVE" : "INACTIVE"} /> }]} />
+            { header: "Enrollment", render: (x) => <StatusBadge status={x.active ? "ACTIVE" : "INACTIVE"} /> }
+          ]} />
         </Modal>
       )}
     </div>
   );
 }
+
+
 export type DirStudent = { student_id: string; name: string | null; account_status: string | null; enrollments: DirEnrollment[] };
 type Detail = {
   profile: { student_id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; account_status: string | null };
@@ -89,7 +132,25 @@ export function StudentDirectory({ providerId, branchId, providers }: { provider
               { header: "Student ID", render: (s) => s.student_id },
               { header: "Name", render: (s) => s.name ?? <span className="muted">unavailable</span> },
               { header: "Enrollments (subject — provider)", render: (s) => <SubjectProviders student={s} /> },
-              { header: "Batches", render: (s) => [...new Set(s.enrollments.flatMap((e) => e.batches))].join(", ") || "—" },
+              // { header: "Batches", render: (s) => [...new Set(s.enrollments.flatMap((e) => e.batches))].join(", ") || "—" },
+              { header: "Batches", render: (s) => {
+                  const allBatches = s.enrollments.flatMap((e) => e.batches.map((b) => ({ batch: b, provider: e.provider_name, branch: e.branch_name })));
+                  const uniqueBatches = Array.from(new Map(allBatches.map((item) => [item.batch, item])).values());
+                  
+                  if (uniqueBatches.length === 0) return "—";
+                  
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {uniqueBatches.map((b, i) => (
+                        <div key={i} style={{ fontSize: "0.85rem" }}>
+                          <strong>{b.batch}</strong>
+                          <span className="muted small"> ({b.provider})</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                } 
+              },
               { header: "Status", render: (s) => <StatusBadge status={s.enrollments.some((e) => e.status === "ACTIVE") ? "ACTIVE" : "INACTIVE"} /> },
               { header: "Actions", render: (s) => <Button small variant="secondary" onClick={() => setOpen(s.student_id)} aria-label={`View ${s.student_id}`}>View</Button> },
             ]} />

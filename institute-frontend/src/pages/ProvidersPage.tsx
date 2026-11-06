@@ -1,68 +1,141 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { isGlobalRole } from "../auth/roles";
+// import { isGlobalRole } from "../auth/roles";
 import { useScope, type Branch, type Provider } from "../auth/ScopeContext";
 import { ProviderSubjects, TeachingAssignments } from "../components/academics";
 import { AuditTable } from "../components/audit";
 import { StudentDirectory } from "../components/students";
+import { isValidEmail, isValidPhone } from "../auth/validation";
 import { StaffList } from "../components/staff";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SearchField, SelectField, Spinner, StatCard, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { Batches } from "./BatchesPage";
-import { StudentCount } from "../components/StudentCount";
+// import { StudentCount } from "../components/StudentCount";
+import "./index.css";
 
 type ProviderRow = Provider & { phone?: string | null; address?: string | null; created_at?: string; branch_count?: number; staff_count?: number; student_count?: number };
 const day = (s?: string) => (s ? new Date(s).toLocaleDateString() : "—");
 
 
 /** The provider's student count covers every branch: only the platform and that provider's admins (who may list all of them) get the list. */
-function useProviderLevel() {
-  const { me, can } = useAuth();
-  return (providerId: string) => can("enrollment.manage") && (isGlobalRole(me?.primary_role)
-    || (me?.assignments ?? []).some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId));
-}
+// function useProviderLevel() {
+//   const { me, can } = useAuth();
+//   return (providerId: string) => can("enrollment.manage") && (isGlobalRole(me?.primary_role)
+//     || (me?.assignments ?? []).some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId));
+// }
+
+// export function ProvidersPage() {
+//   const { can } = useAuth();
+//   const providerLevel = useProviderLevel();
+//   const [page, setPage] = useState(1);
+//   const [q, setQ] = useState("");
+//   const [status, setStatus] = useState("");
+//   const [creating, setCreating] = useState(false);
+//   const scope = useScope();
+//   const list = useApi<Page<ProviderRow>>(`/api/v1/providers?page=${page}&page_size=20${q ? `&q=${encodeURIComponent(q)}` : ""}${status ? `&status=${status}` : ""}`);
+//   return (
+//     <>
+//       <PageHeader subtitle="Coaching institutes on the platform, their branches and the staff who work there." />
+//       <div className="stack">
+//         <div className="toolbar">
+//           <SearchField label="Search by name" value={q} onChange={(v) => { setQ(v); setPage(1); }} />
+//           <SelectField label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+//             <option value="">All</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option>
+//           </SelectField>
+//           {can("provider.create") && <Button onClick={() => setCreating(true)}>New provider</Button>}
+//         </div>
+//         {list.error && <Alert kind="error">{list.error}</Alert>}
+//         {list.loading && !list.data ? <Spinner /> : (
+//           <>
+//             <DataTable rows={list.data?.items ?? []} rowKey={(p) => p.provider_id}
+//               empty={<EmptyState title={q || status ? "No providers match these filters" : "No providers yet"} />}
+//               columns={[
+//                 { header: "Name", render: (p) => <><Link to={`/providers/${p.provider_id}`}>{p.name}</Link><div className="muted small">ID {p.provider_id.slice(0, 8)}</div></> },
+//                 { header: "Email", render: (p) => p.email },
+//                 { header: "Branches", render: (p) => p.branch_count ?? "—" },
+//                 { header: "Staff", render: (p) => p.staff_count ?? "—" },
+//                 { header: "Students", render: (p) => (providerLevel(p.provider_id) && p.student_count ? <StudentCount count={p.student_count}
+//                   url={`/api/v1/students?provider_id=${p.provider_id}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
+//                   context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? "—") },
+//                 { header: "Created", render: (p) => day(p.created_at) },
+//                 { header: "Status", render: (p) => <StatusBadge status={p.status} /> },
+//                 { header: "Actions", render: (p) => <Link className="btn secondary small" to={`/providers/${p.provider_id}`} aria-label={`Open ${p.name}`}>Open</Link> },
+//               ]} />
+//             <Pagination page={page} pageSize={20} total={list.data?.total ?? 0} onChange={setPage} />
+//           </>
+//         )}
+//       </div>
+//       {creating && <CreateProvider onClose={() => setCreating(false)} onDone={() => { setCreating(false); list.reload(); scope.reload(); }} />}
+//     </>
+//   );
+// }
 
 export function ProvidersPage() {
   const { can } = useAuth();
-  const providerLevel = useProviderLevel();
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [creating, setCreating] = useState(false);
   const scope = useScope();
   const list = useApi<Page<ProviderRow>>(`/api/v1/providers?page=${page}&page_size=20${q ? `&q=${encodeURIComponent(q)}` : ""}${status ? `&status=${status}` : ""}`);
+  
   return (
     <>
       <PageHeader subtitle="Coaching institutes on the platform, their branches and the staff who work there." />
       <div className="stack">
-        <div className="toolbar">
-          <SearchField label="Search by name" value={q} onChange={(v) => { setQ(v); setPage(1); }} />
-          <SelectField label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-            <option value="">All</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option>
-          </SelectField>
-          {can("provider.create") && <Button onClick={() => setCreating(true)}>New provider</Button>}
-        </div>
+        
+        {/* TOOLBAR */}
+        <Card>
+          <div className="toolbar" style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}>
+            <SearchField label="Search by name" value={q} onChange={(v) => { setQ(v); setPage(1); }} />
+            <SelectField label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+              <option value="">All</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </SelectField>
+            <div style={{ flex: 1 }} /> 
+            {can("provider.create") && <Button onClick={() => setCreating(true)}>+ New Provider</Button>}
+          </div>
+        </Card>
+
         {list.error && <Alert kind="error">{list.error}</Alert>}
+        
         {list.loading && !list.data ? <Spinner /> : (
-          <>
-            <DataTable rows={list.data?.items ?? []} rowKey={(p) => p.provider_id}
+          <Card className="p-0 overflow-hidden">
+            <DataTable 
+              rows={list.data?.items ?? []} 
+              rowKey={(p) => p.provider_id}
               empty={<EmptyState title={q || status ? "No providers match these filters" : "No providers yet"} />}
               columns={[
-                { header: "Name", render: (p) => <><Link to={`/providers/${p.provider_id}`}>{p.name}</Link><div className="muted small">ID {p.provider_id.slice(0, 8)}</div></> },
-                { header: "Email", render: (p) => p.email },
-                { header: "Branches", render: (p) => p.branch_count ?? "—" },
-                { header: "Staff", render: (p) => p.staff_count ?? "—" },
-                { header: "Students", render: (p) => (providerLevel(p.provider_id) && p.student_count ? <StudentCount count={p.student_count}
-                  url={`/api/v1/students?provider_id=${p.provider_id}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
-                  context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? "—") },
-                { header: "Created", render: (p) => day(p.created_at) },
+                { 
+                  header: "Provider Name", 
+                  render: (p) => (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                      <Link to={`/providers/${p.provider_id}`} style={{ fontWeight: 600, color: "var(--c-primary)", textDecoration: "none" }}>
+                        {p.name}
+                      </Link>
+                      {/* Retained ID with clean, muted styling */}
+                      <span style={{ fontSize: "0.75rem", color: "var(--c-muted)", fontFamily: "monospace" }}>
+                        ID: {p.provider_id.slice(0, 8)}
+                      </span>
+                    </div>
+                  ) 
+                },
+                { header: "Email", render: (p) => <span className="muted">{p.email}</span> },
+                { header: "Branches", render: (p) => <div style={{ textAlign: "center" }}>{p.branch_count ?? 0}</div> },
+                { header: "Staff", render: (p) => <div style={{ textAlign: "center" }}>{p.staff_count ?? 0}</div> },
+                { header: "Students", render: (p) => <div style={{ textAlign: "center" }}>{p.student_count ?? 0}</div> },
+                { header: "Created", render: (p) => <span className="muted small">{day(p.created_at)}</span> },
                 { header: "Status", render: (p) => <StatusBadge status={p.status} /> },
-                { header: "Actions", render: (p) => <Link className="btn secondary small" to={`/providers/${p.provider_id}`} aria-label={`Open ${p.name}`}>Open</Link> },
-              ]} />
-            <Pagination page={page} pageSize={20} total={list.data?.total ?? 0} onChange={setPage} />
-          </>
+                { header: "", render: (p) => <Link className="btn secondary small" to={`/providers/${p.provider_id}`}>Open</Link> },
+              ]} 
+            />
+            <div style={{ padding: "1rem", borderTop: "1px solid var(--c-border)" }}>
+              <Pagination page={page} pageSize={20} total={list.data?.total ?? 0} onChange={setPage} />
+            </div>
+          </Card>
         )}
       </div>
       {creating && <CreateProvider onClose={() => setCreating(false)} onDone={() => { setCreating(false); list.reload(); scope.reload(); }} />}
@@ -70,19 +143,102 @@ export function ProvidersPage() {
   );
 }
 
+// function CreateProvider({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+//   const [f, setF] = useState({ name: "", email: "", phone: "", address: "" });
+//   const { busy, error, run } = useAction();
+//   return (
+//     <Modal title="New provider" onClose={onClose}>
+//       {error && <Alert kind="error">{error}</Alert>}
+//       <Field label="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
+//       <Field label="Contact email" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required />
+//       <Field label="Phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+//       <TextAreaField label="Address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+//       <div className="modal-actions">
+//         <Button variant="secondary" onClick={onClose}>Cancel</Button>
+//         <Button busy={busy} disabled={f.name.length < 2 || !f.email} onClick={() => void run(async () => { await api("/api/v1/providers", { method: "POST", body: { name: f.name, email: f.email, phone: f.phone || null, address: f.address || null } }); onDone(); })}>Create</Button>
+//       </div>
+//     </Modal>
+//   );
+// }
+
 function CreateProvider({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [f, setF] = useState({ name: "", email: "", phone: "", address: "" });
+  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
   const { busy, error, run } = useAction();
+
+  const errors = {
+    name: f.name.length < 2 ? "Name must be at least 2 characters." : "",
+    email: !f.email ? "Email is required." : !isValidEmail(f.email) ? "Please enter a valid email address." : "",
+    phone: !isValidPhone(f.phone) ? "Phone must be a 10-digit number." : "",
+  };
+
+  const isValid = !errors.name && !errors.email && !errors.phone;
+
+  const handleBlur = (field: string) => {
+    setTouched({ ...touched, [field]: true });
+  };
+
   return (
     <Modal title="New provider" onClose={onClose}>
       {error && <Alert kind="error">{error}</Alert>}
-      <Field label="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
-      <Field label="Contact email" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required />
-      <Field label="Phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
-      <TextAreaField label="Address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+      
+      {/* Name Field */}
+      <Field 
+        label="Name" 
+        value={f.name} 
+        onChange={(e) => setF({ ...f, name: e.target.value })} 
+        onBlur={() => handleBlur("name")}
+        required 
+      />
+      {touched.name && errors.name && <div className="field-error">{errors.name}</div>}
+
+      {/* Email Field */}
+      <Field 
+        label="Contact email" 
+        type="email" 
+        value={f.email} 
+        onChange={(e) => setF({ ...f, email: e.target.value })} 
+        onBlur={() => handleBlur("email")}
+        required 
+      />
+      {touched.email && errors.email && <div className="field-error">{errors.email}</div>}
+
+      {/* Phone Field */}
+      <Field 
+        label="Phone (optional)" 
+        value={f.phone} 
+        onChange={(e) => setF({ ...f, phone: e.target.value })} 
+        onBlur={() => handleBlur("phone")}
+      />
+      {touched.phone && errors.phone && <div className="field-error">{errors.phone}</div>}
+
+      {/* Address Field */}
+      <TextAreaField 
+        label="Address (optional)" 
+        value={f.address} 
+        onChange={(e) => setF({ ...f, address: e.target.value })} 
+      />
+
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button busy={busy} disabled={f.name.length < 2 || !f.email} onClick={() => void run(async () => { await api("/api/v1/providers", { method: "POST", body: { name: f.name, email: f.email, phone: f.phone || null, address: f.address || null } }); onDone(); })}>Create</Button>
+        <Button 
+          busy={busy} 
+          disabled={!isValid}
+          onClick={() => void run(async () => { 
+            await api("/api/v1/providers", { 
+              method: "POST", 
+              body: { 
+                name: f.name, 
+                email: f.email, 
+                phone: f.phone || null, 
+                address: f.address || null 
+              } 
+            }); 
+            onDone(); 
+          })}
+        >
+          Create
+        </Button>
       </div>
     </Modal>
   );
@@ -112,10 +268,72 @@ const useTab = (fallback: string) => {
   return [params.get("tab") ?? fallback, (id: string) => setParams({ tab: id }, { replace: true })] as const;
 };
 
+// export function ProviderDetailPage() {
+//   const { providerId = "" } = useParams();
+//   const { can } = useAuth();
+//   const providerLevel = useProviderLevel();
+//   const scope = useScope();
+//   const prov = useApi<ProviderRow>(`/api/v1/providers/${providerId}`);
+//   const [tab, setTab] = useTab("overview");
+//   const [change, setChange] = useState<StatusChange | null>(null);
+//   if (prov.loading && !prov.data) return <Spinner />;
+//   if (prov.error || !prov.data) return <Alert kind="error">{prov.error || "Provider not found."}</Alert>;
+//   const p = prov.data;
+//   return (
+//     <>
+//       <PageHeader crumbs={[<Link key="list" to="/providers">Providers & Branches</Link>, p.name]} title={p.name}
+//         subtitle={[p.email, p.phone].filter(Boolean).join(" · ")}
+//         actions={<>
+//           <StatusBadge status={p.status} />
+//           {can("provider.deactivate") && <Button variant={p.status === "ACTIVE" ? "danger" : "secondary"} small onClick={() => setChange({ kind: "provider", id: p.provider_id, name: p.name, active: p.status === "ACTIVE" })}>{p.status === "ACTIVE" ? "Deactivate" : "Activate"}</Button>}
+//         </>} />
+//       <Tabs active={tab} onChange={setTab} tabs={[
+//         { id: "overview", label: "Overview" },
+//         { id: "branches", label: "Branches" },
+//         ...(can("staff.read") ? [{ id: "staff", label: "Staff" }] : []),
+//         ...(can("enrollment.manage") ? [{ id: "students", label: "Students" }] : []),
+//         { id: "subjects", label: "Offered subjects" },
+//         ...(can("audit.read") ? [{ id: "activity", label: "Activity" }] : []),
+//       ]} />
+//       {tab === "overview" && (
+//         <div className="stack">
+//           <div className="grid stats">
+//             <StatCard label="Branches" value={p.branch_count ?? 0} />
+//             <StatCard label="Staff with an active role" value={p.staff_count ?? 0} />
+//             <StatCard label="Enrolled students" value={providerLevel(providerId) ? <StudentCount count={p.student_count ?? 0}
+//               url={`/api/v1/students?provider_id=${providerId}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
+//               context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? 0} />
+//           </div>
+//           <Card>
+//             <h2>Contact</h2>
+//             <dl className="facts">
+//               <dt>Email</dt><dd>{p.email}</dd>
+//               <dt>Phone</dt><dd>{p.phone || "—"}</dd>
+//               <dt>Address</dt><dd>{p.address || "—"}</dd>
+//               <dt>On the platform since</dt><dd>{day(p.created_at)}</dd>
+//               <dt>Provider ID</dt><dd><code>{p.provider_id}</code></dd>
+//             </dl>
+//           </Card>
+//         </div>
+//       )}
+//       {tab === "branches" && <ProviderBranches providerId={providerId} onChange={setChange} />}
+//       {tab === "students" && can("enrollment.manage") && <StudentDirectory key={providerId} providerId={providerId} />}
+//       {tab === "activity" && can("audit.read") && <AuditTable key={providerId} filters={{ provider_id: providerId }} showProvider={false} emptyTitle="No recorded activity for this provider" />}
+//       {tab === "staff" && can("staff.read") && (
+//         <>
+//           <p className="muted small">Provider Admins, Branch Admins and Teachers with an active role at {p.name}.</p>
+//           <StaffList key={providerId} providerId={providerId} roleFilter />
+//         </>
+//       )}
+//       {tab === "subjects" && <ProviderSubjects providerId={providerId} />}
+//       {change && <StatusConfirm change={change} onClose={() => setChange(null)} onDone={() => { setChange(null); prov.reload(); scope.reload(); }} />}
+//     </>
+//   );
+// }
+
 export function ProviderDetailPage() {
   const { providerId = "" } = useParams();
   const { can } = useAuth();
-  const providerLevel = useProviderLevel();
   const scope = useScope();
   const prov = useApi<ProviderRow>(`/api/v1/providers/${providerId}`);
   const [tab, setTab] = useTab("overview");
@@ -144,19 +362,35 @@ export function ProviderDetailPage() {
           <div className="grid stats">
             <StatCard label="Branches" value={p.branch_count ?? 0} />
             <StatCard label="Staff with an active role" value={p.staff_count ?? 0} />
-            <StatCard label="Enrolled students" value={providerLevel(providerId) ? <StudentCount count={p.student_count ?? 0}
-              url={`/api/v1/students?provider_id=${providerId}&status=ACTIVE`} title={`Students enrolled with ${p.name}`}
-              context="Students with an active enrollment at this provider (any branch)." /> : p.student_count ?? 0} />
+            {/* Removed the StudentCount popup for a clean number display */}
+            <StatCard label="Enrolled students" value={p.student_count ?? 0} />
           </div>
+          
           <Card>
-            <h2>Contact</h2>
-            <dl className="facts">
-              <dt>Email</dt><dd>{p.email}</dd>
-              <dt>Phone</dt><dd>{p.phone || "—"}</dd>
-              <dt>Address</dt><dd>{p.address || "—"}</dd>
-              <dt>On the platform since</dt><dd>{day(p.created_at)}</dd>
-              <dt>Provider ID</dt><dd><code>{p.provider_id}</code></dd>
-            </dl>
+            <h2 style={{ marginBottom: "1.5rem" }}>Contact Information</h2>
+            
+            {/* Modern Grid Layout for Details */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "var(--c-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "0.25rem" }}>Email Address</div>
+                <div style={{ fontSize: "1rem", fontWeight: 500 }}>{p.email}</div>
+              </div>
+              
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "var(--c-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "0.25rem" }}>Phone Number</div>
+                <div style={{ fontSize: "1rem", fontWeight: 500 }}>{p.phone || "—"}</div>
+              </div>
+              
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "var(--c-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "0.25rem" }}>On the platform since</div>
+                <div style={{ fontSize: "1rem", fontWeight: 500 }}>{day(p.created_at)}</div>
+              </div>
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--c-border)", paddingTop: "1rem" }}>
+              <div style={{ fontSize: "0.85rem", color: "var(--c-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "0.25rem" }}>Registered Address</div>
+              <div style={{ fontSize: "1rem", lineHeight: 1.5 }}>{p.address || "No address provided."}</div>
+            </div>
           </Card>
         </div>
       )}

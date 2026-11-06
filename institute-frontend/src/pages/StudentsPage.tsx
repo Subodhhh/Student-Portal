@@ -5,6 +5,7 @@ import { useScope } from "../auth/ScopeContext";
 import { AcademicFields } from "../components/classLevels";
 import { type Academic, type AcademicForm, EMPTY_ACADEMIC, academicBody, academicErrors, academicText, classLabel, toForm } from "../services/classLevels";
 import NeedBranch from "../components/NeedBranch";
+import { isValidEmail, isValidPhone } from "../auth/validation";
 import { StudentDirectory } from "../components/students";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
@@ -115,6 +116,13 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
   const search = useAction();
   const submit = useAction();
   const suggestion = batchDefaults(batches.filter((b) => batchIds.includes(b.batch_id)));
+
+  // --- validation feedback (Bug 1 fix): explain why buttons are disabled ---
+  const searchInputEntered = email.length > 0 || phone.length > 0;
+  const searchInputValid = isValidEmail(email) || isValidPhone(phone);
+  const newStudentEmailInvalid = nf.email.length > 0 && !isValidEmail(nf.email);
+  const newStudentPhoneInvalid = nf.phone.length > 0 && !isValidPhone(nf.phone);
+
   const toggle = (id: string) => {
     const next = batchIds.includes(id) ? batchIds.filter((x) => x !== id) : [...batchIds, id];
     setBatchIds(next);
@@ -129,7 +137,16 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
     try {
       const batch_subjects = batchIds.filter((b) => chosen[b]).map((b) => ({ batch_id: b, subject_ids: chosen[b] }));
       const academic = academicBody(ac);
-      const body = mode === "search" ? { student_id: picked, batch_ids: batchIds, batch_subjects, academic } : { new_student: { ...nf, phone: nf.phone || null }, confirm_distinct_person: confirmDistinct, batch_ids: batchIds, batch_subjects, academic };
+      const body = mode === "search"
+        ? { student_id: picked, batch_ids: batchIds, batch_subjects, academic }
+        : {
+            // Bug 2 fix: trim phone as well, and only send it when it is a full valid number
+            new_student: { ...nf, email: nf.email.trim(), phone: nf.phone.trim() || null },
+            confirm_distinct_person: confirmDistinct,
+            batch_ids: batchIds,
+            batch_subjects,
+            academic,
+          };
       await api(`/api/v1/branches/${branchId}/enrollments`, { method: "POST", body });
       onDone();
     } catch (e) {
@@ -143,9 +160,27 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
       {mode === "search" ? (
         <>
           <p className="muted small">Search the global registry first so nobody gets a second Student ID.</p>
-          <div className="grid cols-2"><Field label="Email" value={email} onChange={(e) => setEmail(e.target.value)} /><Field label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+          <div className="grid cols-2">
+            <Field label="Email" value={email} onChange={(e) => setEmail(e.target.value)}
+              error={email.length > 0 && !isValidEmail(email) ? "Enter a valid email" : undefined} />
+            <Field label="Phone" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              error={phone.length > 0 && !isValidPhone(phone) ? "Phone must be exactly 10 digits" : undefined} />
+          </div>
           {search.error && <Alert kind="error">{search.error}</Alert>}
-          <Button variant="secondary" busy={search.busy} disabled={!email && !phone} onClick={() => void search.run(async () => { const r = await api<{ matches: { student_id: string; name: string }[] }>("/api/v1/students/lookup", { method: "POST", body: { branch_id: branchId, email: email || null, phone: phone || null } }); setMatches(r.matches); setPicked(r.matches[0]?.student_id ?? ""); })}>Search</Button>
+          <Button variant="secondary" busy={search.busy} disabled={!searchInputValid}
+            onClick={() => void search.run(async () => {
+              // Bug 3 fix: trim email before sending
+              const r = await api<{ matches: { student_id: string; name: string }[] }>("/api/v1/students/lookup", {
+                method: "POST",
+                body: { branch_id: branchId, email: email.trim() || null, phone: phone.trim() || null },
+              });
+              setMatches(r.matches); setPicked(r.matches[0]?.student_id ?? "");
+            })}>Search</Button>
+          {searchInputEntered && !searchInputValid && (
+            <p className="muted small" style={{ marginTop: "var(--space-2)" }}>
+              Enter a valid email or a 10-digit phone number to search.
+            </p>
+          )}
           {matches && (matches.length === 0 ? <Alert kind="info">No match. Use “New student”.</Alert> : (
             <div role="radiogroup" aria-label="Matches" style={{ margin: "var(--space-3) 0" }}>
               {matches.map((m) => <label key={m.student_id} className="row"><input type="radio" name="m" checked={picked === m.student_id} onChange={() => setPicked(m.student_id)} />{m.student_id} — {m.name}</label>)}
@@ -155,8 +190,10 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
       ) : (
         <>
           <div className="grid cols-2"><Field label="First name" value={nf.first_name} onChange={(e) => setNf({ ...nf, first_name: e.target.value })} /><Field label="Last name" value={nf.last_name} onChange={(e) => setNf({ ...nf, last_name: e.target.value })} /></div>
-          <Field label="Email" type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })} />
-          <Field label="Phone" value={nf.phone} onChange={(e) => setNf({ ...nf, phone: e.target.value })} />
+          <Field label="Email" type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })}
+            error={newStudentEmailInvalid ? "Enter a valid email" : undefined} />
+          <Field label="Phone" value={nf.phone} onChange={(e) => setNf({ ...nf, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+            error={newStudentPhoneInvalid ? "Phone must be exactly 10 digits" : undefined} />
           {conflict && <Alert kind="warn">{conflict}<label className="row"><input type="checkbox" checked={confirmDistinct} onChange={(e) => setConfirmDistinct(e.target.checked)} /> This is a different person</label></Alert>}
         </>
       )}
@@ -175,7 +212,8 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
       <AcademicFields value={ac} required showErrors={showErrors} onChange={(v) => { setAc(v); setAcTouched(true); }} />
       {submit.error && <Alert kind="error">{submit.error}</Alert>}
       <div style={{ height: "var(--space-3)" }} />
-      <Button busy={submit.busy} onClick={() => void doEnroll()} disabled={mode === "search" ? !picked : !(nf.first_name && nf.last_name && nf.email)}>Enroll</Button>
+      <Button busy={submit.busy} onClick={() => void doEnroll()}
+        disabled={mode === "search" ? !picked : !(nf.first_name && nf.last_name && isValidEmail(nf.email) && (!nf.phone || isValidPhone(nf.phone)))}>Enroll</Button>
     </Modal>
   );
 }
