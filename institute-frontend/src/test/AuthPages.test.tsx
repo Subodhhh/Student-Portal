@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../auth/AuthContext";
-import { LoginPage, MfaPage } from "./AuthPages";
+import { LoginPage, MfaPage } from "../pages/AuthPages";
 
 const ME = { staff_id: "s1", staff_code: "STF000001", full_name: "Ada Admin", email: "a@x.io", primary_role: "ADMIN", assignments: [], permissions: [], csrf_token: "csrf-1" };
 

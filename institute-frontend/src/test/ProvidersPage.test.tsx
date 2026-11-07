@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { me, page, stubApi } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { me, page, stubApi } from "./stubApi";
 
 const ALPHA = { provider_id: "p1", name: "Alpha Institute", status: "ACTIVE", email: "a@x.io" };
 const MAIN = { branch_id: "b1", provider_id: "p1", name: "Main", city: "Pune", status: "ACTIVE" };

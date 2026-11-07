@@ -86,10 +86,40 @@ function PlatformDashboard({ d }: { d: Platform & Dash }) {
   const published = d.papers_by_status?.PUBLISHED ?? 0;
   const attention = n(ops.failed_deliveries) + n(ops.failed_generation_jobs) + n(ops.failed_student_notifications) + n(ops.unfinished_corrections);
 
+  // Extracted the name for cleaner JSX
+  const firstName = me?.full_name.split(" ")[0];
+
   return (
     <>
-      <PageHeader subtitle={`Welcome, ${me?.full_name.split(" ")[0]}. Live platform overview.`} />
-      <div className="stack">
+      {/* UI FIX: Upgraded PageHeader subtitle to match AccountPage style */}
+      <PageHeader 
+        subtitle={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 500, color: "var(--c-text)" }}>
+              Welcome, {firstName}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ 
+              background: "var(--c-bg-muted, #f3f4f6)", 
+              color: "var(--c-text-muted)", 
+              padding: "2px 8px", 
+              borderRadius: "6px", 
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.5px"
+            }}>
+              Platform Admin
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ fontSize: "0.9rem", color: "var(--c-text-muted)" }}>
+              Live platform overview
+            </span>
+          </div>
+        } 
+      />
+      
+      {/* UI FIX: Added marginTop to separate header from content */}
+      <div className="stack" style={{ marginTop: "1.5rem" }}>
         {attention > 0 && (
           <Alert kind="warn">
             <strong>Needs attention:</strong>{" "}
@@ -221,11 +251,40 @@ function StatusCounts({ counts, empty }: { counts?: Record<string, number>; empt
 function RoleDashboard({ data }: { data: Dash }) {
   const { me, can } = useAuth();
   const role = data.role as keyof typeof ROLE_LABEL;
+  const firstName = me?.full_name.split(" ")[0];
+
   return (
     <>
-      <PageHeader subtitle={`Welcome, ${me?.full_name.split(" ")[0]} · ${ROLE_LABEL[role]} · live data`} />
+      {/* UI FIX: Upgraded PageHeader subtitle to match AccountPage style */}
+      <PageHeader 
+        subtitle={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 500, color: "var(--c-text)" }}>
+              Welcome, {firstName}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ 
+              background: "var(--c-bg-muted, #f3f4f6)", 
+              color: "var(--c-text-muted)", 
+              padding: "2px 8px", 
+              borderRadius: "6px", 
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.5px"
+            }}>
+              {ROLE_LABEL[role]}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ fontSize: "0.9rem", color: "var(--c-text-muted)", display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#10b981" }}></span>
+              Live data
+            </span>
+          </div>
+        } 
+      />
 
-      <div className="stack">
+      {/* UI FIX: Added marginTop to separate header from content */}
+      <div className="stack" style={{ marginTop: "1.5rem" }}>
         <div className="grid stats">
           {data.branches !== undefined && <StatCard label="Active branches" value={n(data.branches)} />}
           {data.teachers !== undefined && <StatCard label="Teachers" value={n(data.teachers)} />}

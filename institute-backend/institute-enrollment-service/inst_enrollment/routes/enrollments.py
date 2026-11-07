@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.orm import Session
-
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
@@ -47,6 +46,20 @@ class NewStudent(Strict):
     last_name: str = Field(min_length=1, max_length=100)
     email: EmailStr
     phone: str | None = Field(default=None, max_length=20)
+
+class BulkCSVRow(Strict):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=20)
+    date_of_birth: str | None = None  # YYYY-MM-DD
+    class_level: str = Field(max_length=20)
+    academic_year: str = Field(max_length=20)
+    institute_name: str
+    batch_name: str | None = None
+
+class BulkEnrollIn(Strict):
+    students: list[BulkCSVRow]
 
 
 class BatchSubjectsIn(Strict):
@@ -705,3 +718,114 @@ def approve_transfer(transfer_id: UUID, body: DecisionIn, p: Principal = Depends
 @router.post("/transfers/{transfer_id}/reject", response_model=TransferOut)
 def reject_transfer(transfer_id: UUID, body: DecisionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     return _decide(db, p, transfer_id, False, body.note)
+
+@router.post("/enrollments/bulk-upload", status_code=200)
+def bulk_enroll_from_csv(
+    body: BulkEnrollIn,
+    p: Principal = Depends(get_principal),
+    db: Session = Depends(get_db),
+    sc: StudentClient = Depends(get_student_client)
+):
+    results = {"success": 0, "failed": 0, "errors": []}
+
+    for row in body.students:
+        try:
+            # 1. CLEAN THE INPUTS (Remove spaces, force lowercase for comparison)
+            clean_institute = row.institute_name.strip().lower()
+            clean_batch = row.batch_name.strip().lower() if row.batch_name else None
+            clean_email = row.email.strip().lower()
+
+            # 2. Resolve Institute (Provider) using func.trim and func.lower
+            provider = db.scalar(select(Provider).where(
+                func.trim(func.lower(Provider.name)) == clean_institute
+            ))
+            if not provider:
+                raise ValueError(f"Institute '{row.institute_name}' not found.")
+
+            # 3. Resolve Branch and Batch
+            batch = None
+            branch_id = None
+            
+            if clean_batch:
+                # Find the batch within this provider's branches
+                batch = db.scalar(
+                    select(Batch)
+                    .join(Branch, Branch.branch_id == Batch.branch_id)
+                    .where(
+                        Branch.provider_id == provider.provider_id,
+                        func.trim(func.lower(Batch.name)) == clean_batch
+                    )
+                )
+                if not batch:
+                    raise ValueError(f"Batch '{row.batch_name}' not found in {provider.name}.")
+                branch_id = batch.branch_id
+            else:
+                # Fallback to the first branch if no batch is specified
+                branch = db.scalar(select(Branch).where(Branch.provider_id == provider.provider_id))
+                if not branch:
+                    raise ValueError(f"No branches found for institute '{provider.name}'.")
+                branch_id = branch.branch_id
+
+            # Security check for this specific branch
+            p.require(db, "enrollment.manage", provider_id=provider.provider_id, branch_id=branch_id)
+
+            # 4. Find or Create Student via the Student Microservice (StudentClient)
+            email_hits = _students(sc, sc.search, email=clean_email)
+            if email_hits:
+                student = email_hits[0]
+            else:
+                key = hashlib.sha256(f"{provider.provider_id}:{clean_email}".encode()).hexdigest()
+                student = _students(sc, sc.create, 
+                                    first_name=row.first_name.strip(), 
+                                    last_name=row.last_name.strip(), 
+                                    email=clean_email, 
+                                    phone=row.phone.strip() if row.phone else None, 
+                                    idempotency_key=key)
+
+            # 5. Check for duplicate enrollment
+            dup = db.scalar(select(Enrollment).where(
+                Enrollment.student_id == student.student_id,
+                Enrollment.branch_id == branch_id, 
+                Enrollment.status == "ACTIVE"
+            ))
+            if dup:
+                raise ValueError(f"Student {clean_email} is already enrolled in this branch.")
+
+            # 6. Create Enrollment
+            e = Enrollment(
+                enrollment_id=str(uuid4()), 
+                provider_id=provider.provider_id, 
+                branch_id=branch_id,
+                student_id=student.student_id, 
+                status="ACTIVE"
+            )
+            db.add(e)
+            db.flush() # Flush to get the enrollment_id
+
+            # 7. Add Batch (if specified)
+            if batch:
+                db.add(EnrollmentBatch(enrollment_id=e.enrollment_id, batch_id=batch.batch_id))
+                _event(db, e, "BATCH_ADDED", p.staff_id, batch_id=batch.batch_id)
+
+            # 8. Set Academic Profile
+            _set_profile(db, e, row.class_level, row.academic_year, None, p.staff_id)
+            
+            # 9. Log Event and Audit
+            _event(db, e, "ENROLLED", p.staff_id)
+            audit.record(db, "enrollment.bulk_create", "SUCCESS", actor=p.staff_id, target_type="enrollment", 
+                         target_id=e.enrollment_id, provider_id=provider.provider_id, branch_id=branch_id, ip=p.ip)
+
+            db.commit()
+            results["success"] += 1
+
+        except StudentServiceError as exc:
+            db.rollback()
+            results["failed"] += 1
+            results["errors"].append(f"{row.email}: Student Service error - {str(exc)}")
+        except Exception as exc:
+            db.rollback()
+            results["failed"] += 1
+            results["errors"].append(f"{row.email}: {str(exc)}")
+
+    request_sync()
+    return results

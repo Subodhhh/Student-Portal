@@ -6,7 +6,7 @@ class InstituteIdentityGetLoad(HttpUser):
 
     def on_start(self):
         # 1. YOUR FRESH SESSION COOKIE
-        self.client.cookies.set("__Host-inst_sid", "XI1LKFDlNIjasvfN25bG3OaCoii3mdBOInvlmjyuMaw")
+        self.client.cookies.set("__Host-inst_sid", "08Hr9UX310pHJiKwy2epKqpkUaukSEwnVzZ9xSBnSgg")
         
         # 2. Headers (Origin is required for CORS/CSRF checks)
         self.headers = {

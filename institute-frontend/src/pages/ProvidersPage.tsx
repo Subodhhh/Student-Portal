@@ -13,7 +13,7 @@ import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { Batches } from "./BatchesPage";
 // import { StudentCount } from "../components/StudentCount";
-import "./index.css";
+import "../styles/index.css";
 
 type ProviderRow = Provider & { phone?: string | null; address?: string | null; created_at?: string; branch_count?: number; staff_count?: number; student_count?: number };
 const day = (s?: string) => (s ? new Date(s).toLocaleDateString() : "—");

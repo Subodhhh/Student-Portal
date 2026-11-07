@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import './index.css';
+import '../styles/ui.css';
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 export function Button({ variant = "primary", small, busy, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger"; small?: boolean; busy?: boolean }) {
@@ -53,7 +53,7 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
 
 /** Intro row under the shared header (which already shows the page title as the only <h1>): an optional entity title for
  * detail pages (h2), a one-line description and the page's actions. */
-export function PageHeader({ title, subtitle, actions, crumbs }: { title?: string; subtitle?: string; actions?: ReactNode; crumbs?: ReactNode[] }) {
+export function PageHeader({ title, subtitle, actions, crumbs }: { title?: string; subtitle?: ReactNode; actions?: ReactNode; crumbs?: ReactNode[] }) {
   if (!title && !subtitle && !actions && !crumbs) return null;
   return (
     <div className="page-intro">

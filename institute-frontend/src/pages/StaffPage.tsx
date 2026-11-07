@@ -6,7 +6,7 @@ import { StaffList } from "../components/staff";
 import { Alert, PageHeader } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import type { Page } from "../services/api";
-import "./index.css";
+import "../styles/index.css";
 
 /** Role Management: one card per role category, each with its live account count. */
 export default function RoleManagementPage() {

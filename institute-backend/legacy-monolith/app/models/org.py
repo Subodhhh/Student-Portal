@@ -74,7 +74,7 @@ class Batch(Base):
     __tablename__ = "batches"
 
     batch_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False, index = True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)
@@ -98,9 +98,9 @@ class Enrollment(Base):
     __tablename__ = "enrollments"
 
     enrollment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False)
-    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False)
-    student_id: Mapped[str] = mapped_column(ForeignKey("students.student_id"), nullable=False)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.branch_id"), nullable=False, index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.student_id"), nullable=False, index=True)
     enrolled_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
     status: Mapped[str] = mapped_column(
         Enum(*ACTIVE_STATES, name="enrollment_status", create_type=False), nullable=False, default="ACTIVE"
@@ -113,7 +113,7 @@ class EnrollmentBatch(Base):
     __tablename__ = "enrollment_batches"
 
     enrollment_batch_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    enrollment_id: Mapped[str] = mapped_column(ForeignKey("enrollments.enrollment_id"), nullable=False)
-    batch_id: Mapped[UUID] = mapped_column(ForeignKey("batches.batch_id"), nullable=False)
+    enrollment_id: Mapped[str] = mapped_column(ForeignKey("enrollments.enrollment_id"), nullable=False, index=True)
+    batch_id: Mapped[UUID] = mapped_column(ForeignKey("batches.batch_id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)

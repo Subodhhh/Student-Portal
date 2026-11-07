@@ -100,7 +100,12 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
 }
 
 function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string; batches: Batch[]; onClose: () => void; onDone: () => void }) {
-  const [mode, setMode] = useState<"search" | "new">("search");
+  const [mode, setMode] = useState<"search" | "new" | "csv">("search");
+  
+  // CSV specific state
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvResult, setCsvResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
+
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [matches, setMatches] = useState<{ student_id: string; name: string }[] | null>(null);
@@ -110,14 +115,13 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
   const [batchIds, setBatchIds] = useState<string[]>([]);
   const [chosen, setChosen] = useState<Record<string, string[] | null>>({});
   const [ac, setAc] = useState<AcademicForm>(EMPTY_ACADEMIC);
-  const [acTouched, setAcTouched] = useState(false);       // staff changed Class/Year themselves: batch defaults no longer prefill
+  const [acTouched, setAcTouched] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [conflict, setConflict] = useState("");
   const search = useAction();
   const submit = useAction();
   const suggestion = batchDefaults(batches.filter((b) => batchIds.includes(b.batch_id)));
 
-  // --- validation feedback (Bug 1 fix): explain why buttons are disabled ---
   const searchInputEntered = email.length > 0 || phone.length > 0;
   const searchInputValid = isValidEmail(email) || isValidPhone(phone);
   const newStudentEmailInvalid = nf.email.length > 0 && !isValidEmail(nf.email);
@@ -126,13 +130,49 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
   const toggle = (id: string) => {
     const next = batchIds.includes(id) ? batchIds.filter((x) => x !== id) : [...batchIds, id];
     setBatchIds(next);
-    if (!acTouched) {     // prefill from the selected batches' defaults until staff edit Class/Year; conflicting defaults prefill nothing
+    if (!acTouched) {
       const s = batchDefaults(batches.filter((b) => next.includes(b.batch_id)));
       setAc(s.kind === "one" ? s.form : EMPTY_ACADEMIC);
     }
   };
+
   const doEnroll = () => submit.run(async () => {
     setConflict("");
+    setCsvResult(null);
+
+    // --- BULK CSV UPLOAD LOGIC ---
+    if (mode === "csv") {
+      if (!csvFile) return;
+
+      const text = await csvFile.text();
+      const rows = text.split("\n").filter(r => r.trim() !== "");
+      const headers = rows[0].split(",").map(h => h.trim());
+      
+      const students = rows.slice(1).map(row => {
+        const values = row.split(",").map(v => v.trim());
+        // const obj: any = {};
+        const obj: Record<string, string | null> = {};
+        headers.forEach((h, i) => obj[h] = values[i] || null);
+        return obj;
+      });
+
+      try {
+        const res = await api<{ success: number; failed: number; errors: string[] }>(`/api/v1/enrollments/bulk-upload`, {
+          method: "POST",
+          body: { students }
+        });
+        
+        setCsvResult(res);
+        if (res.failed === 0) {
+          onDone();
+        }
+      } catch {
+        setConflict("Bulk upload failed entirely. Check server logs.");
+      }
+      return;
+    }
+    // -----------------------------
+
     if (Object.keys(academicErrors(ac, true)).length) { setShowErrors(true); return; }
     try {
       const batch_subjects = batchIds.filter((b) => chosen[b]).map((b) => ({ batch_id: b, subject_ids: chosen[b] }));
@@ -140,7 +180,6 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
       const body = mode === "search"
         ? { student_id: picked, batch_ids: batchIds, batch_subjects, academic }
         : {
-            // Bug 2 fix: trim phone as well, and only send it when it is a full valid number
             new_student: { ...nf, email: nf.email.trim(), phone: nf.phone.trim() || null },
             confirm_distinct_person: confirmDistinct,
             batch_ids: batchIds,
@@ -154,10 +193,16 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
       throw e;
     }
   });
+
   return (
     <Modal title="Enroll a student" onClose={onClose}>
-      <div className="tabs"><button aria-selected={mode === "search"} onClick={() => setMode("search")}>Existing student</button><button aria-selected={mode === "new"} onClick={() => setMode("new")}>New student</button></div>
-      {mode === "search" ? (
+      <div className="tabs">
+        <button aria-selected={mode === "search"} onClick={() => setMode("search")}>Existing student</button>
+        <button aria-selected={mode === "new"} onClick={() => setMode("new")}>New student</button>
+        <button aria-selected={mode === "csv"} onClick={() => setMode("csv")}>Bulk CSV Upload</button>
+      </div>
+
+      {mode === "search" && (
         <>
           <p className="muted small">Search the global registry first so nobody gets a second Student ID.</p>
           <div className="grid cols-2">
@@ -169,7 +214,6 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
           {search.error && <Alert kind="error">{search.error}</Alert>}
           <Button variant="secondary" busy={search.busy} disabled={!searchInputValid}
             onClick={() => void search.run(async () => {
-              // Bug 3 fix: trim email before sending
               const r = await api<{ matches: { student_id: string; name: string }[] }>("/api/v1/students/lookup", {
                 method: "POST",
                 body: { branch_id: branchId, email: email.trim() || null, phone: phone.trim() || null },
@@ -187,7 +231,9 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
             </div>
           ))}
         </>
-      ) : (
+      )}
+
+      {mode === "new" && (
         <>
           <div className="grid cols-2"><Field label="First name" value={nf.first_name} onChange={(e) => setNf({ ...nf, first_name: e.target.value })} /><Field label="Last name" value={nf.last_name} onChange={(e) => setNf({ ...nf, last_name: e.target.value })} /></div>
           <Field label="Email" type="email" value={nf.email} onChange={(e) => setNf({ ...nf, email: e.target.value })}
@@ -197,23 +243,66 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
           {conflict && <Alert kind="warn">{conflict}<label className="row"><input type="checkbox" checked={confirmDistinct} onChange={(e) => setConfirmDistinct(e.target.checked)} /> This is a different person</label></Alert>}
         </>
       )}
-      <h3 style={{ marginTop: "var(--space-4)" }}>Batches</h3>
-      {batches.filter((b) => b.status === "ACTIVE").map((b) => (
-        <div key={b.batch_id}>
-          <label className="row"><input type="checkbox" checked={batchIds.includes(b.batch_id)} onChange={() => toggle(b.batch_id)} />{b.name}</label>
-          {batchIds.includes(b.batch_id) && <SubjectPicker batch={b} value={chosen[b.batch_id] ?? null} onChange={(v) => setChosen((c) => ({ ...c, [b.batch_id]: v }))} />}
+
+      {mode === "csv" && (
+        <div className="stack">
+          <p className="muted small">
+            Upload a CSV with columns: <br/>
+            <code>first_name, last_name, email, phone, date_of_birth, class_level, academic_year, institute_name, batch_name</code>
+          </p>
+          <Field 
+            label="CSV File" 
+            type="file" 
+            accept=".csv" 
+            onChange={(e) => setCsvFile(e.target.files?.[0] || null)} 
+          />
+          
+          {csvResult && (
+            <Alert kind={csvResult.failed > 0 ? "warn" : "success"}>
+              <strong>{csvResult.success} students enrolled successfully.</strong>
+              {csvResult.failed > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <p>{csvResult.failed} failed:</p>
+                  <ul style={{ maxHeight: 100, overflowY: 'auto', paddingLeft: 20 }}>
+                    {csvResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+                  </ul>
+                </div>
+              )}
+            </Alert>
+          )}
         </div>
-      ))}
-      <h3 style={{ marginTop: "var(--space-4)" }}>Class and academic year</h3>
-      {suggestion.kind === "conflict" && !acTouched && (
-        <Alert kind="warn">The selected batches suggest different classes ({suggestion.labels.join("; ")}). Choose this student's class and academic year.</Alert>
       )}
-      {suggestion.kind === "one" && !acTouched && <p className="muted small">Prefilled from the batch defaults ({suggestion.labels[0]}). Change them if this student differs.</p>}
-      <AcademicFields value={ac} required showErrors={showErrors} onChange={(v) => { setAc(v); setAcTouched(true); }} />
+
+      {/* Only show Batches and Academic fields if NOT in CSV mode */}
+      {mode !== "csv" && (
+        <>
+          <h3 style={{ marginTop: "var(--space-4)" }}>Batches</h3>
+          {batches.filter((b) => b.status === "ACTIVE").map((b) => (
+            <div key={b.batch_id}>
+              <label className="row"><input type="checkbox" checked={batchIds.includes(b.batch_id)} onChange={() => toggle(b.batch_id)} />{b.name}</label>
+              {batchIds.includes(b.batch_id) && <SubjectPicker batch={b} value={chosen[b.batch_id] ?? null} onChange={(v) => setChosen((c) => ({ ...c, [b.batch_id]: v }))} />}
+            </div>
+          ))}
+          <h3 style={{ marginTop: "var(--space-4)" }}>Class and academic year</h3>
+          {suggestion.kind === "conflict" && !acTouched && (
+            <Alert kind="warn">The selected batches suggest different classes ({suggestion.labels.join("; ")}). Choose this student's class and academic year.</Alert>
+          )}
+          {suggestion.kind === "one" && !acTouched && <p className="muted small">Prefilled from the batch defaults ({suggestion.labels[0]}). Change them if this student differs.</p>}
+          <AcademicFields value={ac} required showErrors={showErrors} onChange={(v) => { setAc(v); setAcTouched(true); }} />
+        </>
+      )}
+
       {submit.error && <Alert kind="error">{submit.error}</Alert>}
       <div style={{ height: "var(--space-3)" }} />
+      
       <Button busy={submit.busy} onClick={() => void doEnroll()}
-        disabled={mode === "search" ? !picked : !(nf.first_name && nf.last_name && isValidEmail(nf.email) && (!nf.phone || isValidPhone(nf.phone)))}>Enroll</Button>
+        disabled={
+          mode === "search" ? !picked : 
+          mode === "csv" ? !csvFile : 
+          !(nf.first_name && nf.last_name && isValidEmail(nf.email) && (!nf.phone || isValidPhone(nf.phone)))
+        }>
+        {mode === "csv" ? "Upload CSV" : "Enroll"}
+      </Button>
     </Modal>
   );
 }
@@ -233,8 +322,6 @@ function TransferDialog({ enrollment, providerId, currentBranch, onClose, onDone
   );
 }
 
-/** Batch membership and enrollment status of one student in this branch. Every change is a separate audited API call; the
- * history is kept server-side (enrollment_events), and the Student Portal sees the change after the next reference sync. */
 function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment: Enrollment; batches: Batch[]; onClose: () => void; onChanged: () => void }) {
   const [current, setCurrent] = useState<Enrollment>(enrollment);
   const [reason, setReason] = useState("");
@@ -265,7 +352,7 @@ function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment:
     setSaved("");
     if (Object.keys(academicErrors(acForm, true)).length) { setAcErrors(true); return; }
     const out = await api<Academic>(`/api/v1/enrollments/${current.enrollment_id}/academic-profile`, { method: "PATCH", body: academicBody(acForm) });
-    setCurrent((c) => ({ ...c, academic: out }));      // batches and subject selections are untouched
+    setCurrent((c) => ({ ...c, academic: out }));
     setAcForm(toForm(out));
     setAcErrors(false);
     setSaved("Class and academic year saved.");
@@ -322,8 +409,6 @@ function ManageDialog({ enrollment, batches, onClose, onChanged }: { enrollment:
   );
 }
 
-/** The subjects a student takes in one batch: every subject the batch offers (null, the default) or only the ticked ones. Exams of
- * this batch reach the student only if they take all of the exam's subjects. At least one subject stays ticked. */
 function SubjectPicker({ batch, value, disabled, onChange }: { batch: Batch; value: string[] | null; disabled?: boolean; onChange: (v: string[] | null) => void }) {
   const offered = useApi<Subject[]>(`/api/v1/batches/${batch.batch_id}/subjects`);
   if (offered.loading || offered.error) return null;
@@ -346,7 +431,6 @@ function SubjectPicker({ batch, value, disabled, onChange }: { batch: Batch; val
 
 type Suggestion = { kind: "none" } | { kind: "one"; form: AcademicForm; labels: string[] } | { kind: "conflict"; labels: string[] };
 
-/** What the selected batches suggest for Class / Academic Year: nothing, one consistent default, or conflicting defaults (never resolved silently). */
 function batchDefaults(selected: Batch[]): Suggestion {
   const withDefaults = selected.filter((b) => b.default_class_level || b.default_academic_year);
   const key = (b: Batch) => `${b.default_class_level ?? ""}|${b.default_other_description ?? ""}|${b.default_academic_year ?? ""}`;

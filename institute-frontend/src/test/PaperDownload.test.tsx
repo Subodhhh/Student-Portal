@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { me, page, stubApi } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { me, page, stubApi } from "./stubApi";
 
 const PERMS = ["paper.read", "question.read", "paper.create", "paper.approve", "paper.publish"];
 const version = { paper_version_id: "pv1", paper_id: "pp", version_no: 1, status: "PUBLISHED", question_count: 1, total_marks: "4.00", created_at: "2026-10-01T00:00:00Z" };

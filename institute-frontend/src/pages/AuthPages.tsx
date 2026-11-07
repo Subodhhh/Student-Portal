@@ -171,6 +171,8 @@ export function MfaPage() {
   const resend = useAction();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const digits = useMemo(() => otp.padEnd(6, " ").slice(0, 6).split(""), [otp]);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
@@ -181,8 +183,6 @@ export function MfaPage() {
 
   if (me) return <Navigate to="/" replace />;
   if (!challengeId) return <Navigate to="/login" replace />;
-
-  const digits = useMemo(() => otp.padEnd(6, " ").slice(0, 6).split(""), [otp]);
 
   return (
     <AuthLayout title="Verify it's you" icon={ICONS.mail}>

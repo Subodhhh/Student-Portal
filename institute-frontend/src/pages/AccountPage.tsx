@@ -115,12 +115,38 @@ export default function AccountPage() {
 
   return (
     <>
+      {/* 
+        IMPROVED PAGE HEADER
+        Using a custom flex layout for the subtitle to make it clean and scannable.
+      */}
       <PageHeader
         title="My account"
-        subtitle={`${me.full_name} · ${me.staff_code} · ${me.email}`}
+        subtitle={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 500, color: "var(--c-text)" }}>
+              {me.full_name}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ 
+              background: "var(--c-bg-muted, #f3f4f6)", 
+              color: "var(--c-text-muted)", 
+              padding: "2px 8px", 
+              borderRadius: "6px", 
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.5px"
+            }}>
+              {me.staff_code}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ fontSize: "0.9rem", color: "var(--c-text-muted)" }}>
+              {me.email}
+            </span>
+          </div>
+        }
       />
 
-      <div className="grid cols-2">
+      <div className="grid cols-2" style={{ marginTop: "1.5rem" }}>
         {/* ----- Roles ----- */}
         <Card>
           <div className="card-section-title">
@@ -142,11 +168,19 @@ export default function AccountPage() {
               },
               {
                 header: "Provider",
-                render: (a) => a.provider_id?.slice(0, 8) ?? "All",
+                render: (a) => a.provider_id ? (
+                  <code style={{ fontSize: '0.8rem', color: 'var(--c-text-muted)' }}>
+                    {a.provider_id.slice(0, 8)}
+                  </code>
+                ) : <span className="muted">All</span>,
               },
               {
                 header: "Branch",
-                render: (a) => a.branch_id?.slice(0, 8) ?? "All",
+                render: (a) => a.branch_id ? (
+                  <code style={{ fontSize: '0.8rem', color: 'var(--c-text-muted)' }}>
+                    {a.branch_id.slice(0, 8)}
+                  </code>
+                ) : <span className="muted">All</span>,
               },
             ]}
           />

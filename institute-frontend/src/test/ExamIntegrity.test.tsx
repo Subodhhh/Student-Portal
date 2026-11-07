@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stubApi } from "../test/stubApi";
-import { IntegrityCard } from "./ExamIntegrity";
+import { stubApi } from "./stubApi";
+import { IntegrityCard } from "../pages/ExamIntegrity";
 
 const A1 = "11111111-1111-4111-8111-111111111111";
 const row = (over: Record<string, unknown> = {}) => ({ student_id: "STU000101", name: "Asha K", attempt_id: A1, status: "AUTO_SUBMITTED",
