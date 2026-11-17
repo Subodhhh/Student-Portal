@@ -53,7 +53,7 @@ def assign_teaching(body: TeachingIn, p: Principal = Depends(get_principal), db:
         raise api_error(422, "SUBJECT_NOT_ENABLED", "Subject is not enabled for this provider.")
     if body.batch_id:
         batch = db.get(Batch, body.batch_id)
-        if not batch or batch.branch_id != branch.branch_id:
+        if not batch or batch.branch_id != branch.branch_id or batch.status != "ACTIVE":
             raise api_error(422, "INVALID_BATCH", "Batch does not belong to this branch.")
     row = db.scalar(select(TeacherSubjectAssignment).where(
         TeacherSubjectAssignment.staff_id == body.staff_id, TeacherSubjectAssignment.branch_id == body.branch_id,

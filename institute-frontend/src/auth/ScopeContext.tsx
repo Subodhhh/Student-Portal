@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { useApi } from "../hooks/useApi";
-import type { Page } from "../services/api";
+import { useReference } from "../hooks/useApi";
+import { api, type Page } from "../services/api";
+import { loadReference, scopeHintKey } from "../services/referenceCache";
 import { useAuth } from "./AuthContext";
 
 export type Provider = { provider_id: string; name: string; status: string; email: string };
@@ -29,7 +30,7 @@ function read(): { p: string; b: string } {
 export function ScopeProvider({ children }: { children: ReactNode }) {
   const { me } = useAuth();
   const [choice, setChoice] = useState(read);
-  const providersQ = useApi<Page<Provider>>(me ? "/api/v1/providers?page_size=100" : null);
+  const providersQ = useReference<Page<Provider>>(me ? "/api/v1/providers?page_size=100" : null);
   const providers: Provider[] = providersQ.data?.items ?? EMPTY;
   // Until the lists arrive, the saved choice (or the user's own provider/branch) is used so branches and page data load in parallel
   // with the lists instead of after them; once a list arrives the selection is validated and, if stale, falls back to the first
@@ -40,12 +41,28 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     ? (providers.some((p) => p.provider_id === choice.p) ? choice.p : (providers[0]?.provider_id ?? ""))
     : (me ? guessP : "");
 
-  const branchesQ = useApi<Page<Branch>>(providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null);
+  const branchesQ = useReference<Page<Branch>>(providerId ? branchesPath(providerId) : null);
   const branches: Branch[] = branchesQ.data?.items ?? EMPTY;
   const guessB = choice.b || (assigned?.provider_id === providerId ? assigned?.branch_id ?? "" : "");
   const branchId = branchesQ.data
     ? (branches.some((b) => b.branch_id === choice.b) ? choice.b : (branches[0]?.branch_id ?? ""))
     : (providerId && providerId === guessP ? guessB : "");
+
+  // Start-up without any guess (no saved choice in this tab, no provider of one's own: the platform roles): the selection will be
+  // the first provider of the list, which is fetched first. Its branch list is requested at once, in parallel, for the provider that
+  // was first last time (a hint, never a selection: if the list now starts with another provider, the hint only cost one request).
+  const hintKey = me ? scopeHintKey(me.staff_id) : "";
+  useEffect(() => {
+    if (!hintKey || guessP) return;
+    let hinted = "";
+    try { hinted = localStorage.getItem(hintKey) ?? ""; } catch { /* storage may be unavailable */ }
+    if (hinted) loadReference(branchesPath(hinted), (path) => api(path)).catch(() => undefined);
+  }, [hintKey, guessP]);
+  const first = providers[0]?.provider_id ?? "";
+  useEffect(() => {
+    if (!hintKey || !first) return;
+    try { localStorage.setItem(hintKey, first); } catch { /* storage may be unavailable */ }
+  }, [hintKey, first]);
 
   useEffect(() => {
     if (!providersQ.data || !branchesQ.data) return;                // only a validated selection is remembered
@@ -63,6 +80,8 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   };
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
+
+const branchesPath = (providerId: string) => `/api/v1/providers/${providerId}/branches?page_size=100`;
 
 export function useScope(): ScopeState {
   const ctx = useContext(ScopeContext);

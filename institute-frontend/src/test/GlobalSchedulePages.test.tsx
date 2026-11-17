@@ -39,6 +39,28 @@ describe("Global Tests for the platform", () => {
     expect(posts(calls, "/api/v1/global-tests")[0].body).not.toHaveProperty("sections");
   });
 
+  it("asks a test's dates together with the test, and a failure to load them stays in the dates section", async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-tests/gt1": () => pending,
+      "/api/v1/tests": page([]), "/api/v1/global-tests/gt1/occurrences": fail(500, { code: "ERROR", message: "Dates unavailable." }) });
+    renderApp("/tests/global/gt1");
+    await waitFor(() => expect(calls.some((c) => c.path === "/api/v1/global-tests/gt1/occurrences")).toBe(true));   // before the test answered
+    release(test_({ status: "PUBLISHED" }));
+    expect(await screen.findByText("Dates unavailable.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "2. Schedule" })).toBeTruthy();                                // the page itself is intact
+    expect(calls.filter((c) => c.path === "/api/v1/global-tests/gt1/occurrences")).toHaveLength(1);           // the section reuses the request
+  });
+
+  it("never shows the dates' 404 on a test that has no dates (an older platform-papers test)", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/tests": page([]),
+      "/api/v1/global-tests/gt1": test_({ kind: "SECTIONS", status: "PUBLISHED", sections: [] }), "/api/v1/global-test-contributions": page([]),
+      "/api/v1/global-tests/gt1/occurrences": fail(404, { code: "NOT_FOUND", message: "Global test not found." }) });
+    renderApp("/tests/global/gt1");
+    expect(await screen.findByRole("heading", { level: 2, name: "National Mock" })).toBeTruthy();
+    expect(screen.queryByText("Global test not found.")).toBeNull();
+  });
+
   it("plans several months of dates, then publishes the test and its dates once", async () => {
     let published = false;
     const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]),
@@ -75,31 +97,62 @@ describe("Global Tests for provider staff", () => {
     expect(screen.queryByRole("button", { name: "New Global Test" })).toBeNull();
   });
 
-  it("submits the teacher's own paper for an authorized audience, with an idempotency key, and shows a refused overlap", async () => {
-    let attempt = 0;
-    const calls = stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["paper.read", "paper.upload", "exam.read"]),
-      "/api/v1/global-occurrences/o1": { ...occ(), submission_list: [], coverage: [] },
-      "/api/v1/global-occurrences/o1/scope": { provider_id: "p1", provider_name: "Alpha", submissions_open: true, branches: [
-        { branch_id: "b1", name: "Pune", whole_branch_allowed: false, batches: [{ batch_id: "ba", name: "NEET A" }], subjects: [{ subject_id: "phy", name: "Physics" }] }] },
-      "/api/v1/global-occurrences/o1/students": { items: [], total: 0 },
-      "/api/v1/global-occurrences/o1/papers": { items: [{ paper_id: "pp", title: "Physics A", paper_version_id: "pvA", version_no: 1, version_status: "PUBLISHED", ready: true, question_count: 3 }], total: 1 },
-      "POST /api/v1/global-occurrences/o1/submissions": () => (++attempt === 1
-        ? fail(409, { code: "AUDIENCE_OVERLAP", message: "1 of these students already receive another paper for this subject on this date." }) : SUB) });
-    renderApp("/tests/global/occurrences/o1");
+  // the teacher's submit set-up: two of her own papers, her batch NEET A in Pune (a batch-level teacher)
+  const submitSetup = (post: (u: URL, init: RequestInit) => unknown) => stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["paper.read", "paper.upload", "exam.read"]),
+    "/api/v1/global-occurrences/o1": { ...occ(), submission_list: [], coverage: [] },
+    "/api/v1/global-occurrences/o1/scope": { provider_id: "p1", provider_name: "Alpha", submissions_open: true, branches: [
+      { branch_id: "b1", name: "Pune", whole_branch_allowed: false, batches: [{ batch_id: "ba", name: "NEET A" }], subjects: [{ subject_id: "phy", name: "Physics" }] }] },
+    "/api/v1/global-occurrences/o1/students": { items: [], total: 0 },
+    "/api/v1/global-occurrences/o1/papers": { items: [
+      { paper_id: "pp", title: "Physics A", paper_version_id: "pvA", version_no: 1, version_status: "PUBLISHED", ready: true, question_count: 3 },
+      { paper_id: "pq", title: "Physics B", paper_version_id: "pvB", version_no: 1, version_status: "PUBLISHED", ready: true, question_count: 3 }], total: 2 },
+    "POST /api/v1/global-occurrences/o1/submissions": post });
+  const fillSubmit = async (paper: string) => {
     fireEvent.click(await screen.findByRole("button", { name: "Submit a paper" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(await within(dialog).findByLabelText("Your paper"), { target: { value: "pvA" } });
+    fireEvent.change(await within(dialog).findByLabelText("Your paper"), { target: { value: paper } });
     fireEvent.click(within(dialog).getByLabelText("Pune"));
     expect(within(dialog).queryByLabelText("Every student of Pune")).toBeNull();                              // batch-level teacher
     fireEvent.click(await within(dialog).findByLabelText("NEET A"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Submit paper" }));
-    expect(await within(dialog).findByText(/already receive another paper/)).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Submit paper" }));
+    return dialog;
+  };
+  const audience = { provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["ba"], student_ids: [] };
+
+  it("submits a different paper for students who already receive one (they will choose), with an idempotency key", async () => {
+    // since per-student paper choice the API accepts a DIFFERENT paper for an overlapping audience: no refusal is involved
+    const calls = submitSetup(() => SUB);
+    renderApp("/tests/global/occurrences/o1");
+    expect(await screen.findByText(/a student reached by two papers of a subject chooses one/)).toBeTruthy();   // the rule, as the page states it
+    await fillSubmit("pvA");
     expect(await screen.findByText("Submitted “Physics A” for 2 student(s).")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
     const sent = posts(calls, "/api/v1/global-occurrences/o1/submissions");
-    expect(sent[0].body).toEqual({ subject_id: "phy", paper_version_id: "pvA", audience: { provider_id: "p1", branch_ids: ["b1"], whole_branch_ids: [], batch_ids: ["ba"], student_ids: [] } });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toEqual({ subject_id: "phy", paper_version_id: "pvA", audience });
     expect(sent[0].headers["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("shows the refusal of the same paper submitted twice for the same students; a retry reuses its key, another paper gets a new one", async () => {
+    const DUPLICATE = { code: "DUPLICATE_PAPER_SUBMISSION", message: "This paper version is already submitted for 2 of these students for this subject "
+      + "on this date. Choose other students or another paper.", overlapping_students: 2 };
+    const calls = submitSetup((_u, init) => (JSON.parse(String(init.body)).paper_version_id === "pvA" ? fail(409, DUPLICATE)    // pvA already submitted
+      : { ...SUB, submission_id: "s2", paper_title: "Physics B", paper_version_id: "pvB" }));
+    renderApp("/tests/global/occurrences/o1");
+    const dialog = await fillSubmit("pvA");
+    expect(await within(dialog).findByText(/already submitted for 2 of these students/)).toBeTruthy();       // the API's own message
+    expect(screen.queryByText(/^Submitted “/)).toBeNull();                                                   // nothing was submitted
+    fireEvent.click(within(dialog).getByRole("button", { name: "Submit paper" }));                           // the same request again
+    await waitFor(() => expect(posts(calls, "/api/v1/global-occurrences/o1/submissions")).toHaveLength(2));
+    expect(await within(dialog).findByText(/already submitted for 2 of these students/)).toBeTruthy();       // still refused
+    fireEvent.change(within(dialog).getByLabelText("Your paper"), { target: { value: "pvB" } });              // another paper for them
+    fireEvent.click(within(dialog).getByRole("button", { name: "Submit paper" }));
+    expect(await screen.findByText("Submitted “Physics B” for 2 student(s).")).toBeTruthy();
+    const sent = posts(calls, "/api/v1/global-occurrences/o1/submissions");
+    expect(sent.map((c) => (c.body as { paper_version_id: string }).paper_version_id)).toEqual(["pvA", "pvA", "pvB"]);
+    expect(sent[2].body).toEqual({ subject_id: "phy", paper_version_id: "pvB", audience });
     expect(sent[1].headers["Idempotency-Key"]).toBe(sent[0].headers["Idempotency-Key"]);                     // the same request retried
+    expect(sent[2].headers["Idempotency-Key"]).not.toBe(sent[0].headers["Idempotency-Key"]);                 // a different request
   });
 
   it("shows submissions and coverage, and closes papers after the deadline", async () => {
@@ -152,6 +205,43 @@ describe("Global Tests for provider staff", () => {
     expect(headers).toEqual(["Student", "Physics", "Chemistry", "Exam"]);
     expect(within(card).getByText("Alpha")).toBeTruthy();
     expect(within(card).getByText("Not enrolled").closest("[title]")?.getAttribute("title")).toMatch(/not enrolled in Chemistry/);
+  });
+
+  const notGenerated = { ...occ(), submission_list: [], coverage: [] };
+  it("asks the layout together with the detail unless the opening link said the date is not generated", async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    let calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-occurrences/o1": () => pending,
+      "/api/v1/global-occurrences/o1/student-subjects": LAYOUT });
+    let view = renderApp("/tests/global/occurrences/o1", { generated: true });
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/student-subjects"))).toBe(true));   // before the detail answered
+    release(generated);
+    expect(await screen.findByRole("heading", { name: "Students" })).toBeTruthy();
+    view.unmount();
+    vi.unstubAllGlobals();
+    // the list said "not generated": nothing is asked, and nothing is shown, for a date the detail confirms is not generated
+    calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-occurrences/o1": notGenerated,
+      "/api/v1/global-occurrences/o1/student-subjects": LAYOUT });
+    view = renderApp("/tests/global/occurrences/o1", { generated: false });
+    await screen.findByRole("heading", { name: /National Mock:/ });
+    expect(calls.some((c) => c.path.endsWith("/student-subjects"))).toBe(false);
+    view.unmount();
+    vi.unstubAllGlobals();
+    // a direct link (no hint) to a date that is not generated: the layout may be asked, but is never shown
+    stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]), "/api/v1/global-occurrences/o1": notGenerated,
+      "/api/v1/global-occurrences/o1/student-subjects": { ...LAYOUT, generated: false } });
+    renderApp("/tests/global/occurrences/o1");
+    await screen.findByRole("heading", { name: /National Mock:/ });
+    expect(screen.queryByRole("heading", { name: "Students" })).toBeNull();
+  });
+
+  it("shows only the detail's 404 for a missing date, whatever the layout request answers", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["examplan.manage", "exam.read"]),
+      "/api/v1/global-occurrences/o1": fail(404, { code: "NOT_FOUND", message: "Scheduled Global Test not found." }),
+      "/api/v1/global-occurrences/o1/student-subjects": fail(403, { code: "FORBIDDEN", message: "You do not have permission for this action." }) });
+    renderApp("/tests/global/occurrences/o1", { generated: true });
+    expect(await screen.findByText("Scheduled Global Test not found.")).toBeTruthy();
+    expect(screen.queryByText(/do not have permission/)).toBeNull();
   });
 
   it("never asks the layout for a teacher", async () => {

@@ -20,6 +20,17 @@ class LocalFileStore:
         path.chmod(0o600)
         return key, hashlib.sha256(data).hexdigest()
 
+    def delete(self, key: str) -> bool:
+        """Remove the bytes of `key`; False when they are already gone (deleting twice is safe)."""
+        path = (self.root / key).resolve()
+        if path.parent != self.root:  # defence in depth against traversal
+            raise FileNotFoundError(key)
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+
     def read(self, key: str) -> bytes:
         path = (self.root / key).resolve()
         if path.parent != self.root:  # defence in depth against traversal

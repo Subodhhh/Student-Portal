@@ -93,7 +93,8 @@ def test_result_details_list_every_configured_subject_in_order_and_reconcile(mon
     test_id, attempt_id = uuid.uuid4(), uuid.uuid4()
     q = lambda i, subject, right, chosen: {"question_id": uuid.UUID(int=i), "question_order": i, "subject": subject, "question_text": f"Q{i}",
                                           "question_type": "MCQ", "option_a": "a", "option_b": "b", "option_c": "c", "option_d": "d",
-                                          "correct_answer": right, "selected_answer": chosen, "marks": 4, "negative_marks": 1, "image_reference": None}
+                                          "correct_answer": right, "selected_answer": chosen, "marks": 4, "negative_marks": 1, "image_reference": None,
+                                          **dict.fromkeys(("question_image", "option_a_image", "option_b_image", "option_c_image", "option_d_image"))}
     questions = [q(1, "Chemistry", "A", "A"), q(2, "Chemistry", "B", "C"), q(3, "Physics", "A", "A"), q(4, "Physics", "D", None), q(5, "Physics", "C", "C")]
     sections = [{"position": 1, "subject": "Physics", "status": "PAPER", "message": None, "question_count": 3},
                 {"position": 2, "subject": "Chemistry", "status": "PAPER", "message": None, "question_count": 2},

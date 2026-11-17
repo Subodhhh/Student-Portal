@@ -72,3 +72,19 @@ def test_taking_another_students_email_is_a_clean_conflict(env):
     client, run = env
     r = client.put("/profile", json=body(run, email=f"taken-{run}@example.com", current_password="Right-password-1"))
     assert r.status_code == 409
+
+
+def test_the_profile_is_read_with_an_empty_date_of_birth(env):
+    # the column comes from the authentication chain's 0003_students_date_of_birth (nullable): GET /profile must work without a value
+    client, _ = env
+    r = client.get("/profile")
+    assert r.status_code == 200 and r.json()["date_of_birth"] is None
+
+
+def test_the_date_of_birth_is_optional_and_can_be_set_and_cleared(env):
+    client, run = env
+    r = client.put("/profile", json=body(run, date_of_birth="2008-04-01"))
+    assert r.status_code == 200 and r.json()["date_of_birth"] == "2008-04-01"
+    assert client.get("/profile").json()["date_of_birth"] == "2008-04-01"
+    r = client.put("/profile", json=body(run, date_of_birth=None))
+    assert r.status_code == 200 and r.json()["date_of_birth"] is None

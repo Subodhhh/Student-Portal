@@ -53,4 +53,17 @@ describe("Available tests", () => {
     expect(open).toHaveBeenCalledWith("/tests/t2/attempt", "_blank");
     expect(assign).not.toHaveBeenCalled();
   });
+
+  it("treats the attempt service's 200 {has_attempt: false} as not started (no 404 needed)", async () => {
+    const { open } = renderTests([test("t2", "Weekly Physics")], () => json(200, { has_attempt: false }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start Test" }));
+    expect(open).toHaveBeenCalledWith("/tests/t2/attempt", "_blank");
+  });
+
+  it("still reports a real server error from the attempt lookup", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderTests([test("t2", "Weekly Physics")], () => json(500, { detail: "boom" }));
+    expect(await screen.findByText("Unable to load tests.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start Test" })).toBeNull();
+  });
 });

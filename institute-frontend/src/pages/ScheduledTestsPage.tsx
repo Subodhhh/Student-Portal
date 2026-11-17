@@ -46,7 +46,7 @@ export default function ScheduledTestsPage() {
             empty={<EmptyState title="No scheduled tests yet" hint={can("test.create") ? "Create a Daily or Weekly Test to see it here." : undefined} />}
             columns={[
               { header: "Test", render: (t) => <>{t.exam_id ? <Link to={`/exams/${t.exam_id}`}>{t.name}</Link>
-                : t.occurrence_id ? <Link to={`/tests/global/occurrences/${t.occurrence_id}`}>{t.name}</Link> : t.name}
+                : t.occurrence_id ? <Link to={`/tests/global/occurrences/${t.occurrence_id}`} state={{ generated: t.state === "NO_EXAM" }}>{t.name}</Link> : t.name}
                 {t.submission_deadline && t.state === "SCHEDULED" && <div className="muted small">Papers accepted until {fmt(t.submission_deadline)}</div>}
                 {t.series_id && <div className="muted small"><Link to={`/tests/weekly/${t.series_id}`}>Weekly Test plan</Link></div>}</> },
               { header: "Type", render: (t) => <Badge tone={t.test_type === "GLOBAL" ? "info" : undefined}>{TEST_TYPE_LABEL[t.test_type] ?? t.test_type}</Badge> },

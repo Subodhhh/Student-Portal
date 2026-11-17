@@ -8,7 +8,7 @@ import NeedBranch from "../components/NeedBranch";
 import { isValidEmail, isValidPhone } from "../auth/validation";
 import { StudentDirectory } from "../components/students";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "../components/ui";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 
 // batch_subjects: batch_id -> the subjects taken in that batch; a batch missing there takes every subject it offers.
@@ -48,9 +48,9 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
   const [moving, setMoving] = useState<Enrollment | null>(null);
   const [managing, setManaging] = useState<Enrollment | null>(null);
   const list = useApi<Page<Enrollment>>(`/api/v1/branches/${branchId}/enrollments?page=${page}&page_size=25`);
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`);
+  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`);
   const transfers = useApi<Page<Transfer>>(can("enrollment.transfer_approve") ? `/api/v1/providers/${providerId}/transfers?status=PENDING` : null);
-  const subjects = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
+  const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const batchName = (id: string) => batches.data?.items.find((b) => b.batch_id === id)?.name ?? id.slice(0, 8);
   const subjectName = (id: string) => subjects.data?.find((s) => s.subject_id === id)?.name ?? id.slice(0, 8);
   const batchLabel = (e: Enrollment, id: string) => batchName(id) + (e.batch_subjects?.[id] ? ` (${e.batch_subjects[id].map(subjectName).join(", ")})` : "");
@@ -308,7 +308,7 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
 }
 
 function TransferDialog({ enrollment, providerId, currentBranch, onClose, onDone }: { enrollment: Enrollment; providerId: string; currentBranch: string; onClose: () => void; onDone: () => void }) {
-  const branches = useApi<Page<{ branch_id: string; name: string }>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
+  const branches = useReference<Page<{ branch_id: string; name: string }>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
   const { busy, error, run } = useAction();

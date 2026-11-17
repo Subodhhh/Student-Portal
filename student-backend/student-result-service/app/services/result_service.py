@@ -230,6 +230,11 @@ def get_result_details(
                 "marks": marks,
                 "negative_marks": negative_marks,
                 "image_reference": question["image_reference"],
+                "question_image": question["question_image"],
+                "option_a_image": question["option_a_image"],
+                "option_b_image": question["option_b_image"],
+                "option_c_image": question["option_c_image"],
+                "option_d_image": question["option_d_image"],
             }
         )
 

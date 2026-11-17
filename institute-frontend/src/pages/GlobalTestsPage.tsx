@@ -7,6 +7,7 @@ import { Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, Modal
 import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import type { ScheduledTest } from "../services/createTest";
+import type { Occurrence } from "../services/globalSchedule";
 import { GlobalScheduleList, GlobalTestDates, GlobalTestDefinition } from "./GlobalSchedulePages";
 import { StudentCount } from "../components/StudentCount";
 
@@ -167,6 +168,9 @@ export function GlobalTestDetailPage() {
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
   const t = useApi<GlobalTest>(`/api/v1/global-tests/${testId}`);
   const schedules = useApi<Page<ScheduledTest>>(`/api/v1/tests?global_test_id=${testId}&page_size=100`);
+  // A SCHEDULE test's dates, requested with the test itself (the test's kind is known only from its answer: for another kind this
+  // answers 404, which is never shown because only a SCHEDULE test's page shows the dates)
+  const dates = useApi<{ items: Occurrence[] }>(`/api/v1/global-tests/${testId}/occurrences`);
   const act = useAction();
   const [editing, setEditing] = useState(false);
   const [confirm, setConfirm] = useState<"publish" | "withdraw" | null>(null);
@@ -176,7 +180,7 @@ export function GlobalTestDetailPage() {
   if (t.loading && !t.data) return <Spinner />;
   if (t.error || !t.data) return <Alert kind="error">{t.error || "Global Test not found."}</Alert>;
   const g = t.data;
-  if (g.kind === "SCHEDULE") return <ScheduleTestPage g={g} reload={t.reload} />;
+  if (g.kind === "SCHEDULE") return <ScheduleTestPage g={g} reload={t.reload} dates={dates} />;
   const transition = (change: "publish" | "withdraw") => act.run(async () => {
     await api(`/api/v1/global-tests/${g.test_id}/${change}`, { method: "POST", body: change === "withdraw" ? { reason } : undefined });
     setConfirm(null); setReason("");
@@ -263,7 +267,7 @@ export function GlobalTestDetailPage() {
 }
 
 /** A centrally scheduled Global Test: its definition (platform: edit while draft, withdraw, new version) and its dates. */
-function ScheduleTestPage({ g, reload }: { g: GlobalTest; reload: () => void }) {
+function ScheduleTestPage({ g, reload, dates }: { g: GlobalTest; reload: () => void; dates: ReturnType<typeof useApi<{ items: Occurrence[] }>> }) {
   const navigate = useNavigate();
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
@@ -293,7 +297,7 @@ function ScheduleTestPage({ g, reload }: { g: GlobalTest; reload: () => void }) 
         <GlobalTestDefinition test={g} />
         {g.status !== "DRAFT" && <p className="muted small">Published: the subjects, duration and marking no longer change. A change is a new version with its own dates.</p>}
       </Card>
-      <GlobalTestDates test={g} onChanged={reload} />
+      <GlobalTestDates test={g} onChanged={reload} dates={dates} />
       {editing && <GlobalTestForm test={g} onClose={() => setEditing(false)} onDone={() => { setEditing(false); setNotice("Draft saved."); reload(); }} />}
       {withdrawing && (
         <ConfirmDialog title={`Withdraw “${g.name}”`} danger confirmLabel="Withdraw" busy={act.busy} onCancel={() => { setWithdrawing(false); setReason(""); }}

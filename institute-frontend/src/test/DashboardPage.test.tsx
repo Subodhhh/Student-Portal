@@ -1,7 +1,12 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+<<<<<<< HEAD:institute-frontend/src/test/DashboardPage.test.tsx
 import { renderApp } from "./renderApp";
 import { me, page, stubApi } from "./stubApi";
+=======
+import { renderApp } from "../test/renderApp";
+import { fail, me, page, stubApi } from "../test/stubApi";
+>>>>>>> origin/Institute-Student-Portal:institute-frontend/src/pages/DashboardPage.test.tsx
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 3 }, "/api/v1/providers": page([]) };
 const PLATFORM = {
@@ -60,5 +65,31 @@ describe("dashboard", () => {
     expect(screen.getByText("Active batches")).toBeTruthy();
     expect(screen.queryByText("Active providers")).toBeNull();
     expect(screen.queryByText("Staff by role")).toBeNull();
+  });
+  it("requests the audit lists together with the dashboard, not after it, and shows each one's failure on its own", async () => {
+    let release: (v: unknown) => void = () => {};
+    const dashboard = new Promise((r) => { release = r; });
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["audit.read"]), "/api/v1/dashboard": () => dashboard,
+      "/api/v1/audit-logs": (u: URL) => (u.searchParams.get("outcome") === "DENIED" ? fail(500, { code: "ERROR", message: "boom" })
+        : page([{ audit_id: "x2", at: "2026-10-17T08:00:00Z", action: "provider.create", target_type: "provider", outcome: "SUCCESS", reason: null, actor: "s1", actor_name: "Sam Admin", provider_name: "Alpha" }])) });
+    renderApp("/");
+    await vi.waitFor(() => expect(calls.filter((c) => c.path === "/api/v1/audit-logs").map((c) => c.search.get("outcome")).sort()).toEqual(["DENIED", "SUCCESS"]));
+    expect(screen.queryByText("Active providers")).toBeNull();                         // the dashboard has not answered yet
+    release(PLATFORM);
+    expect(await screen.findByText("Active providers")).toBeTruthy();
+    expect(await screen.findByText("provider.create")).toBeTruthy();                    // the list that loaded is shown
+    expect(screen.getByText("Security, last 24 hours")).toBeTruthy();                   // the failed list does not break the page
+  });
+
+  it("does not request audit lists without audit.read or for non-platform roles", async () => {
+    for (const [role, perms] of [["SUPER_ADMIN", []], ["BRANCH_ADMIN", ["audit.read"]]] as const) {
+      const calls = stubApi({ ...common, "/api/v1/auth/me": me(role, [...perms]),
+        "/api/v1/dashboard": role === "SUPER_ADMIN" ? PLATFORM : { role, upcoming_exams: 1, unread_notifications: 0, students: 4, batches: 1, pending_transfers: 0, teachers: 1 } });
+      const { unmount } = renderApp("/");
+      await screen.findByText(role === "SUPER_ADMIN" ? "Active providers" : "Active batches");
+      expect(calls.some((c) => c.path === "/api/v1/audit-logs")).toBe(false);
+      unmount();
+      vi.unstubAllGlobals();
+    }
   });
 });

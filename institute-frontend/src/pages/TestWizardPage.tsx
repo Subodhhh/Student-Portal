@@ -8,7 +8,7 @@ import NeedBranch from "../components/NeedBranch";
 import type { GlobalTest } from "../components/globalTests";
 import { QuestionBrowser } from "../components/questionBank";
 import { Alert, Button, Card, DataTable, EmptyState, Field, PageHeader, SearchField, SelectField, Spinner, StatusBadge } from "../components/ui";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { ApiError, api, errorMessage, type Page } from "../services/api";
 import { buildPapers, groupBySubject, type BankQuestion } from "../services/questions";
 
@@ -90,7 +90,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
 
   const globalTest = useApi<GlobalTest>(kind === "global" && globalId ? `/api/v1/global-tests/${globalId}` : null);
   const gt = globalTest.data;
-  const subjects = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
+  const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const sName = (id: string) => subjects.data?.find((s) => s.subject_id === id)?.name ?? "Subject";
   const canPublishPapers = can("paper.approve") && can("paper.publish");
   const providerLevel = isGlobalRole(me?.primary_role) || me?.primary_role === "PROVIDER_ADMIN";
@@ -505,7 +505,7 @@ function InlineUpload({ branchId, subject, onClose, onDone }: { branchId: string
       {errors.length > 0 && <DataTable rows={errors} rowKey={(e) => `${e.row}-${e.field}-${e.message}`}
         columns={[{ header: "Row / question", render: (e) => e.row ?? "—" }, { header: "Field", render: (e) => e.field ?? "—" }, { header: "Problem", render: (e) => e.message }]} />}
       <Field label="Paper title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <div className="field"><label htmlFor="wiz-file">Question file</label><input id="wiz-file" type="file" ref={file} accept=".csv,.xlsx,.docx,.pdf,.png,.jpg,.jpeg" /></div>
+      <div className="field"><label htmlFor="wiz-file">Question file</label><input id="wiz-file" type="file" ref={file} accept=".csv,.xlsx,.zip,.docx,.pdf,.png,.jpg,.jpeg" /></div>
       <div className="field"><label htmlFor="wiz-key">Answer key (optional)</label><input id="wiz-key" type="file" ref={key} accept=".csv,.txt" /></div>
       <div className="row">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>

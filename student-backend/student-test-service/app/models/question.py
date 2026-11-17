@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -14,6 +15,19 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+
+
+class QuestionImage(Base):
+    """A picture shown in a question or an option, delivered by the Institute with the exam and named by its SHA-256 checksum, so
+    the same picture is stored once however many tests use it. Served to a student only for a test the student may open
+    (routes/test.py)."""
+    __tablename__ = "question_images"
+
+    checksum: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mime_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class Question(Base):
@@ -117,6 +131,13 @@ class Question(Base):
         Text,
         nullable=True,
     )
+
+    # pictures (question_images.checksum) of the question and of each option; NULL: that field has no picture
+    question_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
+    option_a_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
+    option_b_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
+    option_c_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
+    option_d_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

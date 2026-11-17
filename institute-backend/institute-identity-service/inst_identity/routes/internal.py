@@ -22,6 +22,9 @@ class Introspect(BaseModel):
 def introspect(body: Introspect, db: Session = Depends(get_db)):
     """Who owns this browser session? Validates it (and slides the idle timeout), checks the CSRF token for unsafe methods and returns the
     caller's identity, role assignments and teaching assignments. 401/403 mirror what the public API answers."""
+    # Read-only and a single statement (load_principal), so it needs no transaction: autocommit skips the BEGIN and ROLLBACK round
+    # trips. Still read fresh on every call (no caching); the pool restores the connection's isolation level when it is returned.
+    db.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
     staff, assignments, teaching, data = authenticate_principal(db, body.session_id, body.method, body.csrf_token)
     return principal_payload(staff, assignments, teaching, data["csrf"])
 

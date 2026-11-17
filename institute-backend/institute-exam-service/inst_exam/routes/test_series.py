@@ -279,8 +279,8 @@ def _series_plans(db: Session, s: TestSeries) -> list[ExamPlan]:
     return db.scalars(select(ExamPlan).where(ExamPlan.series_id == s.series_id).order_by(ExamPlan.start_at)).all()
 
 
-def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal | None = None) -> dict:
-    plans = _series_plans(db, s)
+def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal | None = None, plans: list[ExamPlan] | None = None) -> dict:
+    plans = _series_plans(db, s) if plans is None else plans
     summaries = daily._summaries(db, plans, viewer=viewer)
     planned = _series_occurrences(s)
     by_start = {sm["start_at"].astimezone(timezone.utc) if sm["start_at"].tzinfo else sm["start_at"].replace(tzinfo=timezone.utc): sm for sm in summaries}
@@ -303,8 +303,8 @@ def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal
     return out
 
 
-def _visible(db: Session, p: Principal, s: TestSeries) -> bool:
-    plans = _series_plans(db, s)
+def _visible(db: Session, p: Principal, s: TestSeries, plans: list[ExamPlan] | None = None) -> bool:
+    plans = _series_plans(db, s) if plans is None else plans
     if daily._manager(p, s.provider_id, s.branch_id) or s.created_by == p.staff_id:
         return True
     return bool(plans) and bool(daily.visible_plans(db, p, plans[:1]))
@@ -431,10 +431,14 @@ def list_series(provider_id: UUID | None = None, page: int = 1, page_size: int =
     provs = daily.reader_provider_ids(p)
     if provs is not None:
         stmt = stmt.where(TestSeries.provider_id.in_(provs or [None]))
-    visible = [s for s in db.scalars(stmt.order_by(TestSeries.created_at.desc())) if _visible(db, p, s)]
+    series = db.scalars(stmt.order_by(TestSeries.created_at.desc())).all()
+    plans: dict[UUID, list[ExamPlan]] = {x.series_id: [] for x in series}      # every series' plans in one statement (read-only request)
+    for plan in (db.scalars(select(ExamPlan).where(ExamPlan.series_id.in_(list(plans))).order_by(ExamPlan.start_at)) if plans else []):
+        plans[plan.series_id].append(plan)
+    visible = [s for s in series if _visible(db, p, s, plans[s.series_id])]
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
-    return {"items": [_out(db, s, viewer=p) for s in visible[(page - 1) * page_size: page * page_size]], "total": len(visible), "page": page,
-            "page_size": page_size}
+    return {"items": [_out(db, s, viewer=p, plans=plans[s.series_id]) for s in visible[(page - 1) * page_size: page * page_size]],
+            "total": len(visible), "page": page, "page_size": page_size}
 
 
 @router.get("/test-series/{series_id}")

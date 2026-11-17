@@ -4,11 +4,13 @@ Writes the existing tests / questions / test_audiences tables, so the student-fa
 delivery, attempt and result logic (shared timer, resume, negative marking) is reused
 unchanged. Idempotent: the Institute exam_version_id IS the test_id, and an exam that
 already exists is never rewritten. Authenticated by X-Service-Key; 404 unless configured."""
+import hashlib
 import hmac
+import re
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import insert, select
 from sqlalchemy import text
@@ -37,11 +39,17 @@ def require_service_key(x_service_key: str | None = Header(default=None)) -> Non
 router = APIRouter(prefix="/internal/v1", tags=["Internal"], dependencies=[Depends(require_service_key)])
 
 
+IMAGE_FIELDS = {"question": "question_image", "A": "option_a_image", "B": "option_b_image", "C": "option_c_image", "D": "option_d_image"}
+CHECKSUM = "^[0-9a-f]{64}$"
+
+
 class QuestionIn(BaseModel):
     order: int = Field(ge=1)
     subject: str | None = Field(default=None, max_length=100)
-    text: str = Field(min_length=1)
+    text: str = ""                            # may be empty when the question is a picture (checked in _check_questions)
     options: dict[str, str]
+    # pictures by field ("question", "A".."D") -> checksum of a picture sent first to PUT /question-images/{checksum}
+    images: dict[str, str] = Field(default_factory=dict)
     correct: str = Field(pattern="^[ABCD]$")
     marks: int = Field(ge=0)
     negative_marks: int = Field(ge=0)
@@ -152,6 +160,22 @@ def _check_questions(body) -> None:
     for q in body.questions:
         if set(q.options) != {"A", "B", "C", "D"}:
             raise HTTPException(status_code=422, detail="Each question needs options A-D")
+        if set(q.images) - set(IMAGE_FIELDS) or any(not re.fullmatch(CHECKSUM, c) for c in q.images.values()):
+            raise HTTPException(status_code=422, detail="Question pictures must name fields question/A-D and SHA-256 checksums")
+        if not q.text.strip() and "question" not in q.images:
+            raise HTTPException(status_code=422, detail="Each question needs its text or its picture")
+        for k in "ABCD":
+            if bool(q.options[k].strip()) == (k in q.images):
+                raise HTTPException(status_code=422, detail=f"Option {k} needs exactly one of its text or its picture")
+
+
+def _check_images_present(db: Session, body) -> None:
+    """Every picture the exam names must already be here (the Institute uploads missing ones first). Otherwise 409: retryable."""
+    wanted = {c for q in body.questions for c in q.images.values()}
+    if wanted:
+        have = set(db.scalars(select(question_models.QuestionImage.checksum).where(question_models.QuestionImage.checksum.in_(wanted))))
+        if wanted - have:
+            raise HTTPException(status_code=409, detail={"code": "IMAGES_MISSING", "missing": sorted(wanted - have)[:20]})
 
 
 def _reference_missing(exc: IntegrityError) -> HTTPException:
@@ -184,6 +208,7 @@ def _store(db: Session, body, sections: list | None, student_ids, extra_rows=())
             subject=q.subject, paper_id=getattr(q, "paper_id", None), question_order=q.order, question_text=q.text, question_type="MCQ",
             option_a=q.options["A"], option_b=q.options["B"], option_c=q.options["C"], option_d=q.options["D"],
             correct_answer=q.correct, marks=q.marks, negative_marks=q.negative_marks,
+            **{column: q.images.get(field) for field, column in IMAGE_FIELDS.items()},
         ))
     for sid in dict.fromkeys(student_ids):
         db.add(audience_models.TestAudience(
@@ -274,6 +299,7 @@ def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
 
     if body.audiences is not None:
         student_audience = _check_paper_choice(body)
+        _check_images_present(db, body)
         cells = {a.audience_id: a.cells for a in body.audiences}
         position = {x.subject: x.position for x in body.sections}
         now = datetime.now(timezone.utc)
@@ -294,6 +320,7 @@ def receive_exam(body: ExamIn, db: Session = Depends(get_db)):
     if not body.questions and not body.sections:
         raise HTTPException(status_code=422, detail="An exam needs at least one question")
     _check_questions(body)
+    _check_images_present(db, body)
 
     replay = _store(db, body, [x.model_dump(exclude={"papers"}) for x in body.sections] if body.sections else None, body.student_ids)
     if replay:
@@ -352,3 +379,49 @@ def correct_answer_key(test_id: uuid.UUID, body: AnswerKeyIn, db: Session = Depe
         out.append({"question_order": c.question_order, "previous": previous, "new": c.correct})
     db.commit()
     return {"test_id": str(test_id), "correction_ref": body.correction_ref, "changes": out}
+
+
+# ------------------------------------------------------------------ question pictures (sent by the Institute before the exam)
+
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = {"image/png": (b"\x89PNG\r\n\x1a\n",), "image/jpeg": (b"\xff\xd8\xff",), "image/gif": (b"GIF87a", b"GIF89a"),
+               "image/webp": (b"RIFF",)}
+
+
+class ChecksumsIn(BaseModel):
+    checksums: list[str] = Field(max_length=5000)
+
+
+@router.post("/question-images/missing")
+def missing_images(body: ChecksumsIn, db: Session = Depends(get_db)):
+    """Which of these pictures this database does not hold yet (the Institute then uploads only those)."""
+    wanted = {c for c in body.checksums if re.fullmatch(CHECKSUM, c)}
+    if len(wanted) != len(set(body.checksums)):
+        raise HTTPException(status_code=422, detail="Checksums must be SHA-256 hex digests")
+    have = set(db.scalars(select(question_models.QuestionImage.checksum).where(question_models.QuestionImage.checksum.in_(wanted))))
+    return {"missing": sorted(wanted - have)}
+
+
+@router.put("/question-images/{checksum}", status_code=201)
+async def put_image(checksum: str, request: Request, db: Session = Depends(get_db)):
+    """Store one picture under its checksum. The bytes must hash to that checksum and start with the signature of the declared
+    image type (PNG, JPEG, GIF or WebP); a picture already stored is accepted again unchanged (idempotent)."""
+    if not re.fullmatch(CHECKSUM, checksum):
+        raise HTTPException(status_code=422, detail="Not a SHA-256 checksum")
+    mime = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if mime not in IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Only PNG, JPEG, GIF or WebP pictures")
+    data = b""
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Picture too large")
+    if hashlib.sha256(data).hexdigest() != checksum or not data.startswith(IMAGE_TYPES[mime]):
+        raise HTTPException(status_code=422, detail="The picture does not match its checksum or type")
+    if db.get(question_models.QuestionImage, checksum) is None:
+        db.add(question_models.QuestionImage(checksum=checksum, mime_type=mime, file_size=len(data), image_data=data))
+        try:
+            db.commit()
+        except IntegrityError:                    # stored by a concurrent upload of the same picture
+            db.rollback()
+    return Response(status_code=201)

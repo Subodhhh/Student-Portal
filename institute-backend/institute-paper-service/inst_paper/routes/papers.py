@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import and_, distinct, false, func, or_, select
+from sqlalchemy import and_, distinct, false, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from institute_common.config import settings
@@ -22,12 +22,13 @@ from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.org import Branch
 from institute_common.models.papers import (
     Paper, PaperShare, PaperUpload, PaperVersion, PaperVersionEvent, PaperVersionQuestion,
-    Question, QuestionVersion, StoredFile,
+    IMAGE_FIELD_COLUMNS, Question, QuestionImageAsset, QuestionVersion, StoredFile,
 )
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
-from inst_paper.services import documents, extraction, paper_pdf
+from inst_paper.services import extraction, image_assets, isolation, paper_pdf, recognition
+from inst_paper.services.math import domain_of_subject_id, markers, recognise
 from inst_paper.services.filestore import get_store
 
 router = APIRouter(prefix="/api/v1", tags=["Questions & Papers"])
@@ -39,12 +40,12 @@ DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 UPLOAD_KINDS = {
     ".csv": (ALLOWED_TYPES, "text/csv"),
     ".xlsx": ({XLSX_TYPE, "application/octet-stream"}, XLSX_TYPE),
+    ".zip": ({"application/zip", "application/x-zip-compressed", "application/octet-stream"}, "application/zip"),
     ".docx": ({DOCX_TYPE, "application/octet-stream"}, DOCX_TYPE),
     ".pdf": ({"application/pdf", "application/octet-stream"}, "application/pdf"),
-    ".png": ({"image/png"}, "image/png"),
-    ".jpg": ({"image/jpeg"}, "image/jpeg"),
-    ".jpeg": ({"image/jpeg"}, "image/jpeg"),
 }
+# Whole-page picture papers were read by OCR until 2026-11-16 (discontinued); such stored uploads can still be downloaded.
+STORED_KINDS = {**UPLOAD_KINDS, ".png": ({"image/png"}, "image/png"), ".jpg": ({"image/jpeg"}, "image/jpeg")}
 
 
 # ---------------------------------------------------------------- schemas
@@ -94,11 +95,12 @@ class QuestionPatch(Classification):
 
 
 class QuestionVersionIn(Strict):
-    stem: str = Field(min_length=3, max_length=5000)
-    option_a: str = Field(min_length=1, max_length=5000)
-    option_b: str = Field(min_length=1, max_length=5000)
-    option_c: str = Field(min_length=1, max_length=5000)
-    option_d: str = Field(min_length=1, max_length=5000)
+    # a text may be empty only where the question keeps a picture for that field (checked by _picture_rule)
+    stem: str = Field(max_length=5000)
+    option_a: str = Field(max_length=5000)
+    option_b: str = Field(max_length=5000)
+    option_c: str = Field(max_length=5000)
+    option_d: str = Field(max_length=5000)
     correct_option: str = Field(pattern="^[ABCD]$")
     marks_positive: Decimal = Field(gt=0, lt=10000)
     marks_negative: Decimal = Field(ge=0, lt=10000, default=Decimal(0))
@@ -122,6 +124,12 @@ class QuestionVersionOut(BaseModel):
     topic: str | None
     marks_positive: Decimal
     marks_negative: Decimal
+    # pictures (GET /question-images/{id}); None: the field has no picture
+    stem_image_id: UUID | None = None
+    option_a_image_id: UUID | None = None
+    option_b_image_id: UUID | None = None
+    option_c_image_id: UUID | None = None
+    option_d_image_id: UUID | None = None
 
 
 class BankQuestionOut(BaseModel):
@@ -256,6 +264,19 @@ class RevisionIn(Strict):
         return self
 
 
+class RecognitionPreviewIn(Strict):
+    """One field as a reviewer is typing it: recognised exactly as an import or a correction would recognise it; nothing is stored."""
+    text: str = Field(min_length=1, max_length=5000)
+    field: Literal["question", "option_a", "option_b", "option_c", "option_d", "explanation"]
+
+
+def _recognition_preview(text: str, field: str, domain: str | None) -> dict:
+    rec = recognition.field_result(text, domain, field)
+    return {"original": rec["original"], "text": rec["text"], "outcome": rec["outcome"], "reasons": rec["reasons"],
+            "spans": [{k: x[k] for k in ("original", "status", "code", "reason", "start", "end", "explanation")} for x in rec["spans"]],
+            "suggestions": rec["suggestions"], "domain": domain}
+
+
 # ---------------------------------------------------------------- helpers
 
 def _branch(db: Session, branch_id: UUID) -> Branch:
@@ -369,6 +390,29 @@ def create_question(body: QuestionIn, p: Principal = Depends(get_principal), db:
     return v
 
 
+def _pictures_of(qv: QuestionVersion | None) -> dict:
+    """The picture columns of a question version that are set ({column: asset id})."""
+    if qv is None:
+        return {}
+    return {c: getattr(qv, c) for c in IMAGE_FIELD_COLUMNS.values() if getattr(qv, c) is not None}
+
+
+def _picture_rule(content: dict, pictures: dict) -> None:
+    """The template rule for every way a question version is written: the question has its text, its picture or both (a text
+    question needs at least 3 characters); each option has its text or its picture, never both and never neither."""
+    stem = (content.get("stem") or "").strip()
+    if not stem and "stem_image_id" not in pictures:
+        raise api_error(422, "QUESTION_EMPTY", "The question needs its text or its picture.")
+    if stem and len(stem) < 3 and "stem_image_id" not in pictures:
+        raise api_error(422, "QUESTION_TOO_SHORT", "The question text is too short.")
+    for k in "abcd":
+        text, picture = (content.get(f"option_{k}") or "").strip(), f"option_{k}_image_id" in pictures
+        if text and picture:
+            raise api_error(422, "OPTION_TEXT_AND_PICTURE", f"Option {k.upper()} has a picture, so leave its text empty.")
+        if not text and not picture:
+            raise api_error(422, "OPTION_EMPTY", f"Option {k.upper()} needs its text or its picture.")
+
+
 def _active_subject(db: Session, subject_id: UUID) -> None:
     subj = db.get(Subject, subject_id)
     if not subj or subj.status != "ACTIVE":
@@ -382,7 +426,11 @@ def new_question_version(question_id: UUID, body: QuestionVersionIn, p: Principa
         raise api_error(404, "NOT_FOUND", "Question not found.")
     _scope(p, "question.manage", q, db, owner_only_for_teachers=True)
     last = db.scalar(select(func.max(QuestionVersion.version_no)).where(QuestionVersion.question_id == question_id)) or 0
-    v = QuestionVersion(question_id=question_id, version_no=last + 1, created_by=p.staff_id, **body.model_dump())
+    previous = db.scalar(select(QuestionVersion).where(QuestionVersion.question_id == question_id, QuestionVersion.version_no == last))
+    pictures = _pictures_of(previous)                       # a new version keeps the question's pictures
+    content = body.model_dump()
+    _picture_rule(content, pictures)
+    v = QuestionVersion(question_id=question_id, version_no=last + 1, created_by=p.staff_id, **content, **pictures)
     db.add(v)
     db.commit()  # earlier versions (and any paper that used them) are untouched
     audit.record(db, "question.new_version", "SUCCESS", actor=p.staff_id, target_type="question", target_id=question_id,
@@ -637,18 +685,52 @@ def question_taxonomy(scope: str = Query(default="ALL", pattern="^(ALL|GLOBAL|PR
 def upload_paper(branch_id: UUID, subject_id: UUID, title: str = Form(min_length=3, max_length=255),
                  paper_id: UUID | None = Form(default=None), file: UploadFile = File(...),
                  answer_key: UploadFile | None = File(default=None),
+                 preview: bool = Form(default=False), resolutions: str | None = Form(default=None),
+                 review_token: str | None = Form(default=None),
                  p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Upload a paper. `preview=true` returns every extracted question with its scientific-notation recognition (nothing is stored).
+    An import stores the paper only when no field needs review, or when `resolutions` (the provider's decision for each flagged
+    field, made on the preview identified by `review_token`) resolve every one; otherwise it is rejected with REVIEW_REQUIRED."""
     br = _branch(db, branch_id)
     p.require(db, "paper.upload", provider_id=br.provider_id, branch_id=branch_id, subject_id=subject_id)
     _check_subject(db, br.provider_id, subject_id)
+    data, key_data, ext, stored_type = _read_upload(file, answer_key)
+    existing = _target_paper(db, p, paper_id, br, branch_id, subject_id)
+
+    try:
+        decisions = recognition.parse_resolutions(resolutions)
+    except recognition.ResolutionError as exc:
+        raise api_error(422, "INVALID_RESOLUTIONS", str(exc))
+    subject = db.get(Subject, subject_id)                               # its name is only recorded with the recognition audit
+    # the authoritative subject_id, through the explicit configured mapping; never the subject's name, a file's topic or its text
+    domain = domain_of_subject_id(subject_id, settings.recognition_subject_categories)
+    token = recognition.review_token(data, key_data, domain)
+    if decisions and review_token != token:
+        raise api_error(409, "REVIEW_STALE", "The file, answer key or subject changed since the preview; preview the paper again.")
+    if preview:
+        from fastapi.responses import JSONResponse
+        # 200: no paper, upload or question is created; only the pictures are stored, so the preview can show them
+        return JSONResponse(_preview(data, key_data, ext, stored_type, domain, token, image_saver(db, p, br.provider_id)))
+
+    sf = _store_file(db, p, br, data, file.filename or "upload", stored_type)
+    key_file = _store_file(db, p, br, key_data, answer_key.filename or "answer-key", "text/csv") if key_data is not None else None
+    return import_reviewed(db, p, br, subject_id, title, existing, sf, key_file, data, key_data, ext, stored_type, decisions, token,
+                           domain, subject)[0]
+
+
+def _read_upload(file: UploadFile, answer_key: UploadFile | None) -> tuple[bytes, bytes | None, str, str]:
+    """The question file and the optional answer key, checked (type, size, not empty): (data, key data, extension, stored type)."""
     name_l = (file.filename or "").lower()
     ext = next((e for e in UPLOAD_KINDS if name_l.endswith(e)), None)
     if ext is None or (file.content_type or "").split(";")[0].strip().lower() not in UPLOAD_KINDS[ext][0]:
-        raise api_error(415, "UNSUPPORTED_FILE", "Upload a .csv, one-sheet .xlsx, .docx or text .pdf file (images only where image extraction is enabled).")
+        raise api_error(415, "UNSUPPORTED_FILE", "Upload a .csv, one-sheet .xlsx, .zip package (CSV + images), .docx or text .pdf file.")
     stored_type = UPLOAD_KINDS[ext][1]
-    data = file.file.read(settings.max_upload_bytes + 1)
-    if len(data) > settings.max_upload_bytes:
-        raise api_error(413, "FILE_TOO_LARGE", f"File exceeds {settings.max_upload_bytes // 1024} KB.")
+    # a workbook or .zip package carries the question pictures, so it may be larger than a text-only paper
+    limit = settings.max_package_upload_bytes if ext in (".xlsx", ".zip") else settings.max_upload_bytes
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise api_error(413, "FILE_TOO_LARGE", f"File exceeds {limit // (1024 * 1024)} MB." if limit >= 1024 * 1024
+                        else f"File exceeds {limit // 1024} KB.")
     if not data:
         raise api_error(422, "EMPTY_FILE", "The file is empty.")
 
@@ -662,47 +744,64 @@ def upload_paper(branch_id: UUID, subject_id: UUID, title: str = Form(min_length
             raise api_error(413, "FILE_TOO_LARGE", f"Answer key exceeds {settings.max_upload_bytes // 1024} KB.")
         if not key_data:
             raise api_error(422, "EMPTY_FILE", "The answer key is empty.")
+    return data, key_data, ext, stored_type
 
+
+def _target_paper(db: Session, p: Principal, paper_id: UUID | None, br: Branch, branch_id: UUID, subject_id: UUID) -> Paper | None:
+    """The paper an upload becomes the next version of, checked against the branch, the subject and the uploader's scope."""
     existing = None
     if paper_id:
         existing = _paper(db, paper_id)
         if (existing.provider_id, existing.branch_id, existing.subject_id) != (br.provider_id, branch_id, subject_id):
             raise api_error(422, "PAPER_MISMATCH", "Paper belongs to a different branch or subject.")
         _scope(p, "paper.upload", existing, db, owner_only_for_teachers=True)
+    return existing
 
+
+def _store_file(db: Session, p: Principal, br: Branch, data: bytes, name: str, content_type: str) -> StoredFile:
     key, sha = get_store().save(data)
-    sf = StoredFile(provider_id=br.provider_id, storage_key=key, original_name=(file.filename or "upload")[:255],
-                    content_type=stored_type, size_bytes=len(data), sha256=sha, uploaded_by=p.staff_id)
+    sf = StoredFile(provider_id=br.provider_id, storage_key=key, original_name=name[:255], content_type=content_type,
+                    size_bytes=len(data), sha256=sha, uploaded_by=p.staff_id)
     db.add(sf)
     db.flush()
-    key_file, mapping = None, None
+    return sf
+
+
+def import_reviewed(db: Session, p: Principal, br: Branch, subject_id: UUID, title: str, existing: Paper | None, sf: StoredFile,
+                    key_file: StoredFile | None, data: bytes, key_data: bytes | None, ext: str, stored_type: str, decisions: dict,
+                    token: str, domain: str | None, subject) -> tuple[dict, PaperUpload]:
+    """Extract, apply the reviewer's decisions and store the paper - or keep a REJECTED upload with its reasons and raise. Used by
+    the upload (file sent again with its decisions) and by a saved review draft (files already stored)."""
+    branch_id = br.branch_id
+    mapping = None
     key_errors: list[dict] = []
     if key_data is not None:
-        k_key, k_sha = get_store().save(key_data)
-        key_file = StoredFile(provider_id=br.provider_id, storage_key=k_key, original_name=(answer_key.filename or "answer-key")[:255],
-                              content_type="text/csv", size_bytes=len(key_data), sha256=k_sha, uploaded_by=p.staff_id)
-        db.add(key_file)
-        db.flush()
         mapping, key_errors = extraction.parse_answer_key(key_data, settings.max_paper_questions)
-    with extraction.answer_key(mapping if key_data is not None and not key_errors else None):
-        if key_errors:
-            result = extraction.ExtractionResult(errors=key_errors)     # an unreadable key rejects the paper before extraction
-        elif ext == ".csv":
-            result = extraction.extract_csv(data, settings.max_paper_questions)
-        elif ext == ".xlsx":
-            result = extraction.extract_xlsx(data, settings.max_paper_questions)
-        elif ext == ".docx":
-            result = documents.extract_docx(data, settings.max_paper_questions)
-        elif ext == ".pdf":
-            result = documents.extract_pdf(data, settings.max_paper_questions)
+    result, review = _extract_and_review(data, ext, stored_type, mapping, key_errors, key_data is not None, domain)
+    rec_problems = []
+    if result.ok:
+        questions, review, rec_problems = recognition.apply_resolutions(result.questions, review, decisions, domain)
+        if rec_problems:
+            result = extraction.ExtractionResult(errors=rec_problems, detected=len(result.questions))
         else:
-            result = extraction.extract_image(data, stored_type, extraction.get_ocr_backend(), settings.max_paper_questions, settings.ocr_min_confidence)
+            result.questions = questions
     upload = PaperUpload(provider_id=br.provider_id, branch_id=branch_id, subject_id=subject_id, file_id=sf.file_id, title=title,
                          answer_key_file_id=key_file.file_id if key_file else None,
                          uploaded_by=p.staff_id, status="VALIDATED" if result.ok else "REJECTED",
                          question_count=len(result.questions), errors=result.errors or None,
                          uploaded_ip=p.ip if p.ip != "unknown" else None)
+    if review is not None:
+        upload.recognition = recognition.record(review, domain, subject.name if subject else None, token, p.staff_id)
     db.add(upload)
+    if rec_problems:
+        db.commit()
+        audit.record(db, "paper.upload", "FAILURE", actor=p.staff_id, target_type="upload", target_id=upload.upload_id,
+                     provider_id=br.provider_id, branch_id=branch_id, ip=p.ip, details={"review_required": len(rec_problems)})
+        raise api_error_detail(422, "REVIEW_REQUIRED", f"Nothing was imported: {len(rec_problems)} field(s) with mathematical or scientific "
+                               "notation need your review. Upload the file from Question Bank > Import Processing (Validate & preview) to "
+                               "decide on each flagged field, then import.",
+                               upload_id=str(upload.upload_id), errors=rec_problems[:200], review_token=token,
+                               questions=review, recognition_summary=recognition.summary(review))
     if not result.ok:
         db.commit()  # keep the rejected upload and its precise errors for the uploader
         audit.record(db, "paper.upload", "FAILURE", actor=p.staff_id, target_type="upload", target_id=upload.upload_id,
@@ -715,14 +814,62 @@ def upload_paper(branch_id: UUID, subject_id: UUID, title: str = Form(min_length
                    f"The paper was rejected: {summary['failed_questions']} question(s) need correcting. Nothing was imported; fix them and upload again.")
         raise api_error_detail(422, "EXTRACTION_FAILED", message, upload_id=str(upload.upload_id), errors=result.errors[:200], summary=summary)
 
-    return persist_validated_paper(db, p, br, title, existing, result, upload)
+    return persist_validated_paper(db, p, br, title, existing, result, upload), upload
+
+
+def _extract_and_review(data: bytes, ext: str, stored_type: str, mapping, key_errors: list[dict], has_key: bool, domain: str | None):
+    """Read the paper and check the notation of every text field. Files are processed in an isolated process with a timeout and
+    memory limit (services/isolation.py); a failure there is an explicit, whole-paper extraction error, never a partial result.
+    Pictures are stored and shown exactly as uploaded: nothing reads their contents."""
+    if settings.extraction_isolated:
+        limits = isolation.Limits(settings.extraction_timeout_seconds, settings.extraction_memory_mb)
+        try:
+            return isolation.run_isolated(isolation.extract_and_review, data, ext, stored_type, mapping, key_errors, has_key,
+                                          settings.max_paper_questions, domain, limits=limits)
+        except isolation.IsolationError as exc:
+            message = isolation.FAILURE_MESSAGES[exc.kind].format(detail=exc.detail)
+            return extraction.ExtractionResult(errors=[{"row": None, "field": None, "message": message,
+                                                         "code": f"PROCESSING_{exc.kind.upper()}"}]), None
+    result = isolation.extract_upload(data, ext, stored_type, mapping, key_errors, has_key, settings.max_paper_questions)
+    return result, (recognition.review_paper(result.questions, domain) if result.ok else None)
+
+
+def image_saver(db: Session, p: Principal, provider_id: UUID):
+    """Stores a preview's pictures for this provider (see image_assets.store_images) and commits them."""
+    def save(images) -> dict[str, UUID]:
+        stored = image_assets.store_images(db, provider_id, images, p.staff_id, p.ip if p.ip != "unknown" else None)
+        db.commit()
+        return stored
+    return save
+
+
+def _preview(data: bytes, key_data: bytes | None, ext: str, stored_type: str, domain: str | None, token: str, save_images=None) -> dict:
+    """Extraction and recognition only: a preview never creates an upload, a paper or a question. `save_images` stores the paper's
+    pictures (so the preview can display them) and returns {sha256: asset_id}; each picture in the preview then carries its asset_id."""
+    mapping, key_errors = (None, [])
+    if key_data is not None:
+        mapping, key_errors = extraction.parse_answer_key(key_data, settings.max_paper_questions)
+    result, review = _extract_and_review(data, ext, stored_type, mapping, key_errors, key_data is not None, domain)
+    if not result.ok:
+        raise api_error_detail(422, "EXTRACTION_FAILED", "The paper cannot be imported: correct the problems below and upload again.",
+                               errors=result.errors[:200], summary=validation_summary(result))
+    if save_images is not None:
+        stored = save_images(img for q in result.questions for img in q.images.values())
+        for entry in review:
+            for image in entry.get("images", {}).values():
+                image["asset_id"] = str(stored[image["sha256"]])
+    return {"preview": True, "review_token": token, "engine_version": recognition.ENGINE_VERSION, "domain": domain,
+            "summary": recognition.summary(review), "questions": review}
 
 
 def persist_validated_paper(db: Session, p: Principal, br: Branch, title: str, existing: Paper | None, result, upload: PaperUpload) -> dict:
     """Store a fully validated extraction as a new VALIDATED paper version (or refuse an identical paper). Shared by file uploads and
     accepted photo drafts, so every import path creates papers, questions and history the same way."""
     branch_id, subject_id = br.branch_id, upload.subject_id
-    content_hash = _hash_questions([(q.stem, *q.options.values(), q.correct, q.marks, q.negative) for q in result.questions])
+    content_hash = _hash_questions([(q.stem, *q.options.values(), q.correct, q.marks, q.negative,
+                                     *sorted(f"{f}:{img.sha256}" for f, img in q.images.items())) for q in result.questions])
+    stored = image_assets.store_images(db, br.provider_id, (img for q in result.questions for img in q.images.values()),
+                                       p.staff_id, p.ip if p.ip != "unknown" else None)
     dup = db.scalar(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
         Paper.branch_id == branch_id, Paper.subject_id == subject_id, PaperVersion.content_hash == content_hash,
         PaperVersion.status != "WITHDRAWN"))
@@ -747,9 +894,12 @@ def persist_validated_paper(db: Session, p: Principal, br: Branch, title: str, e
         db.add(bank)
         db.flush()
         bank.topic = (q.topic or None) and q.topic[:200]
+        bank.chapter = (q.chapter or None) and q.chapter[:80]
+        bank.subtopic = (q.sub_topic or None) and q.sub_topic[:80]
         qv = QuestionVersion(question_id=bank.question_id, version_no=1, stem=q.stem, option_a=q.options["A"], option_b=q.options["B"],
                              option_c=q.options["C"], option_d=q.options["D"], correct_option=q.correct, explanation=q.explanation,
-                             topic=q.topic, marks_positive=q.marks, marks_negative=q.negative, created_by=p.staff_id)
+                             topic=q.topic, marks_positive=q.marks, marks_negative=q.negative, created_by=p.staff_id,
+                             **{IMAGE_FIELD_COLUMNS[f]: stored[img.sha256] for f, img in q.images.items()})
         db.add(qv)
         db.flush()
         db.add(PaperVersionQuestion(paper_version_id=pv.paper_version_id, position=pos, question_version_id=qv.question_version_id))
@@ -774,7 +924,8 @@ def get_upload(upload_id: UUID, p: Principal = Depends(get_principal), db: Sessi
         raise api_error(404, "NOT_FOUND", "Upload not found.")
     _scope(p, "paper.read", u, db)
     return {"upload_id": str(u.upload_id), "status": u.status, "question_count": u.question_count, "errors": u.errors or [],
-            "paper_version_id": str(u.paper_version_id) if u.paper_version_id else None, "created_at": u.created_at.isoformat()}
+            "paper_version_id": str(u.paper_version_id) if u.paper_version_id else None, "created_at": u.created_at.isoformat(),
+            "recognition": u.recognition}
 
 
 @router.get("/uploads/{upload_id}/file")
@@ -783,6 +934,9 @@ def download_upload(upload_id: UUID, p: Principal = Depends(get_principal), db: 
     if not u:
         raise api_error(404, "NOT_FOUND", "Upload not found.")
     _scope(p, "paper.read", u, db)
+    # the source file holds the same questions as the paper, so it follows the same rule (a rejected upload has no version)
+    version = db.get(PaperVersion, u.paper_version_id) if u.paper_version_id else None
+    _require_downloadable(db, p, version.status if version else None, u)
     sf = db.get(StoredFile, u.file_id)
     try:
         body = get_store().read(sf.storage_key)
@@ -790,18 +944,61 @@ def download_upload(upload_id: UUID, p: Principal = Depends(get_principal), db: 
         raise api_error(404, "FILE_MISSING", "The stored file is unavailable.")
     audit.record(db, "paper.download", "SUCCESS", actor=p.staff_id, target_type="upload", target_id=upload_id,
                  provider_id=u.provider_id, branch_id=u.branch_id, ip=p.ip)
-    ext = next((e for e, (_, t) in UPLOAD_KINDS.items() if t == sf.content_type), ".csv")
-    return Response(body, media_type=sf.content_type if sf.content_type in {t for _, t in UPLOAD_KINDS.values()} else "application/octet-stream", headers={
+    ext = next((e for e, (_, t) in STORED_KINDS.items() if t == sf.content_type), ".csv")
+    return Response(body, media_type=sf.content_type if sf.content_type in {t for _, t in STORED_KINDS.values()} else "application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="paper{ext}"', "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------------------------------------------------------- question pictures
+
+IMAGE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",                  # the stored MIME type was sniffed from the bytes at upload; never re-sniffed
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "private, max-age=86400, immutable",  # an asset's bytes never change; private: only this signed-in browser
+    "Content-Disposition": "inline",
+}
+
+
+@router.get("/question-images/{asset_id}")
+def question_image(asset_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """A question or option picture, for staff of the provider that uploaded it. Any other request gets the same 404 as a missing
+    picture, so asset ids of other providers cannot be probed."""
+    from institute_common.core.security import can_see_provider
+    asset = db.get(QuestionImageAsset, asset_id)
+    if asset is None or not p.has_perm("paper.read") or not can_see_provider(p, asset.provider_id):
+        raise api_error(404, "NOT_FOUND", "Picture not found.")
+    try:
+        body = image_assets.image_bytes(asset)
+    except LookupError:
+        raise api_error(404, "FILE_MISSING", "The stored picture is unavailable.")
+    return Response(body, media_type=asset.mime_type, headers=IMAGE_HEADERS)
 
 
 # ---------------------------------------------------------------- papers
 
-def _paper_out(db: Session, paper: Paper) -> PaperOut:
-    lv = _latest(db, paper.paper_id)
+def _stored_pictures(m: dict) -> dict:
+    """A stored question's pictures as the validator's image columns. Stored pictures are compared by asset id (an asset is one
+    provider's one picture), so two options showing the same picture are still 'identical options'."""
+    from inst_paper.services.question_images import ExtractedImage
+    columns = {"stem_image_id": "question_image", "option_a_image_id": "option_a_image", "option_b_image_id": "option_b_image",
+               "option_c_image_id": "option_c_image", "option_d_image_id": "option_d_image"}
+    return {columns[c]: ExtractedImage(name="stored picture", mime="", sha256=str(m[c]), width=0, height=0, data=b"")
+            for c in columns if m.get(c)}
+
+
+def _paper_out(db: Session, paper: Paper, latest: dict | None = None) -> PaperOut:
+    lv = _latest(db, paper.paper_id) if latest is None else latest.get(paper.paper_id)
     return PaperOut(paper_id=paper.paper_id, scope=paper.scope, provider_id=paper.provider_id, branch_id=paper.branch_id,
                     subject_id=paper.subject_id, title=paper.title, exam_type=paper.exam_type, target_class=paper.target_class,
                     created_by=paper.created_by, latest_version=PaperVersionOut.model_validate(lv) if lv else None)
+
+
+def _paper_page(db: Session, papers: list[Paper]) -> list[PaperOut]:
+    """PaperOut for a page of papers, with every latest version read in one statement."""
+    latest: dict = {}
+    for v in db.scalars(select(PaperVersion).where(PaperVersion.paper_id.in_([x.paper_id for x in papers] or [None])).order_by(PaperVersion.version_no)):
+        latest[v.paper_id] = v
+    return [_paper_out(db, x, latest) for x in papers]
 
 
 @router.post("/papers", status_code=201)
@@ -902,6 +1099,22 @@ def _check_build(body: PaperBuildIn, p: Principal, db: Session):
 
 
 
+def _live_branches(provider_id: UUID):
+    return select(Branch.branch_id).where(Branch.provider_id == provider_id, Branch.deleted_at.is_(None))
+
+
+def _readable_in_provider(db: Session, p: Principal, provider_id: UUID):
+    """The papers of one provider `p` may read, whatever their branch: the list form of `_scope(p, "paper.read", ...)`. A Provider Admin
+    reads every branch, a Branch Admin their own branches, a Teacher the subjects they teach in each branch."""
+    if p.can("paper.read", exclude_roles=(Role.TEACHER,), provider_id=provider_id):
+        return true()
+    if not any(a.provider_id == provider_id for a in p.assignments):
+        p.require(db, "paper.read", provider_id=provider_id)
+    branches = {a.branch_id for a in p.assignments if a.role == Role.BRANCH_ADMIN and a.provider_id == provider_id}
+    taught = {(t.branch_id, t.subject_id) for t in p.teaching if t.provider_id == provider_id}
+    return or_(Paper.branch_id.in_(branches or [None]), *(and_(Paper.branch_id == b, Paper.subject_id == s) for b, s in taught))
+
+
 @router.get("/papers", response_model=Page[PaperOut])
 def paper_catalogue(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PROVIDER)$"), provider_id: UUID | None = None,
                     branch_id: UUID | None = None, subject_id: UUID | None = None,
@@ -909,14 +1122,17 @@ def paper_catalogue(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PRO
                     q: str | None = Query(default=None, max_length=100), page: int = 1, page_size: int = 25,
                     p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Platform papers (scope=GLOBAL, readable by all staff with paper.read) or provider papers (platform roles: any provider,
-    optionally narrowed; everyone else: one branch they can read, teachers only their subjects)."""
+    optionally narrowed; everyone else: one branch they can read, or with provider_id alone every branch of that provider they can read;
+    teachers only their subjects). A provider outside the caller's scope is refused, never silently emptied."""
     stmt = select(Paper).where(Paper.scope == scope)
     if scope == "GLOBAL":
         if not p.has_perm("paper.read"):
             p.require(db, "paper.read")
     elif p.is_global and p.has_perm("paper.read") and not branch_id:
         if provider_id:
-            stmt = stmt.where(Paper.provider_id == provider_id)
+            stmt = stmt.where(Paper.provider_id == provider_id, Paper.branch_id.in_(_live_branches(provider_id)))
+    elif provider_id and not branch_id:
+        stmt = stmt.where(Paper.provider_id == provider_id, Paper.branch_id.in_(_live_branches(provider_id)), _readable_in_provider(db, p, provider_id))
     else:
         if not branch_id:
             raise api_error(422, "BRANCH_REQUIRED", "Choose a branch to list its papers.")
@@ -932,8 +1148,8 @@ def paper_catalogue(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PRO
         stmt = stmt.where(Paper.title.ilike(f"%{escape_like(q)}%", escape="\\"))
     if status:
         stmt = stmt.where(Paper.paper_id.in_(select(PaperVersion.paper_id).where(PaperVersion.status == status)))
-    res = paginate(db, stmt.order_by(Paper.created_at.desc()), page, page_size)
-    res["items"] = [_paper_out(db, x) for x in res["items"]]
+    res = paginate(db, stmt.order_by(Paper.created_at.desc(), Paper.paper_id), page, page_size)
+    res["items"] = _paper_page(db, res["items"])
     return res
 
 
@@ -988,8 +1204,8 @@ def list_papers(branch_id: UUID, subject_id: UUID | None = None, status: str | N
         stmt = stmt.where(Paper.subject_id.in_(taught)) if taught else stmt.where(False)
     if status:
         stmt = stmt.where(Paper.paper_id.in_(select(PaperVersion.paper_id).where(PaperVersion.status == status)))
-    res = paginate(db, stmt.order_by(Paper.created_at.desc()), page, page_size)
-    res["items"] = [_paper_out(db, x) for x in res["items"]]
+    res = paginate(db, stmt.order_by(Paper.created_at.desc(), Paper.paper_id), page, page_size)
+    res["items"] = _paper_page(db, res["items"])
     return res
 
 
@@ -1010,15 +1226,15 @@ def get_paper_version(pv_id: UUID, p: Principal = Depends(get_principal), db: Se
 
 # ---------------------------------------------------------------- PDF downloads: question paper (never the answers) and answer key
 
-MAX_PDF_PAPERS = 30          # papers per bulk request
+DOWNLOADABLE = {"APPROVED", "PUBLISHED", "SUPERSEDED"}     # never a draft or a withdrawn version; superseded versions stay in use by past exams
 
 
-def _may_read(p: Principal, paper: Paper) -> bool:
-    """`paper.read` exactly as _scope grants it (platform papers: every holder; provider papers: the paper's provider/branch/subject,
-    teachers through their teaching assignments), without raising: used to filter a bulk download."""
-    if paper.scope == "GLOBAL":
-        return p.has_perm("paper.read")
-    return p.can("paper.read", provider_id=paper.provider_id, branch_id=paper.branch_id, subject_id=paper.subject_id)
+def _require_downloadable(db: Session, p: Principal, status: str | None, paper) -> None:
+    """Paper files leave the platform only once approved: the single check behind every download route (the UI only mirrors it)."""
+    if status not in DOWNLOADABLE:
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=paper.provider_id, branch_id=paper.branch_id,
+                     details={"permission": "paper.download", "reason": "not_approved", "status": status})
+        raise api_error(403, "PAPER_NOT_APPROVED", "This paper can be downloaded once it has been approved.")
 
 
 def _versions_questions(db: Session, version_ids) -> list[tuple[UUID, QuestionVersion, UUID]]:
@@ -1034,7 +1250,7 @@ def _versions_questions(db: Session, version_ids) -> list[tuple[UUID, QuestionVe
 def _require_answer_key(db: Session, p: Principal, version_ids, rows) -> None:
     """The answer key needs the paper (checked by the caller) AND the correct answers, by the same rule as the paper's detail page
     (AnswerPolicy: a platform paper reserved for a Global Test keeps its answers from non-platform staff until an exam of theirs using it
-    has closed). Any withheld answer refuses the whole request, so a bulk download never yields a key its paper would not."""
+    has closed)."""
     hidden = AnswerPolicy(db, p, [qv for _vid, qv, _s in rows]).hidden
     if hidden:
         audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip,
@@ -1116,6 +1332,7 @@ def _download(content: bytes, media_type: str, name: str) -> Response:
 def _one(db: Session, p: Principal, pv_id: UUID, answer_key: bool) -> Response:
     v, paper = _pv(db, pv_id)
     _scope(p, "paper.read", paper, db)
+    _require_downloadable(db, p, v.status, paper)
     rows = _versions_questions(db, [pv_id])
     if answer_key:
         _require_answer_key(db, p, [pv_id], rows)
@@ -1139,69 +1356,23 @@ def paper_version_answer_key(pv_id: UUID, p: Principal = Depends(get_principal),
     return _one(db, p, pv_id, answer_key=True)
 
 
-def _bulk(db: Session, p: Principal, answer_key: bool, scope: str, provider_id: UUID | None, branch_id: UUID | None, subject_id: UUID | None,
-          status: str | None, q: str | None) -> Response:
-    """Every paper the caller may read that matches the Papers list's filters, one PDF each in a ZIP: a branch, or a whole provider
-    (all of its branches the caller may read), or the platform papers. Each paper's latest version (with `status`: its latest version in
-    that status). An explicitly named provider or branch outside the caller's scope is refused, never silently emptied."""
-    if not p.has_perm("paper.read"):
-        p.require(db, "paper.read")
-    stmt = select(Paper).where(Paper.scope == scope)
-    if scope == "PROVIDER":
-        if branch_id:
-            br = _branch(db, branch_id)
-            if not p.can("paper.read", provider_id=br.provider_id, branch_id=branch_id):
-                p.require(db, "paper.read", provider_id=br.provider_id, branch_id=branch_id)
-            stmt = stmt.where(Paper.branch_id == branch_id)
-        provs = p.scope_provider_ids("paper.read")
-        if provider_id:
-            if provs is not None and provider_id not in provs:
-                p.require(db, "paper.read", provider_id=provider_id)
-            stmt = stmt.where(Paper.provider_id == provider_id)
-        if provs is not None:
-            stmt = stmt.where(Paper.provider_id.in_(provs or [None]))
-    if subject_id:
-        stmt = stmt.where(Paper.subject_id == subject_id)
-    if q:
-        stmt = stmt.where(Paper.title.ilike(f"%{escape_like(q)}%", escape="\\"))
-    items = []
-    for paper in db.scalars(stmt.order_by(Paper.title, Paper.created_at)):
-        if not _may_read(p, paper):
-            continue
-        vq = select(PaperVersion).where(PaperVersion.paper_id == paper.paper_id)
-        v = db.scalar((vq.where(PaperVersion.status == status) if status else vq).order_by(PaperVersion.version_no.desc()).limit(1))
-        if v:
-            items.append((paper, v))
-    if not items:
-        raise api_error(404, "NO_PAPERS", "There is no paper you may download with these filters.")
-    if len(items) > MAX_PDF_PAPERS:
-        raise api_error(422, "TOO_MANY_PAPERS", f"{len(items)} papers match; download at most {MAX_PDF_PAPERS} at once (choose a branch or a subject).")
-    version_ids = [v.paper_version_id for _x, v in items]
-    rows = _versions_questions(db, version_ids)
-    if answer_key:
-        _require_answer_key(db, p, version_ids, rows)
-    audit.record(db, "paper.answer_key.download" if answer_key else "paper.download", "SUCCESS", actor=p.staff_id, target_type="papers",
-                 provider_id=provider_id, branch_id=branch_id, ip=p.ip,
-                 details={"format": "zip", "papers": len(items), "scope": scope, "subject_id": str(subject_id) if subject_id else None})
-    name = "answer-keys.zip" if answer_key else "question-papers.zip"
-    return _download(paper_pdf.bundle(_pdf_papers(db, p, items, rows, with_answers=answer_key), answer_key), "application/zip", name)
+@router.post("/branches/{branch_id}/subjects/{subject_id}/recognition-preview")
+def recognition_preview_for_import(branch_id: UUID, subject_id: UUID, body: RecognitionPreviewIn, p: Principal = Depends(get_principal),
+                                   db: Session = Depends(get_db)):
+    """Live preview of a correction typed in the import Review: the same recognition and the same subject domain as the import."""
+    br = _branch(db, branch_id)
+    p.require(db, "paper.upload", provider_id=br.provider_id, branch_id=branch_id, subject_id=subject_id)
+    _check_subject(db, br.provider_id, subject_id)
+    return _recognition_preview(body.text, body.field, domain_of_subject_id(subject_id, settings.recognition_subject_categories))
 
 
-@router.get("/papers/pdf")
-def papers_pdf(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PROVIDER)$"), provider_id: UUID | None = None, branch_id: UUID | None = None,
-               subject_id: UUID | None = None, status: str | None = Query(default=None, pattern="^(VALIDATED|APPROVED|PUBLISHED|SUPERSEDED|WITHDRAWN)$"),
-               q: str | None = Query(default=None, max_length=100), p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Question papers (ZIP of PDFs) of the filter; see _bulk."""
-    return _bulk(db, p, False, scope, provider_id, branch_id, subject_id, status, q)
-
-
-@router.get("/papers/answer-keys")
-def papers_answer_keys(scope: str = Query(default="PROVIDER", pattern="^(GLOBAL|PROVIDER)$"), provider_id: UUID | None = None,
-                       branch_id: UUID | None = None, subject_id: UUID | None = None,
-                       status: str | None = Query(default=None, pattern="^(VALIDATED|APPROVED|PUBLISHED|SUPERSEDED|WITHDRAWN)$"),
-                       q: str | None = Query(default=None, max_length=100), p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Answer keys (ZIP of PDFs) of the same papers as GET /papers/pdf; refused with 403 if any of their answers is withheld."""
-    return _bulk(db, p, True, scope, provider_id, branch_id, subject_id, status, q)
+@router.post("/paper-versions/{pv_id}/recognition-preview")
+def recognition_preview_for_correction(pv_id: UUID, body: RecognitionPreviewIn, p: Principal = Depends(get_principal),
+                                       db: Session = Depends(get_db)):
+    """Live preview of a correction typed in the Correct dialog: exactly what saving the correction would store (see revise_paper)."""
+    _, paper = _pv(db, pv_id)
+    _scope(p, "paper.create", paper, db, owner_only_for_teachers=True)
+    return _recognition_preview(body.text, body.field, domain_of_subject_id(paper.subject_id, settings.recognition_subject_categories))
 
 
 @router.post("/paper-versions/{pv_id}/revisions", response_model=PaperVersionOut, status_code=201)
@@ -1231,7 +1402,8 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
     for pos, qv in current.items():
         m = {"stem": qv.stem, "option_a": qv.option_a, "option_b": qv.option_b, "option_c": qv.option_c, "option_d": qv.option_d,
              "correct_option": qv.correct_option, "marks_positive": qv.marks_positive, "marks_negative": qv.marks_negative,
-             "explanation": qv.explanation, "topic": qv.topic}
+             "explanation": qv.explanation, "topic": qv.topic,
+             **{c: getattr(qv, c) for c in IMAGE_FIELD_COLUMNS.values()}}      # pictures are kept by a correction
         if pos in edits:
             new = {**m, **edits[pos].changes()}
             if any(new[k] != m[k] for k in m):
@@ -1241,21 +1413,52 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
     if not changed:
         raise api_error(409, "NO_CHANGE", "These corrections do not change anything.")
 
+    # a corrected text goes through the same recognition as an edit in the import review: its maths is stored typeset (\( \)),
+    # and a text the engine cannot read with certainty is refused with the reason (nothing is created)
+    domain = domain_of_subject_id(paper.subject_id, settings.recognition_subject_categories)
+    unreadable = []
+    for pos in sorted(changed):
+        for col, f in (("stem", "question"), ("option_a", "option_a"), ("option_b", "option_b"), ("option_c", "option_c"),
+                       ("option_d", "option_d"), ("explanation", "explanation")):
+            text = merged[pos][col]
+            if text and text != getattr(current[pos], col):
+                r = recognise(markers.strip_private(text), subject=domain, formula_field=f.startswith("option_"))
+                if r.outcome in recognition.BLOCKING:
+                    unreadable.append({"row": pos, "field": f, "message": "Could not be formatted with certainty: "
+                                       + " ".join(s.reason or "" for s in r.flags) + " Write it as LaTeX in \\( … \\) or add brackets."})
+                merged[pos][col] = r.text
+    if unreadable:
+        raise api_error_detail(422, "REVISION_INVALID", "The corrected paper is not valid: nothing was created.", errors=unreadable[:200])
+
     check = extraction.validate_paper(
         [(pos + 1, {"question": m["stem"], "option_a": m["option_a"], "option_b": m["option_b"], "option_c": m["option_c"], "option_d": m["option_d"],
                     "correct": m["correct_option"], "marks": str(m["marks_positive"]), "negative_marks": str(m["marks_negative"]),
                     "explanation": m["explanation"] or "", "topic": m["topic"] or ""}) for pos, m in merged.items()],
-        settings.max_paper_questions)
+        settings.max_paper_questions, {pos + 1: _stored_pictures(m) for pos, m in merged.items()})
     if not check.ok:
         # error rows are spreadsheet-style (position + 1); report the question position
         errors = [{**e, "row": (e["row"] - 1) if e.get("row") else None} for e in check.errors]
         raise api_error_detail(422, "REVISION_INVALID", "The corrected paper is not valid: nothing was created.", errors=errors[:200])
 
     content_hash = _hash_questions([(m["stem"], m["option_a"], m["option_b"], m["option_c"], m["option_d"], m["correct_option"],
-                                     m["marks_positive"], m["marks_negative"]) for m in merged.values()])
-    dup = db.scalar(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
+                                     m["marks_positive"], m["marks_negative"],
+                                     *(str(m[c]) for c in IMAGE_FIELD_COLUMNS.values() if m[c])) for m in merged.values()])
+    same = db.scalars(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
         Paper.scope == paper.scope, Paper.branch_id == paper.branch_id if paper.branch_id else Paper.branch_id.is_(None),
-        Paper.subject_id == paper.subject_id, PaperVersion.content_hash == content_hash, PaperVersion.status != "WITHDRAWN"))
+        Paper.subject_id == paper.subject_id, PaperVersion.content_hash == content_hash, PaperVersion.status != "WITHDRAWN")).all()
+    # the explanation and topic are not part of a paper's identity (its hash), so a correction of only those is the next version of
+    # the SAME paper; it duplicates a version of this paper only when that version's explanations and topics are identical too
+    notes = [(m["explanation"] or "", m["topic"] or "") for m in merged.values()]
+
+    def identical(v: PaperVersion) -> bool:
+        if v.paper_id != paper.paper_id:
+            return True
+        rows = db.execute(select(QuestionVersion.explanation, QuestionVersion.topic).join(
+            PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+            .where(PaperVersionQuestion.paper_version_id == v.paper_version_id).order_by(PaperVersionQuestion.position)).all()
+        return [(e or "", t or "") for e, t in rows] == notes
+
+    dup = next((v for v in same if identical(v)), None)
     if dup:
         raise api_error_detail(409, "DUPLICATE_PAPER", "An identical paper already exists in this branch and subject.",
                                paper_version_id=str(dup.paper_version_id))
@@ -1293,7 +1496,11 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
     db.commit()
     audit.record(db, "paper.revise", "SUCCESS", actor=p.staff_id, target_type="paper_version", target_id=nv.paper_version_id,
                  provider_id=paper.provider_id, branch_id=paper.branch_id, reason=reason, ip=p.ip,
-                 details={"from_version": str(pv_id), "positions": sorted(changed), "copied_positions": forked})
+                 details={"from_version": str(pv_id), "positions": sorted(changed), "copied_positions": forked,
+                         # every corrected field: the value before and the value stored (the old version itself is never changed)
+                         "fields": [{"position": pos, "field": k, "before": str(getattr(current[pos], k)) if getattr(current[pos], k) is not None else None,
+                                     "after": str(merged[pos][k]) if merged[pos][k] is not None else None}
+                                    for pos in sorted(changed) for k in merged[pos] if merged[pos][k] != getattr(current[pos], k)]})
     return nv
 
 

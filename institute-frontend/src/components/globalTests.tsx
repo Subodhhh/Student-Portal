@@ -3,7 +3,7 @@ import { ClassTargetSelect } from "./classLevels";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { isGlobalRole } from "../auth/roles";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { subjectsOf } from "../services/globalSchedule";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, Pagination, SelectField, Spinner, StatusBadge, TextAreaField } from "./ui";
@@ -108,7 +108,7 @@ export function GlobalTestsPanel({ onContribute }: { onContribute?: (t: GlobalTe
 
 /** A Global Test definition: subjects, duration and marking. No paper is chosen here: providers submit theirs for each date. */
 export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; onClose: () => void; onDone: (t: GlobalTest) => void }) {
-  const subjects = useApi<Page<Subject & { status?: string }>>("/api/v1/subjects?page_size=200");
+  const subjects = useReference<Page<Subject & { status?: string }>>("/api/v1/subjects?page_size=200");
   const [f, setF] = useState({ name: test?.name ?? "", description: test?.description ?? "", exam_type: test?.exam_type ?? "", target_class: test?.target_class ?? "",
     duration: String(test?.duration_minutes ?? 60), marking: test?.marking_mode ?? "UNIFORM", correct: String(test?.marks_correct ?? 4),
     wrong: String(test?.marks_wrong ?? 1), leadHours: String((test?.generate_lead_minutes ?? 120) / 60) });
@@ -165,7 +165,7 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
 /** Editing an earlier draft built from platform papers (kind SECTIONS). */
 function SectionsTestForm({ test, onClose, onDone }: { test: GlobalTest; onClose: () => void; onDone: (t: GlobalTest) => void }) {
   const papers = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100");
-  const subjects = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
   // Platform copies of approved provider contributions, labelled so the administrator knows where a paper came from.
   const contributed = useApi<Page<{ global_paper_id: string | null; provider_name: string | null; test_name: string }>>("/api/v1/global-test-contributions?status=APPROVED&page_size=100");
   const origin = (paperId: string) => contributed.data?.items.find((c) => c.global_paper_id === paperId);

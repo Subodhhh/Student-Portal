@@ -317,11 +317,8 @@ services:
       IDENTITY_SERVICE_URL: http://institute-identity-service:8000
       IDENTITY_SERVICE_API_KEY: ${INSTITUTE_IDENTITY_KEY:-}
       INTERNAL_API_KEYS: ${INSTITUTE_PAPER_KEY:-}
-      # Printed-text OCR for scanned (PNG/JPEG) papers. Tesseract's scores are font-dependent and not probabilities (perfect print
-      # measures ~0.89-0.96), so the bar is 0.85 on the scoring-critical lines; weaker reads (handwriting, poor scans) reject the whole
-      # paper, the strict validator still applies, and every OCR draft needs a person's preview and approval before use.
-      OCR_ENGINE: tesseract
-      OCR_MIN_CONFIDENCE: "0.85"
+      # Question and option pictures are stored and shown exactly as uploaded, never read: OCR and picture recognition were removed
+      # on 2026-11-16 (backup and rollback: ~/backups/recognition-removal-20261116).
     volumes:
       - institute-files:/var/institute/files
     depends_on: [institute-identity-service]

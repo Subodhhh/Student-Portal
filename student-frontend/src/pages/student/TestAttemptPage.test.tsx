@@ -76,6 +76,26 @@ describe("Global Test attempt", () => {
   });
 });
 
+describe("Mathematical and chemical notation", () => {
+  it("typesets the question and its options exactly as approved in the institute preview", async () => {
+    const math = { ...q("q2", "Physics"), question_text: "Evaluate \\(\\int_{0}^{\\pi} \\sin x\\,dx\\) for \\(\\mathrm{SO_{4}^{2-}}\\).",
+      option_a: "\\(0\\)", option_b: "\\(1\\)", option_c: "\\(2\\)", option_d: "\\(\\pi\\)" };
+    globalTest.questions.splice(0, 1, math);
+    try {
+      renderAttempt();
+      await begin();
+      const heading = await screen.findByRole("heading", { level: 2, name: /Evaluate/ });
+      expect(heading.querySelectorAll(".katex").length).toBe(2);
+      expect(heading.textContent).not.toContain("\\int");                        // typeset, not LaTeX source
+      expect(document.querySelectorAll(".test-attempt-options .katex").length).toBe(4);
+      const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+      expect(radios.map((r) => r.value).slice(0, 4)).toEqual(["A", "B", "C", "D"]);   // an option is identified by its letter, as stored
+    } finally {
+      globalTest.questions.splice(0, 1, q("q2", "Physics"));
+    }
+  });
+});
+
 describe("Attempt before questions", () => {
   it("starts (or resumes) the attempt before loading the questions", async () => {
     const calls = renderAttempt();
@@ -122,6 +142,14 @@ describe("Attempt before questions", () => {
     expect(calls.some((c) => c.url.endsWith("/tests/t1/start"))).toBe(false);
   });
 
+  it("loads no questions when the attempt cannot be started and the lookup says has_attempt: false", async () => {
+    const calls = stubStart(() => json(503, { detail: "Paper selection is temporarily unavailable" }),
+      (url) => (url.endsWith("/attempts/test/t1") ? json(200, { has_attempt: false }) : null));
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, start in fullscreen" }));
+    expect(await screen.findByText("Unable to Load Test")).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith("/tests/t1/start"))).toBe(false);
+  });
+
   it("shows an already submitted attempt as submitted and never starts it again", async () => {
     const calls = stubStart(() => json(400, { detail: "You have already attempted this test" }), (url) => {
       if (url.endsWith("/attempts/test/t1")) return json(200, { attempt_id: "a1", test_id: "t1", status: "SUBMITTED", expires_at: new Date().toISOString() });
@@ -144,7 +172,7 @@ describe("Attempt before questions", () => {
     expect(urls.filter((u) => u.endsWith("/attempts/start"))).toHaveLength(1);                     // the same attempt is returned, never a second
     expect(urls.findIndex((u) => u.endsWith("/tests/t1/start"))).toBeGreaterThan(urls.findIndex((u) => u.endsWith("/attempts/start")));
     expect(urls.findIndex((u) => u.endsWith("/attempts/a1/answers"))).toBeGreaterThan(urls.findIndex((u) => u.endsWith("/tests/t1/start")));
-    await waitFor(() => expect((document.querySelector('input[name="question-q2"][value="b"]') as HTMLInputElement)?.checked).toBe(true));
+    await waitFor(() => expect((document.querySelector('input[name="question-q2"][value="B"]') as HTMLInputElement)?.checked).toBe(true));
   });
 
   it("loads an ordinary test (no papers) the same way", async () => {
@@ -204,5 +232,29 @@ describe("Exam integrity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request a review" }));
     await waitFor(() => expect(screen.getByText(/Review requested/)).toBeTruthy());
     expect(calls.find((c) => c.url.endsWith("/attempts/a1/review"))?.body).toEqual({ message: "A system update prompt took focus." });
+  });
+});
+
+describe("Pictures in questions and options", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the question picture and picture options, and a picture option keeps its own letter", async () => {
+    const pictured = { ...q("q2", "Physics"), question_text: "", question_image: "c".repeat(64),
+      option_a: "", option_a_image: "a".repeat(64), option_b: "", option_b_image: "b".repeat(64) };
+    globalTest.questions.splice(0, 1, pictured);
+    try {
+      const calls = renderAttempt();
+      await begin();
+      const question = await screen.findByAltText("Question picture");
+      expect((question as HTMLImageElement).src).toMatch(new RegExp(`/tests/t1/images/${"c".repeat(64)}$`));
+      expect((screen.getByAltText("Option B picture") as HTMLImageElement).src).toMatch(/\/tests\/t1\/images\/b{64}$/);
+      const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+      expect(radios.map((r) => r.value).slice(0, 4)).toEqual(["A", "B", "C", "D"]);          // nothing dropped or shifted
+      fireEvent.click(radios[1]);
+      await waitFor(() => expect(calls.some((c) => c.url.endsWith("/attempts/a1/answers") && c.method !== "GET"
+        && JSON.stringify(c.body).includes('"selected_answer":"B"'))).toBe(true));
+    } finally {
+      globalTest.questions.splice(0, 1, q("q2", "Physics"));
+    }
   });
 });

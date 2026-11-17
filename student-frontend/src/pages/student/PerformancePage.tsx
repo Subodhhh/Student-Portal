@@ -7,6 +7,7 @@ import {
   RESULT_API_URL,
   TEST_API_URL,
 } from "../../services/api";
+import { isNoAttempt } from "../../services/attempts";
 
 type SubjectPerformance = {
   subject: string;
@@ -83,6 +84,16 @@ function PerformancePage() {
         }
 
         const attempt = await attemptResponse.json();
+
+        if (isNoAttempt(attempt)) {
+          if (!cancelled) {
+            setState({
+              kind: "pending",
+              message: "You have not attempted this test yet.",
+            });
+          }
+          return;
+        }
 
         if (attempt.status === "IN_PROGRESS") {
           if (!cancelled) {

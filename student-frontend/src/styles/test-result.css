@@ -1404,7 +1404,8 @@
 
 
 
-.question-answer-box span {
+/* the box's label only: a descendant selector would also restyle every span KaTeX builds a typeset option from (a matrix fell apart) */
+.question-answer-box > span {
 
   display: block;
 
@@ -1801,3 +1802,5 @@
   }
 
 }
+
+.question-image.option-image { display: block; max-width: min(100%, 320px); max-height: 200px; margin-top: 6px; }

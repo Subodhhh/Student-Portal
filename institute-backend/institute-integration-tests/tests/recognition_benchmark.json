@@ -1,0 +1,291 @@
+{
+ "about": "Recognition benchmark (synthetic, written for engine 2.5.0; NOT teacher material). Each item: text, subject (mathematics|physics|chemistry|biology|null), and either `ambiguous` with `acceptable` readings (LaTeX without spaces, every one must be offered; the engine must never convert it on its own) or `expect` (the exact stored text, spaces removed) for notation with one reading, or `plain` for text that must stay text. `unseen` marks combinations written after the engine changes, never used while building them.",
+ "items": [
+  {
+   "text": "x2 + 2x + 1",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(x^{2}+2x+1\\)",
+    "\\(x_{2}+2x+1\\)"
+   ]
+  },
+  {
+   "text": "sin3 x cos2x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\sin^{3}x\\cos^{2}x\\)",
+    "\\(\\sin3x\\cos2x\\)"
+   ]
+  },
+  {
+   "text": "a2+b2=c2",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(a^{2}+b^{2}=c^{2}\\)",
+    "\\(a_{2}+b_{2}=c_{2}\\)"
+   ]
+  },
+  {
+   "text": "e2x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(e^{2x}\\)",
+    "\\(e^{2}x\\)"
+   ]
+  },
+  {
+   "text": "d2y/dx2",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\frac{d^{2}y}{dx^{2}}\\)"
+   ]
+  },
+  {
+   "text": "∫ 3ax/(b2+c2x2) dx",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\int\\frac{3ax}{b^{2}+c^{2}x^{2}}\\,dx\\)"
+   ]
+  },
+  {
+   "text": "limx→0 sinx/x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\lim\\limits_{x\\to0}\\frac{\\sinx}{x}\\)"
+   ]
+  },
+  {
+   "text": "log2x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\log_{2}x\\)",
+    "\\(\\log2x\\)"
+   ]
+  },
+  {
+   "text": "∫ sin3 x cos2x dx",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\int\\sin^{3}x\\cos^{2}x\\,dx\\)",
+    "\\(\\int\\sin3x\\cos2x\\,dx\\)"
+   ]
+  },
+  {
+   "text": "limx→∞ (1+1/x)x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\lim\\limits_{x\\to\\infty}(1+\\frac{1}{x})^{x}\\)"
+   ]
+  },
+  {
+   "text": "1/2x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\frac{1}{2x}\\)"
+   ]
+  },
+  {
+   "text": "tan2x sec3y",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(\\tan^{2}x\\sec^{3}y\\)",
+    "\\(\\tan2x\\sec3y\\)"
+   ]
+  },
+  {
+   "text": "p2 = q2 - r2",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(p^{2}=q^{2}-r^{2}\\)"
+   ]
+  },
+  {
+   "text": "cot4θ",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(\\cot^{4}\\theta\\)",
+    "\\(\\cot4\\theta\\)"
+   ]
+  },
+  {
+   "text": "lg3x",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(\\lg_{3}x\\)",
+    "\\(\\lg3x\\)"
+   ]
+  },
+  {
+   "text": "Evaluate ∫0π sin x dx",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "Evaluate\\(\\int_{0}^{\\pi}\\sinx\\,dx\\)"
+   ]
+  },
+  {
+   "text": "∫01 x dx",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(\\int_{0}^{1}x\\,dx\\)"
+   ]
+  },
+  {
+   "text": "∑1n k",
+   "subject": "mathematics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(\\sum\\limits_{1}^{n}k\\)"
+   ]
+  },
+  {
+   "text": "∫ 2x dx",
+   "subject": "mathematics",
+   "expect": "\\(\\int2x\\,dx\\)"
+  },
+  {
+   "text": "x² − 5x + 6 = 0",
+   "subject": "mathematics",
+   "expect": "Solve\\(x^{2}-5x+6=0\\)",
+   "prefix": "Solve "
+  },
+  {
+   "text": "sin 2x + cos 2x",
+   "subject": "mathematics",
+   "expect": "\\(\\sin2x+\\cos2x\\)"
+  },
+  {
+   "text": "(x+1)/(x−1)",
+   "subject": "mathematics",
+   "expect": "\\(\\frac{x+1}{x-1}\\)"
+  },
+  {
+   "text": "d²y/dx²",
+   "subject": "mathematics",
+   "expect": "\\(\\frac{d^{2}y}{dx^{2}}\\)"
+  },
+  {
+   "text": "v2=u2+2as",
+   "subject": "physics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(v^{2}=u^{2}+2as\\)"
+   ]
+  },
+  {
+   "text": "R=u²sin2θ/g",
+   "subject": "physics",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(R=\\frac{u^{2}\\sin2\\theta}{g}\\)",
+    "\\(R=\\frac{u^{2}\\sin^{2}\\theta}{g}\\)"
+   ]
+  },
+  {
+   "text": "s2 = s1 + vt",
+   "subject": "physics",
+   "ambiguous": true,
+   "unseen": true,
+   "acceptable": [
+    "\\(s_{2}=s_{1}+vt\\)",
+    "\\(s^{2}=s^{1}+vt\\)"
+   ]
+  },
+  {
+   "text": "F = ma",
+   "subject": "physics",
+   "expect": "\\(F=ma\\)"
+  },
+  {
+   "text": "v = u + at",
+   "subject": "physics",
+   "expect": "\\(v=u+at\\)"
+  },
+  {
+   "text": "E = mc²",
+   "subject": "physics",
+   "expect": "\\(E=mc^{2}\\)"
+  },
+  {
+   "text": "Fe3+",
+   "subject": "chemistry",
+   "ambiguous": true,
+   "acceptable": [
+    "\\(\\mathrm{Fe^{3+}}\\)"
+   ]
+  },
+  {
+   "text": "H2SO4",
+   "subject": "chemistry",
+   "expect": "\\(\\mathrm{H_{2}SO_{4}}\\)"
+  },
+  {
+   "text": "2H₂ + O₂ → 2H₂O",
+   "subject": "chemistry",
+   "expect": "\\(2\\mathrm{H_{2}}+\\mathrm{O_{2}}\\rightarrow2\\mathrm{H_{2}O}\\)"
+  },
+  {
+   "text": "CuSO₄·5H₂O",
+   "subject": "chemistry",
+   "expect": "\\(\\mathrm{CuSO_{4}\\cdot5H_{2}O}\\)"
+  },
+  {
+   "text": "t½=ln2/k",
+   "subject": "chemistry",
+   "expect": "\\(t_{\\frac{1}{2}}=\\frac{\\ln2}{k}\\)"
+  },
+  {
+   "text": "Mitochondria are the site of aerobic respiration.",
+   "subject": "biology",
+   "plain": true
+  },
+  {
+   "text": "The ratio of phenotypes in an F2 generation is 9:3:3:1.",
+   "subject": "biology",
+   "plain": true
+  },
+  {
+   "text": "Homo sapiens belongs to the family Hominidae.",
+   "subject": "biology",
+   "plain": true
+  },
+  {
+   "text": "Q2 + Q3 marks are added.",
+   "subject": null,
+   "plain": true
+  },
+  {
+   "text": "Class 10 + 2 students",
+   "subject": null,
+   "plain": true
+  },
+  {
+   "text": "Room B12 of Block A",
+   "subject": null,
+   "plain": true
+  }
+ ]
+}

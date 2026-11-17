@@ -1,4 +1,4 @@
-"""Enrollment migrations 0003 + 0004 and academics 0002 through a connection whose session search_path is EMPTY - what a Neon pooled connection carries after
+"""Enrollment migrations 0003 to 0005 and academics 0002 + 0003 through a connection whose session search_path is EMPTY - what a Neon pooled connection carries after
 another client (pg_dump) emptied it. Upgrade and downgrade must still work, create/drop only the new tables (enrollment_batch_subjects,
 enrollment_academic_profiles, batch_academic_defaults), leave existing rows alone, and never leak the setting into later sessions. Skipped on the default SQLite run (needs TEST_DATABASE_URL, PostgreSQL)."""
 import os
@@ -30,17 +30,18 @@ def empty_path_db():
     engine = create_engine(url)
     with engine.begin() as c:
         c.execute(text("create table public.subjects (subject_id uuid primary key, name varchar(120) not null)"))
-        c.execute(text("create table public.enrollment_batches (enrollment_batch_id uuid primary key, batch_id uuid not null)"))
-        c.execute(text("create table public.enrollments (enrollment_id varchar(36) primary key)"))
-        c.execute(text("create table public.batches (batch_id uuid primary key)"))
+        c.execute(text("create table public.enrollment_batches (enrollment_batch_id uuid primary key, batch_id uuid not null, enrollment_id varchar(36))"))
+        c.execute(text("create table public.enrollments (enrollment_id varchar(36) primary key, branch_id uuid, provider_id uuid, status varchar(12))"))
+        c.execute(text("create table public.batches (batch_id uuid primary key, branch_id uuid, name varchar(255))"))
+        c.execute(text("create table public.teacher_subject_assignments (teaching_id uuid primary key, branch_id uuid)"))
         c.execute(text("create table public.inst_enrollment_alembic_version (version_num varchar(32) primary key)"))
         c.execute(text("insert into public.inst_enrollment_alembic_version values ('0002_enrollment_student_identity')"))
         c.execute(text("create table public.inst_academics_alembic_version (version_num varchar(32) primary key)"))
         c.execute(text("insert into public.inst_academics_alembic_version values ('0001_academics_baseline')"))
-        c.execute(text("insert into public.enrollments values ('e1')"))
-        c.execute(text("insert into public.batches values (gen_random_uuid())"))
+        c.execute(text("insert into public.enrollments (enrollment_id) values ('e1')"))
+        c.execute(text("insert into public.batches (batch_id) values (gen_random_uuid())"))
         c.execute(text("insert into public.subjects values (gen_random_uuid(), 'Physics')"))
-        c.execute(text("insert into public.enrollment_batches values (gen_random_uuid(), gen_random_uuid())"))
+        c.execute(text("insert into public.enrollment_batches (enrollment_batch_id, batch_id) values (gen_random_uuid(), gen_random_uuid())"))
         c.execute(text(f"""alter database "{name}" set search_path to ''"""))
     engine.dispose()
     try:
@@ -66,6 +67,7 @@ def state(url):
                "table": c.execute(text("select to_regclass('public.enrollment_batch_subjects')::text")).scalar(),
                "profiles": c.execute(text("select to_regclass('public.enrollment_academic_profiles')::text")).scalar(),
                "defaults": c.execute(text("select to_regclass('public.batch_academic_defaults')::text")).scalar(),
+               "indexes": set(c.execute(text("select indexname from pg_indexes where schemaname = 'public' and indexname like 'ix_%'")).scalars()),
                "academics_head": c.execute(text("select version_num from public.inst_academics_alembic_version")).scalar(),
                "rows": c.execute(text("select (select count(*) from public.subjects), (select count(*) from public.enrollment_batches), "
                                       "(select count(*) from public.enrollments), (select count(*) from public.batches)")).one()}
@@ -79,7 +81,8 @@ def test_upgrade_and_downgrade_work_with_an_empty_session_search_path(empty_path
     up = alembic(empty_path_db, "upgrade", "head")
     assert up.returncode == 0, up.stderr[-2000:]
     after = state(empty_path_db)
-    assert after["head"] == "0004_enrollment_academics" and after["table"] == "public.enrollment_batch_subjects"
+    assert after["head"] == "0005_enrollment_list_indexes" and after["table"] == "public.enrollment_batch_subjects"
+    assert {"ix_enrollments_branch_status", "ix_enrollment_batches_batch"} <= after["indexes"]     # CONCURRENTLY runs outside SET LOCAL
     assert after["profiles"] == "public.enrollment_academic_profiles"
     assert after["search_path"] == '""'                                       # SET LOCAL never leaked into later sessions
     assert after["rows"] == before["rows"]                                    # existing rows untouched
@@ -98,7 +101,8 @@ def test_academics_batch_defaults_migration_with_an_empty_session_search_path(em
     up = alembic(empty_path_db, "upgrade", "head", service=ACADEMICS)
     assert up.returncode == 0, up.stderr[-2000:]
     after = state(empty_path_db)
-    assert after["academics_head"] == "0002_batch_academic_defaults" and after["defaults"] == "public.batch_academic_defaults"
+    assert after["academics_head"] == "0003_batch_list_indexes" and after["defaults"] == "public.batch_academic_defaults"
+    assert "ix_batches_branch_name" in after["indexes"]
     assert after["search_path"] == '""' and after["rows"] == before["rows"]
     down = alembic(empty_path_db, "downgrade", "0001_academics_baseline", service=ACADEMICS)
     assert down.returncode == 0, down.stderr[-2000:]

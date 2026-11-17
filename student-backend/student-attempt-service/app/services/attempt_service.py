@@ -181,6 +181,11 @@ def get_attempt_workspace(
                 q.marks,
                 q.negative_marks,
                 q.image_reference,
+                q.question_image,
+                q.option_a_image,
+                q.option_b_image,
+                q.option_c_image,
+                q.option_d_image,
                 aa.selected_answer,
                 aa.question_state,
                 aa.updated_at
@@ -246,6 +251,11 @@ def get_attempt_workspace(
                 "marks": row["marks"],
                 "negative_marks": row["negative_marks"],
                 "image_reference": row["image_reference"],
+                "question_image": row["question_image"],
+                "option_a_image": row["option_a_image"],
+                "option_b_image": row["option_b_image"],
+                "option_c_image": row["option_c_image"],
+                "option_d_image": row["option_d_image"],
                 "selected_answer": row["selected_answer"],
                 "question_state": (
                     row["question_state"]

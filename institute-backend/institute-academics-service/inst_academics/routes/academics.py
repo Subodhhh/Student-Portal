@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from institute_common.core.security import Principal, api_error, can_see_provide
 from institute_common.database import get_db
 from institute_common.core.class_levels import LABELS, check_academic_year, check_profile
 from institute_common.models.academics import BatchAcademicDefault, BatchSubject, ProviderSubject, Subject
-from institute_common.models.org import Batch, Branch
+from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
@@ -75,6 +75,7 @@ class BatchOut(BaseModel):
     start_date: date | None
     end_date: date | None
     status: str
+    student_count: int | None = None      # students with an active enrollment; set by the list
     default_class_level: str | None = None
     default_class_label: str | None = None
     default_academic_year: str | None = None
@@ -220,8 +221,9 @@ def _save_defaults(db: Session, batch_id: UUID, values: tuple[str | None, str | 
     return before, _describe_defaults(row)
 
 
-def _out(b: Batch, defaults: BatchAcademicDefault | None) -> BatchOut:
+def _out(b: Batch, defaults: BatchAcademicDefault | None, student_count: int | None = None) -> BatchOut:
     out = BatchOut.model_validate(b)
+    out.student_count = student_count
     if defaults:
         out.default_class_level, out.default_academic_year = defaults.default_class_level, defaults.default_academic_year
         out.default_class_label = LABELS.get(defaults.default_class_level) if defaults.default_class_level else None
@@ -247,10 +249,13 @@ def create_batch(branch_id: UUID, body: BatchIn, p: Principal = Depends(get_prin
 
 
 @router.get("/branches/{branch_id}/batches", response_model=Page[BatchOut])
-def list_batches(branch_id: UUID, page: int = 1, page_size: int = 50,
+def list_batches(branch_id: UUID, status: str = Query(default="ACTIVE", pattern="^(ACTIVE|INACTIVE|ALL)$"), page: int = 1, page_size: int = 50,
                  p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Active batches unless asked otherwise: a deleted batch stays INACTIVE, with its history, and leaves every normal list."""
     br = _branch(db, branch_id)
     stmt = select(Batch).where(Batch.branch_id == branch_id)
+    if status != "ALL":
+        stmt = stmt.where(Batch.status == status)
     if not p.can("batch.manage", provider_id=br.provider_id, branch_id=branch_id):
         # Teachers: only batches they teach (or every batch if assigned the whole branch).
         rows = [t for t in p.teaching if t.branch_id == branch_id]
@@ -260,7 +265,10 @@ def list_batches(branch_id: UUID, page: int = 1, page_size: int = 50,
             stmt = stmt.where(Batch.batch_id.in_({t.batch_id for t in rows}))
     res = paginate(db, stmt.order_by(Batch.name), page, page_size)
     rows = {d.batch_id: d for d in db.scalars(select(BatchAcademicDefault).where(BatchAcademicDefault.batch_id.in_([b.batch_id for b in res["items"]] or [None])))}
-    res["items"] = [_out(b, rows.get(b.batch_id)) for b in res["items"]]
+    ids = [b.batch_id for b in res["items"]]
+    counts = dict(db.execute(select(EnrollmentBatch.batch_id, func.count()).join(Enrollment, Enrollment.enrollment_id == EnrollmentBatch.enrollment_id)
+                             .where(EnrollmentBatch.batch_id.in_(ids or [None]), Enrollment.status == "ACTIVE").group_by(EnrollmentBatch.batch_id)).all())
+    res["items"] = [_out(b, rows.get(b.batch_id), counts.get(b.batch_id, 0)) for b in res["items"]]
     return res
 
 
@@ -269,6 +277,7 @@ def update_batch(batch_id: UUID, body: BatchPatch, p: Principal = Depends(get_pr
     b, br = _batch(db, batch_id)
     p.require(db, "batch.manage", provider_id=br.provider_id, branch_id=br.branch_id)
     given = body.model_dump(exclude_unset=True)
+    old_status = b.status
     for k, v in given.items():
         if k not in DEFAULT_FIELDS:
             setattr(b, k, v)
@@ -290,9 +299,11 @@ def update_batch(batch_id: UUID, body: BatchPatch, p: Principal = Depends(get_pr
             raise
         change = _save_defaults(db, batch_id, values, p.staff_id)
     db.commit()
+    details = {"defaults_before": change[0], "defaults_after": change[1]} if change and change[0] != change[1] else {}
+    if b.status != old_status:
+        details |= {"status_before": old_status, "status_after": b.status}
     audit.record(db, "batch.update", "SUCCESS", actor=p.staff_id, target_type="batch", target_id=batch_id,
-                 provider_id=br.provider_id, branch_id=br.branch_id, ip=p.ip,
-                 details={"defaults_before": change[0], "defaults_after": change[1]} if change and change[0] != change[1] else None)
+                 provider_id=br.provider_id, branch_id=br.branch_id, ip=p.ip, details=details or None)
     return _out(b, db.get(BatchAcademicDefault, batch_id))
 
 
@@ -300,6 +311,8 @@ def update_batch(batch_id: UUID, body: BatchPatch, p: Principal = Depends(get_pr
 def map_batch_subject(batch_id: UUID, subject_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     b, br = _batch(db, batch_id)
     p.require(db, "batch.manage", provider_id=br.provider_id, branch_id=br.branch_id)
+    if b.status != "ACTIVE":
+        raise api_error(409, "BATCH_INACTIVE", "This batch is inactive. Reactivate it first.")
     if not db.scalar(select(ProviderSubject).where(ProviderSubject.provider_id == br.provider_id,
                                                   ProviderSubject.subject_id == subject_id)):
         raise api_error(422, "SUBJECT_NOT_ENABLED", "Subject is not enabled for this provider.")

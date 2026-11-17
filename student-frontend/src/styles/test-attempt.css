@@ -1552,3 +1552,12 @@ body,
 .test-attempt-review-form { display: flex; flex-direction: column; gap: 8px; text-align: left; margin: 16px 0; }
 .test-attempt-review-form textarea { min-height: 90px; }
 .test-attempt-review-status { margin: 16px 0; }
+
+/* a picture option: the picture is the option (no text) */
+.test-attempt-option-image {
+  max-width: min(100%, 420px);
+  max-height: 260px;
+  height: auto;
+  border-radius: 6px;
+  background: #fff;
+}

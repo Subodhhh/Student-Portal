@@ -262,7 +262,7 @@ function Wizard({ providerId }: { providerId: string }) {
               ) : (
                 <div className="grid cols-2">
                   <div className="field"><label htmlFor={`paper-${sid}`}>Question paper</label>
-                    <input id={`paper-${sid}`} type="file" accept=".csv,.xlsx,.docx,.pdf" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], paper: file } })); dropReport(sid); }} /></div>
+                    <input id={`paper-${sid}`} type="file" accept=".csv,.xlsx,.zip,.docx,.pdf" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], paper: file } })); dropReport(sid); }} /></div>
                   <div className="field"><label htmlFor={`key-${sid}`}>Answer key</label>
                     <input id={`key-${sid}`} type="file" accept=".csv,.txt" onChange={(e) => { const file = e.target.files?.[0]; setFiles((f) => ({ ...f, [sid]: { ...f[sid], key: file } })); dropReport(sid); }} /></div>
                 </div>

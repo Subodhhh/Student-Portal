@@ -169,3 +169,43 @@ def test_the_window_holds_when_the_database_session_is_in_ist(env):
     assert client.post("/attempts/start", json={"test_id": str(opened)}).status_code == 200
     assert count(opened) == 1
     ist.dispose()
+
+
+
+def test_a_test_not_started_yet_is_an_explicit_200_not_an_error(env):
+    # "not started" is an ordinary state the portal asks about for every listed test: 200 {"has_attempt": false}, never a 404
+    client, _, make_test, *_ = env
+    tid = make_test("-10 minutes", "1 hour")
+    r = client.get(f"/attempts/test/{tid}")
+    assert r.status_code == 200 and r.json() == {"has_attempt": False}
+
+
+def test_an_existing_attempt_is_returned_unchanged(env):
+    client, _, make_test, *_ = env
+    tid = make_test("-10 minutes", "1 hour")
+    started = client.post("/attempts/start", json={"test_id": str(tid)}).json()
+    r = client.get(f"/attempts/test/{tid}")
+    assert r.status_code == 200 and r.json() == started                      # the same AttemptResponse as before: no new fields
+    assert set(r.json()) == {"attempt_id", "test_id", "started_at", "expires_at", "status"}
+
+
+def test_errors_stay_errors_for_the_attempt_lookup(env):
+    client, *_ = env
+    assert client.get("/attempts/test/not-a-uuid").status_code == 422             # a malformed id is still a client error
+    with TestClient(client.app) as anonymous:                                    # no session cookie
+        assert anonymous.get(f"/attempts/test/{uuid.uuid4()}").status_code == 401
+
+
+
+def test_a_server_failure_is_still_a_500_never_no_attempt(env):
+    client, *_ = env
+    from app.database import get_db
+
+    def broken():
+        raise RuntimeError("database unavailable")
+        yield  # pragma: no cover
+
+    client.app.dependency_overrides[get_db] = broken
+    with TestClient(client.app, cookies=client.cookies, raise_server_exceptions=False) as failing:
+        r = failing.get(f"/attempts/test/{uuid.uuid4()}")
+    assert r.status_code == 500 and "has_attempt" not in r.text

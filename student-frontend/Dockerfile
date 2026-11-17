@@ -23,9 +23,12 @@ ENV VITE_AUTH_API_URL=$VITE_AUTH_API_URL VITE_PROFILE_API_URL=$VITE_PROFILE_API_
 
 RUN npm run build
 
+# The CSP header lists the API origins this bundle was built with (scripts/render-nginx-conf.mjs).
+RUN node scripts/render-nginx-conf.mjs nginx.conf /app/nginx.rendered.conf
+
 FROM nginx:alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/nginx.rendered.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=build /app/dist /usr/share/nginx/html
 

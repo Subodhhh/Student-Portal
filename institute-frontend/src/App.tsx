@@ -19,7 +19,6 @@ import { ExamDetailPage, ExamPlansPage, ExamsPage } from "./pages/ExamsPages";
 import { ResultDetailPage, ResultsPage } from "./pages/ResultsPages";
 import { AuditPage, BillingPage, NotificationsPage, SettingsPage, SupportPage } from "./pages/OpsPages";
 import { PaperDetailPage } from "./pages/PapersPage";
-import PhotoPapersPage, { PhotoDraftPage } from "./pages/PhotoPaperPages";
 import QuestionBankPage from "./pages/QuestionBankPage";
 import { BranchDetailPage, ProviderDetailPage, ProvidersPage } from "./pages/ProvidersPage";
 import RoleManagementPage, { RoleCategoryPage } from "./pages/StaffPage";
@@ -67,8 +66,6 @@ export function AppRoutes() {
             <Route path="papers/:versionId" element={<PaperDetailPage />} />
           </Route>
           <Route element={<ProtectedRoute perm="paper.upload" />}>
-            <Route path="papers/photo" element={<PhotoPapersPage />} />
-            <Route path="papers/photo/:draftId" element={<PhotoDraftPage />} />
           </Route>
           <Route element={<ProtectedRoute perm="examplan.manage" />}>
           <Route path="exam-plans" element={<ExamPlansPage />} />

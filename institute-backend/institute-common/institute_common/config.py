@@ -1,9 +1,12 @@
 """Settings shared by every Institute service. Each service reads only what it needs from its own environment
 (see its .env.example); unused groups simply keep their defaults."""
-from pydantic import model_validator
+from uuid import UUID
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICES = ("identity", "organization", "academics", "enrollment", "paper", "exam", "operations")
+RECOGNITION_CATEGORIES = ("CHEMISTRY", "PHYSICS", "MATHEMATICS", "OTHER")      # OTHER: recorded decision, no subject conventions
 
 
 class Settings(BaseSettings):
@@ -76,17 +79,39 @@ class Settings(BaseSettings):
     # Private file storage (paper service only).
     file_store_dir: str = "./var/files"
     max_upload_bytes: int = 2 * 1024 * 1024
+    # .xlsx workbooks and .zip packages (CSV + images) carry question pictures: each picture is at most 5 MB (question_images.py)
+    max_package_upload_bytes: int = 25 * 1024 * 1024
     max_paper_questions: int = 500
-    ocr_min_confidence: float = 0.98
-    # "" = no OCR (image papers are rejected). "tesseract" = printed-text OCR in the paper service image; its confidences are not
-    # calibrated probabilities, so set OCR_MIN_CONFIDENCE deliberately (every OCR draft still needs human preview and approval).
-    ocr_engine: str = ""
+    # Uploaded papers (CSV/XLSX/DOCX/PDF) are read in an isolated process (paper service): wall-clock limit, and memory allowed on top
+    # of what the worker already holds. A 500-question paper takes well under 2 s and a few MiB.
+    extraction_isolated: bool = True
+    extraction_timeout_seconds: float = 20.0
+    extraction_memory_mb: int = 512
+    # Recognition of uploaded papers (paper service): the subject category of each authoritative subject_id, as a JSON object
+    # {"<subject uuid>": "CHEMISTRY" | "PHYSICS" | "MATHEMATICS" | "OTHER"}. Only the first three get subject-specific recognition (Chemistry's
+    # molar M, chemistry formula conventions, Mathematics' matrix powers); every other subject - including one whose NAME mentions a
+    # science - is recognised without subject conventions, so its doubtful cases go to provider review. Subject names are never parsed.
+    recognition_subject_categories: dict[str, str] = {}
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
     def origins(self) -> list[str]:
         return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+
+    @field_validator("recognition_subject_categories")
+    @classmethod
+    def _subject_categories(cls, value: dict[str, str]) -> dict[str, str]:
+        out = {}
+        for key, category in value.items():
+            try:
+                subject_id = str(UUID(str(key)))
+            except ValueError:
+                raise ValueError(f"RECOGNITION_SUBJECT_CATEGORIES: {key!r} is not a subject id (UUID)") from None
+            if str(category).upper() not in RECOGNITION_CATEGORIES:
+                raise ValueError(f"RECOGNITION_SUBJECT_CATEGORIES: {category!r} is not one of {', '.join(RECOGNITION_CATEGORIES)}")
+            out[subject_id] = str(category).upper()
+        return out
 
     @model_validator(mode="after")
     def validate_environment(self):

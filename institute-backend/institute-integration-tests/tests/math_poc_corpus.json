@@ -1,0 +1,302 @@
+[
+  {
+    "id": 1,
+    "category": "Integration",
+    "input": "∫₀^π sin³(x) dx",
+    "expect": "\\(\\int_{0}^{\\pi} \\sin^{3}(x)\\,dx\\)"
+  },
+  {
+    "id": 2,
+    "category": "Integration",
+    "input": "∫ x² dx",
+    "expect": "\\(\\int x^{2}\\,dx\\)"
+  },
+  {
+    "id": 3,
+    "category": "Integration",
+    "input": "∫₁² (3x² + 2x) dx",
+    "expect": "\\(\\int_{1}^{2} (3x^{2} + 2x)\\,dx\\)"
+  },
+  {
+    "id": 4,
+    "category": "Integration",
+    "input": "∫ eˣ cos x dx",
+    "expect": "\\(\\int e^{x} \\cos x\\,dx\\)"
+  },
+  {
+    "id": 5,
+    "category": "Integration",
+    "input": "∫₀^∞ e^(−x²) dx",
+    "expect": "\\(\\int_{0}^{\\infty} e^{-x^{2}}\\,dx\\)"
+  },
+  {
+    "id": 6,
+    "category": "Integration",
+    "input": "∬ f(x,y) dx dy",
+    "expect": "\\(\\iint f(x, y)\\,dx\\,dy\\)"
+  },
+  {
+    "id": 7,
+    "category": "Differentiation",
+    "input": "dy/dx = 2x²",
+    "expect": "\\(\\frac{dy}{dx} = 2x^{2}\\)"
+  },
+  {
+    "id": 8,
+    "category": "Differentiation",
+    "input": "d²y/dx² + y = 0",
+    "expect": "\\(\\frac{d^{2}y}{dx^{2}} + y = 0\\)"
+  },
+  {
+    "id": 9,
+    "category": "Differentiation",
+    "input": "∂f/∂x",
+    "expect": "\\(\\frac{\\partial f}{\\partial x}\\)"
+  },
+  {
+    "id": 10,
+    "category": "Differentiation",
+    "input": "f′(x) = 3x² − 4x",
+    "expect": "\\(f'(x) = 3x^{2} - 4x\\)"
+  },
+  {
+    "id": 11,
+    "category": "Differentiation",
+    "input": "d/dx (sin x) = cos x",
+    "expect": "\\(\\frac{d}{dx}(\\sin x) = \\cos x\\)"
+  },
+  {
+    "id": 12,
+    "category": "Limits",
+    "input": "limₓ→₀ sin(x)/x",
+    "expect": "\\(\\lim\\limits_{x \\to 0} \\frac{\\sin(x)}{x}\\)"
+  },
+  {
+    "id": 13,
+    "category": "Limits",
+    "input": "lim_(x→∞) (1 + 1/x)ˣ",
+    "expect": "\\(\\lim\\limits_{x \\to \\infty} (1 + \\frac{1}{x})^{x}\\)"
+  },
+  {
+    "id": 14,
+    "category": "Limits",
+    "input": "lim x→2 (x² − 4)/(x − 2)",
+    "expect": "\\(\\lim\\limits_{x \\to 2} \\frac{x^{2} - 4}{x - 2}\\)"
+  },
+  {
+    "id": 15,
+    "category": "Trigonometry",
+    "input": "sin²θ + cos²θ = 1",
+    "expect": "\\(\\sin^{2} \\theta + \\cos^{2} \\theta = 1\\)"
+  },
+  {
+    "id": 16,
+    "category": "Trigonometry",
+    "input": "tan(α + β) = (tan α + tan β)/(1 − tan α tan β)",
+    "expect": "\\(\\tan(\\alpha + \\beta) = \\frac{\\tan \\alpha + \\tan \\beta}{1 - \\tan \\alpha \\tan \\beta}\\)"
+  },
+  {
+    "id": 17,
+    "category": "Trigonometry",
+    "input": "sin⁻¹(1/2)",
+    "expect": "\\(\\sin^{-1}(\\frac{1}{2})\\)"
+  },
+  {
+    "id": 18,
+    "category": "Trigonometry",
+    "input": "cos 2θ = 1 − 2sin²θ",
+    "expect": "\\(\\cos 2\\theta = 1 - 2\\sin^{2} \\theta\\)"
+  },
+  {
+    "id": 19,
+    "category": "Algebra, powers, roots",
+    "input": "x² + 2x + 1",
+    "expect": "\\(x^{2} + 2x + 1\\)"
+  },
+  {
+    "id": 20,
+    "category": "Algebra, powers, roots",
+    "input": "√(x² + y²)",
+    "expect": "\\(\\sqrt{x^{2} + y^{2}}\\)"
+  },
+  {
+    "id": 21,
+    "category": "Algebra, powers, roots",
+    "input": "∛27",
+    "expect": "\\(\\sqrt[3]{27}\\)"
+  },
+  {
+    "id": 22,
+    "category": "Algebra, powers, roots",
+    "input": "(a + b)³ = a³ + 3a²b + 3ab² + b³",
+    "expect": "\\((a + b)^{3} = a^{3} + 3a^{2}b + 3ab^{2} + b^{3}\\)"
+  },
+  {
+    "id": 23,
+    "category": "Algebra, powers, roots",
+    "input": "x^(n+1)",
+    "expect": "\\(x^{n + 1}\\)"
+  },
+  {
+    "id": 24,
+    "category": "Fractions",
+    "input": "½ + ¾",
+    "expect": "\\(\\frac{1}{2} + \\frac{3}{4}\\)"
+  },
+  {
+    "id": 25,
+    "category": "Fractions",
+    "input": "(x+1)/(x−1)",
+    "expect": "\\(\\frac{x + 1}{x - 1}\\)"
+  },
+  {
+    "id": 26,
+    "category": "Fractions",
+    "input": "1/(1 + 1/x)",
+    "expect": "\\(\\frac{1}{1 + \\frac{1}{x}}\\)"
+  },
+  {
+    "id": 27,
+    "category": "Fractions",
+    "input": "Find 3/4 of 20.",
+    "expect": "Find \\(\\frac{3}{4}\\) of 20."
+  },
+  {
+    "id": 28,
+    "category": "Sums and products",
+    "input": "∑ᵢ₌₁ⁿ i²",
+    "expect": "\\(\\sum\\limits_{i = 1}^{n} i^{2}\\)"
+  },
+  {
+    "id": 29,
+    "category": "Sums and products",
+    "input": "∏ₖ₌₁ⁿ k = n!",
+    "expect": "\\(\\prod\\limits_{k = 1}^{n} k = n!\\)"
+  },
+  {
+    "id": 30,
+    "category": "Sums and products",
+    "input": "Σ_(r=0)^n ⁿCᵣ = 2ⁿ",
+    "expect": "\\(\\sum\\limits_{r = 0}^{n} {}^{n}C_{r} = 2^{n}\\)"
+  },
+  {
+    "id": 31,
+    "category": "Logarithms and exponentials",
+    "input": "log₂ 8 = 3",
+    "expect": "\\(\\log_{2} 8 = 3\\)"
+  },
+  {
+    "id": 32,
+    "category": "Logarithms and exponentials",
+    "input": "ln(eˣ) = x",
+    "expect": "\\(\\ln(e^{x}) = x\\)"
+  },
+  {
+    "id": 33,
+    "category": "Matrices and determinants",
+    "input": "det [[1,2],[3,4]]",
+    "expect": "\\(\\det \\begin{bmatrix}1 & 2 \\\\ 3 & 4\\end{bmatrix}\\)"
+  },
+  {
+    "id": 34,
+    "category": "Matrices and determinants",
+    "input": "|a b; c d|",
+    "expect": "\\(\\begin{vmatrix}a & b \\\\ c & d\\end{vmatrix}\\)"
+  },
+  {
+    "id": 35,
+    "category": "Matrices and determinants",
+    "input": "A = [1 2; 3 4], find A⁻¹",
+    "expect": "\\(A = \\begin{bmatrix}1 & 2 \\\\ 3 & 4\\end{bmatrix}\\), find \\(A^{-1}\\)"
+  },
+  {
+    "id": 36,
+    "category": "Geometry, coordinates, vectors",
+    "input": "ΔABC, ∠A = 90°",
+    "expect": "\\(\\Delta ABC\\), \\(\\angle A = 90^{\\circ}\\)"
+  },
+  {
+    "id": 37,
+    "category": "Geometry, coordinates, vectors",
+    "input": "AB ∥ CD, AB ⊥ BC",
+    "expect": "\\(AB \\parallel CD\\), \\(AB \\perp BC\\)"
+  },
+  {
+    "id": 38,
+    "category": "Geometry, coordinates, vectors",
+    "input": "√((x₂ − x₁)² + (y₂ − y₁)²)",
+    "expect": "\\(\\sqrt{(x_{2} - x_{1})^{2} + (y_{2} - y_{1})^{2}}\\)"
+  },
+  {
+    "id": 39,
+    "category": "Geometry, coordinates, vectors",
+    "input": "a⃗ · b⃗ = |a⃗||b⃗| cos θ",
+    "expect": "\\(\\vec{a} \\cdot \\vec{b} = |\\vec{a}||\\vec{b}| \\cos \\theta\\)"
+  },
+  {
+    "id": 40,
+    "category": "Geometry, coordinates, vectors",
+    "input": "x²/a² + y²/b² = 1",
+    "expect": "\\(\\frac{x^{2}}{a^{2}} + \\frac{y^{2}}{b^{2}} = 1\\)"
+  },
+  {
+    "id": 41,
+    "category": "Mixed text and math",
+    "input": "If x² − 5x + 6 = 0, find the sum of the roots.",
+    "expect": "If \\(x^{2} - 5x + 6 = 0\\), find the sum of the roots."
+  },
+  {
+    "id": 42,
+    "category": "Mixed text and math",
+    "input": "The area of a circle of radius r is πr².",
+    "expect": "The area of a circle of radius r is \\(\\pi r^{2}\\)."
+  },
+  {
+    "id": 43,
+    "category": "Existing LaTeX, currency, plain text",
+    "input": "Evaluate $\\frac{1}{2} + x$ and \\(y^2\\).",
+    "expect": "unchanged"
+  },
+  {
+    "id": 44,
+    "category": "Existing LaTeX, currency, plain text",
+    "input": "A pen costs $5 and a book $10.",
+    "expect": "unchanged"
+  },
+  {
+    "id": 45,
+    "category": "Existing LaTeX, currency, plain text",
+    "input": "What is the capital of France?",
+    "expect": "unchanged"
+  },
+  {
+    "id": 46,
+    "category": "Ambiguous (must be flagged)",
+    "input": "1/2x",
+    "expect": "flag"
+  },
+  {
+    "id": 47,
+    "category": "Ambiguous (must be flagged)",
+    "input": "sin x/x",
+    "expect": "flag"
+  },
+  {
+    "id": 48,
+    "category": "Ambiguous (must be flagged)",
+    "input": "a/b/c",
+    "expect": "flag"
+  },
+  {
+    "id": 49,
+    "category": "Ambiguous (must be flagged)",
+    "input": "x2 + y2 = r2",
+    "expect": "flag"
+  },
+  {
+    "id": 50,
+    "category": "Ambiguous (must be flagged)",
+    "input": "e^x+1",
+    "expect": "flag"
+  }
+]

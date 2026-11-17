@@ -76,6 +76,8 @@ export function PaperPicker({ providerId, subjectId, label, value, onChange, nee
 }) {
   const list = useApi<{ items: TestPaper[] }>(`/api/v1/tests/papers?provider_id=${providerId}&subject_id=${subjectId}`);
   const items = (list.data?.items ?? []).filter((p) => !needPublished || p.published_version);
+  // a Daily Test needs a published version: papers without one are shown, not hidden, so "approved but not published" is visible
+  const unpublished = needPublished ? (list.data?.items ?? []).filter((p) => !p.published_version) : [];
   const current = items.find((p) => p.paper_id === value);
   if (list.error) return <Alert kind="error">{list.error}</Alert>;
   if (list.loading && !list.data) return <Spinner />;
@@ -83,13 +85,16 @@ export function PaperPicker({ providerId, subjectId, label, value, onChange, nee
     <div className="field">
       <label htmlFor={`paper-pick-${subjectId}`}>{label}</label>
       <select id={`paper-pick-${subjectId}`} value={value} onChange={(e) => onChange(items.find((p) => p.paper_id === e.target.value) ?? null)}>
-        <option value="">{items.length ? "Choose a paper" : "No approved paper available"}</option>
+        <option value="">{items.length ? "Choose a paper" : needPublished ? "No published paper available" : "No approved paper available"}</option>
         {items.map((p) => (
           <option key={p.paper_id} value={p.paper_id}>
             {p.title} · {p.source}{p.published_version ? ` · v${p.published_version.version_no}, ${p.published_version.question_count} questions` : " · no published version yet"}
           </option>
         ))}
+        {unpublished.map((p) => <option key={p.paper_id} value={p.paper_id} disabled>{p.title} · {p.source} · not published yet</option>)}
       </select>
+      {unpublished.length > 0 && <p className="muted small">A Daily Test can only use a published version. Publish {unpublished.length === 1 ? "this paper" : "these papers"} in
+        Question Bank &amp; Papers (open the paper, then Publish) to choose {unpublished.length === 1 ? "it" : "them"} here.</p>}
       {current && !current.published_version && <p className="muted small"><StatusBadge status="NOT_PUBLISHED" /> Tests generated before a version is approved leave this subject out and notify the responsible staff.</p>}
     </div>
   );

@@ -103,6 +103,24 @@ def test_other_services_depend_on_identity_for_authentication(client, world, mak
         assert client.get(API + path).status_code == 401
 
 
+def test_role_and_account_changes_apply_on_the_next_request_to_another_service(client, world, make_staff, login, db_factory):
+    """The identity check is read fresh on every request (never cached): a role ended or an account deactivated in the database is
+    refused on the very next call to another service, even though the browser session itself was not touched."""
+    from sqlalchemy import update
+    from institute_common.models import Staff, StaffRoleAssignment
+    staff_id, code = make_staff([(Role.SUPER_ADMIN, None, None)])
+    login(code)
+    assert client.get(API + "/exams").status_code == 200
+    with db_factory() as db:
+        db.execute(update(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == staff_id).values(status="INACTIVE"))
+        db.commit()
+    assert client.get(API + "/exams").status_code == 403
+    with db_factory() as db:
+        db.execute(update(Staff).where(Staff.staff_id == staff_id).values(status="INACTIVE"))
+        db.commit()
+    assert client.get(API + "/exams").status_code == 401
+
+
 def test_identity_outage_fails_closed_with_503(client, world, make_staff, login, monkeypatch):
     from institute_common.internal_http import InternalServiceError
     from institute_common.core import security
@@ -261,11 +279,14 @@ NEW_ROUTES = {
     ("POST", f"{API}/global-occurrences/{{occurrence_id}}/generation/retry"),     # Super Admin: retry a stopped Global Test date
     ("POST", f"{API}/exams/{{exam_id}}/outbox/requeue"),                          # Super Admin: send a failed delivery again
     ("GET", f"{API}/exams"),                                                      # Results: every exam in scope, no branch to choose
-    ("GET", f"{API}/paper-versions/{{pv_id}}/pdf"), ("GET", f"{API}/papers/pdf"),  # question paper PDF (one, or a ZIP of a filter)
-    ("GET", f"{API}/paper-versions/{{pv_id}}/answer-key"), ("GET", f"{API}/papers/answer-keys"),   # answer key PDF, separately authorized
+    ("POST", f"{API}/batches/{{batch_id}}/members"),                              # add enrolled students to an existing batch
+    ("GET", f"{API}/paper-versions/{{pv_id}}/pdf"),                               # question paper PDF, one at a time
+    ("GET", f"{API}/paper-versions/{{pv_id}}/answer-key"),                        # answer key PDF, separately authorized
     ("PATCH", f"{API}/enrollments/{{enrollment_id}}/academic-profile"),          # Class / Academic Year per enrollment
     ("POST", f"{API}/enrollments/{{enrollment_id}}/password-setup-link"),         # staff-initiated password setup link
     ("POST", f"{API}/paper-versions/{{pv_id}}/revisions"),
+    ("POST", f"{API}/paper-versions/{{pv_id}}/recognition-preview"),               # live preview of a correction (nothing stored)
+    ("POST", f"{API}/branches/{{branch_id}}/subjects/{{subject_id}}/recognition-preview"),   # live preview in the import Review
     ("POST", f"{API}/branches/{{branch_id}}/activate"),
     ("POST", f"{API}/branches/{{branch_id}}/composite-requests"), ("GET", f"{API}/branches/{{branch_id}}/composite-requests"),
     ("GET", f"{API}/composite-invitations"), ("GET", f"{API}/composite-providers"), ("GET", f"{API}/composite-requests/{{request_id}}"),
@@ -312,13 +333,11 @@ NEW_ROUTES = {
     ("GET", f"{API}/global-paper-submissions/{{submission_id}}/students"), ("GET", f"{API}/global-occurrences/{{occurrence_id}}/coverage/students"),
     ("POST", f"{API}/global-occurrences/{{occurrence_id}}/submissions"), ("POST", f"{API}/global-paper-submissions/{{submission_id}}/withdraw"),
     ("GET", f"{API}/global-schedule"),
-    # photo papers: drafts from mobile photos with a separate answer key, previewed and confirmed before import
-    ("POST", f"{API}/branches/{{branch_id}}/subjects/{{subject_id}}/photo-drafts"), ("GET", f"{API}/photo-drafts"),
-    ("GET", f"{API}/photo-drafts/{{draft_id}}"), ("POST", f"{API}/photo-drafts/{{draft_id}}/files"),
-    ("PUT", f"{API}/photo-drafts/{{draft_id}}/files/order"), ("DELETE", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}"),
-    ("GET", f"{API}/photo-drafts/{{draft_id}}/files/{{draft_file_id}}/content"), ("POST", f"{API}/photo-drafts/{{draft_id}}/extract"),
-    ("PUT", f"{API}/photo-drafts/{{draft_id}}/questions"), ("POST", f"{API}/photo-drafts/{{draft_id}}/accept"),
-    ("POST", f"{API}/photo-drafts/{{draft_id}}/discard"),
+    # recognition review drafts: an import review saved as it is made, resumable after a reload (paper service, migration 0007)
+    ("POST", f"{API}/branches/{{branch_id}}/subjects/{{subject_id}}/review-drafts"), ("GET", f"{API}/review-drafts"),
+    ("GET", f"{API}/review-drafts/{{draft_id}}"), ("PATCH", f"{API}/review-drafts/{{draft_id}}"),
+    ("POST", f"{API}/review-drafts/{{draft_id}}/import"), ("POST", f"{API}/review-drafts/{{draft_id}}/discard"),
+    ("GET", f"{API}/question-images/{{asset_id}}"),                                # pictures of questions and options (provider-scoped)
 }
 
 

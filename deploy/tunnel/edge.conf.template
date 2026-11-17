@@ -38,6 +38,7 @@ map "$request_method $uri" $edge_upstream {
     # Student: tests (POST /tests/{id}/audiences is a service-key route and stays private)
     "~^GET /student/tests(/(missed|scheduled))?$"                                  "student-test-service:8001";
     "~^GET /student/tests/[^/]+(/(details|start))?$"                               "student-test-service:8001";
+    "~^GET /student/tests/[^/]+/images/[^/]+$"                                     "student-test-service:8001";
     # Student: attempts
     "~^GET /student/attempts/(completed|test/[^/]+)$"                              "student-attempt-service:8001";
     "~^GET /student/attempts/[^/]+(/(answers|summary|workspace))?$"                "student-attempt-service:8001";

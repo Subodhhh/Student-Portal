@@ -48,25 +48,29 @@ export function ResultDetailPage() {
   const { examId = "" } = useParams();
   const { can } = useAuth();
   const exam = useApi<ExamRow>(`/api/v1/exams/${examId}`);
-  const results = useApi<Results>(exam.data?.status === "PUBLISHED" ? `/api/v1/exams/${examId}/results` : null);
+  // Requested together with the exam, not after it; its answer is shown only for a published exam (an unpublished one answers 409).
+  const results = useApi<Results>(`/api/v1/exams/${examId}/results`);
+  const published = exam.data?.status === "PUBLISHED";
+  // The Super Admin's correction history, also requested at page open (the server still authorizes it); shown only in the card.
+  const corrections = useApi<Correction[]>(can("result.correct") ? `/api/v1/exams/${examId}/result-corrections` : null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("rank");
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
-    const found = (results.data?.results ?? []).filter((r) => !term || r.student_id.toLowerCase().includes(term) || (r.name ?? "").toLowerCase().includes(term));
+    const found = ((published && results.data?.results) || []).filter((r) => !term || r.student_id.toLowerCase().includes(term) || (r.name ?? "").toLowerCase().includes(term));
     return sort === "name" ? [...found].sort((a, b) => (a.name ?? a.student_id).localeCompare(b.name ?? b.student_id)) : found;
-  }, [results.data, q, sort]);
+  }, [published, results.data, q, sort]);
   if (exam.loading) return <Spinner />;
   if (exam.error || !exam.data) return <Alert kind="error">{exam.error || "Not found"}</Alert>;
   const e = exam.data;
-  const r = results.data;
+  const r = published ? results.data : null;
   return (
     <>
       <PageHeader crumbs={[<Link key="results" to="/results">Results</Link>, e.name]} title={e.name} subtitle={`${fmt(e.start_at)} → ${fmt(e.end_at)}`}
         actions={<><StatusBadge status={e.status} />{can("exam.read") && <Link className="btn secondary" to={`/exams/${examId}`}>Exam</Link>}</>} />
       <div className="stack">
         {e.status !== "PUBLISHED" && <Alert kind="info">Results exist only for published exams.</Alert>}
-        {results.loading && <Spinner />}{results.error && <Alert kind="error">{results.error}</Alert>}
+        {published && results.loading && <Spinner />}{published && results.error && <Alert kind="error">{results.error}</Alert>}
         {r && (
           <Card>
             <h2>Results</h2>
@@ -89,7 +93,7 @@ export function ResultDetailPage() {
         {e.status === "PUBLISHED" && can("result.read") && <IntegrityCard examId={examId} />}
         {e.status === "PUBLISHED" && (can("result.correct") || (r?.global_test && can("result.correct.own"))) && (
           <CorrectionsCard examId={examId} platform={can("result.correct")} globalTest={Boolean(r?.global_test)} rows={r?.results ?? []}
-            onChanged={() => results.reload()} />
+            history={corrections} onChanged={() => results.reload()} />
         )}
       </div>
     </>
@@ -116,9 +120,11 @@ function useCorrectionKey(signature: string) {
 
 /** platform: the Super Admin's full corrections. Otherwise (a Global Test contributor) only the answer key of the contributor's own
  * papers; the server refuses any other question. */
-export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged }: { examId: string; platform: boolean; globalTest: boolean; rows: ResultRow[];
-  onChanged: () => void }) {
-  const list = useApi<Correction[]>(platform ? `/api/v1/exams/${examId}/result-corrections` : null);
+export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged, history }: { examId: string; platform: boolean; globalTest: boolean; rows: ResultRow[];
+  onChanged: () => void; history?: ReturnType<typeof useApi<Correction[]>> }) {
+  // the page may already have requested the history (history); otherwise the card requests it itself
+  const own = useApi<Correction[]>(platform && !history ? `/api/v1/exams/${examId}/result-corrections` : null);
+  const list = history ?? own;
   const [subjectMarks, setSubjectMarks] = useState<Record<string, string>>({});
   const act = useAction();
   const [student, setStudent] = useState("");
