@@ -18,6 +18,35 @@ const q = (id: string, subject: string, extra: Record<string, unknown> = {}) => 
   latest: { question_version_id: `${id}v1`, question_id: id, version_no: 1, stem: `Question ${id}?`, option_a: "a", option_b: "b", option_c: "c", option_d: "d",
     correct_option: "B", explanation: "Because.", topic: "Force", marks_positive: "4.00", marks_negative: "1.00" }, ...extra,
 });
+const field = (original: string, text: string, outcome: string, extra: Record<string, unknown> = {}) =>
+  ({ original, text, outcome, reasons: [], spans: [], ...extra });
+const CLEAN_PREVIEW = { preview: true, review_token: "tok", engine_version: "2.0.0", domain: "physics",
+  summary: { questions: 1, questions_needing_review: 0, fields: { CONVERTED: 1, PLAIN_TEXT: 4, NEEDS_REVIEW: 0, EXTRACTION_ERROR: 0 } },
+  questions: [{ number: 1, row: 2, correct: "A", marks: "4", negative_marks: "1", topic: null, status: "READY", fields: {
+    question: field("Solve x² = 4.", "Solve \\(x^{2} = 4\\).", "CONVERTED"), option_a: field("2", "2", "PLAIN_TEXT"), option_b: field("3", "3", "PLAIN_TEXT"),
+    option_c: field("4", "4", "PLAIN_TEXT"), option_d: field("5", "5", "PLAIN_TEXT") } }] };
+const FLAGGED_PREVIEW = { ...CLEAN_PREVIEW, summary: { questions: 1, questions_needing_review: 1, fields: { CONVERTED: 0, PLAIN_TEXT: 4, NEEDS_REVIEW: 1, EXTRACTION_ERROR: 0 } },
+  questions: [{ ...CLEAN_PREVIEW.questions[0], status: "NEEDS_REVIEW", fields: { ...CLEAN_PREVIEW.questions[0].fields,
+    question: field("Evaluate ∫₀π sin x dx.", "Evaluate ∫₀π sin x dx.", "NEEDS_REVIEW", { reasons: ["BOUND_TYPED_ON_LINE"],
+      spans: [{ original: "∫₀π sin x dx", status: "flagged", latex: null, code: "BOUND_TYPED_ON_LINE", domain: "mathematics",
+        reason: "A limit seems to be typed on the line right after the other limit (like ∫₀π)." }] }) } }] };
+const UNIT_TEXT = "18. Speed equation: \\(v=5\\,\\mathrm{m}\\,\\mathrm{s}^{-1}\\)";
+const UNIT_PREVIEW = { ...FLAGGED_PREVIEW, questions: [{ ...FLAGGED_PREVIEW.questions[0], fields: { ...FLAGGED_PREVIEW.questions[0].fields,
+  question: { ...field("18. Speed equation: \\(v=5 m {s}^{-1}\\)", "18. Speed equation: \\(v=5 m {s}^{-1}\\)", "NEEDS_REVIEW", { reasons: ["AMBIGUOUS_UNIT"],
+    spans: [{ original: "\\(v=5 m {s}^{-1}\\)", status: "flagged", latex: "v=5 m {s}^{-1}", code: "AMBIGUOUS_UNIT", domain: "word-equation",
+      reason: "In this Word equation 'm' after a number is in italic." }] }),
+    suggestions: [{ expression: "\\(v=5 m {s}^{-1}\\)", label: "as units (upright)", text: UNIT_TEXT },
+                  { expression: "\\(v=5 m {s}^{-1}\\)", label: "as variables (italic, as in the file)", text: "18. Speed equation: \\(v=5 m {s}^{-1}\\)" }] } } }] };
+const DRAFT = { draft_id: "d1", status: "OPEN", title: "Mock", file_name: "paper.docx", subject_id: "phy", revision: 1, decisions: {},
+  updated_at: "2026-11-13T10:00:00Z", result_paper_version_id: null, has_answer_key: false };
+const START = "POST /api/v1/branches/b1/subjects/phy/review-drafts";
+// a saved review: started with the file, decisions autosaved (PATCH), imported from the stored file
+const drafting = (preview: unknown, imported: unknown = { paper_version_id: "v9", question_count: 1 }) => ({
+  "/api/v1/review-drafts": { items: [] }, [START]: { draft: DRAFT, preview, resumed: false },
+  "PATCH /api/v1/review-drafts/d1": (_u: URL, init: RequestInit) => ({ revision: 1 + (JSON.parse(String(init.body)) as { base_revision: number }).base_revision,
+    updated_at: "2026-11-13T10:05:00Z" }),
+  "POST /api/v1/review-drafts/d1/import": imported });
+const SAVED = { timeout: 4000 };                                                       // autosave waits 1.5 s after the last change
 const PA = me("PROVIDER_ADMIN", ["question.read", "question.manage", "paper.read", "paper.create", "paper.upload", "paper.approve", "paper.publish"]);
 afterEach(() => vi.unstubAllGlobals());
 
@@ -83,9 +112,9 @@ describe("Question Bank", () => {
 });
 
 describe("Import Processing", () => {
-  it("uploads a question file with a separate answer key and lists the result in the history", async () => {
+  it("previews a question file with a separate answer key, then imports it", async () => {
     const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/uploads": page([]),
-      "POST /api/v1/branches/b1/subjects/phy/papers/upload": { paper_version_id: "v9", question_count: 30 } });
+      ...drafting(CLEAN_PREVIEW, { paper_version_id: "v9", question_count: 30 }) });
     renderApp("/papers?tab=imports");
     await screen.findByRole("option", { name: "Physics" });
     fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "phy" } });
@@ -93,9 +122,102 @@ describe("Import Processing", () => {
     fireEvent.change(screen.getByLabelText(/Question file/), { target: { files: [new File(["q"], "paper.docx")] } });
     fireEvent.click(screen.getByLabelText(/separate answer-key file/));
     fireEvent.change(await screen.findByLabelText(/Answer key/), { target: { files: [new File(["1,A"], "key.csv")] } });
-    fireEvent.click(screen.getByRole("button", { name: "Validate & import" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
+    expect(await screen.findByText("Preview before import")).toBeTruthy();
+    expect(document.querySelector(".katex")).toBeTruthy();                                    // the converted stem is typeset
+    fireEvent.click(screen.getByRole("button", { name: "Import as a draft paper" }));
     expect(await screen.findByText(/30 questions validated/)).toBeTruthy();
-    expect(calls.find((c) => c.method === "POST")!.body).toEqual({ file: "paper.docx", title: "Mock 4", answer_key: "key.csv" });
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts[0].body).toEqual({ file: "paper.docx", title: "Mock 4", answer_key: "key.csv" });     // the file is kept with the review
+    expect([posts[1].path, posts[1].body]).toEqual(["/api/v1/review-drafts/d1/import", { revision: 1 }]);   // imported from it, not sent again
+  });
+
+  it("offers the readings of a unit-or-variable expression; choosing one fills the correction, which is sent as the decision", async () => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/uploads": page([]), ...drafting(UNIT_PREVIEW),
+      // the correction's live preview: the server recognises it as the import would
+      "POST /api/v1/branches/b1/subjects/phy/recognition-preview": (_u: URL, init: RequestInit) => {
+        const { text } = JSON.parse(String(init.body)) as { text: string };
+        return { original: text, text, outcome: "CONVERTED", reasons: [], spans: [], suggestions: [] };
+      },
+    });
+    renderApp("/papers?tab=imports");
+    await screen.findByRole("option", { name: "Physics" });
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "phy" } });
+    fireEvent.change(screen.getByLabelText("Paper title"), { target: { value: "Units" } });
+    fireEvent.change(screen.getByLabelText(/Question file/), { target: { files: [new File(["q"], "paper.docx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
+    const field = await screen.findByTestId("rev-1-question");
+    const choices = within(field).getByRole("group", { name: /How should .* be read/ });
+    expect(choices.querySelectorAll(".katex").length).toBe(2);                              // both readings typeset, side by side
+    expect((screen.getByRole("button", { name: "1 field(s) still need a decision" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(choices).getByRole("button", { name: /as units/ }));
+    expect((within(field).getByLabelText(/Corrected text/) as HTMLTextAreaElement).value).toBe(UNIT_TEXT);
+    await waitFor(() => expect(field.querySelector(".recognition-preview .katex")).toBeTruthy());
+    fireEvent.click(await screen.findByRole("button", { name: "Import as a draft paper" }, SAVED));
+    expect(await screen.findByText(/1 questions validated/)).toBeTruthy();
+    const saved = calls.filter((c) => c.method === "PATCH").map((c) => c.body);
+    expect(saved).toEqual([{ base_revision: 1, changes: { "1:question": { action: "edit", text: UNIT_TEXT } } }]);
+    expect(calls.find((c) => c.path.endsWith("/import"))!.body).toEqual({ revision: 2 });
+  });
+
+  it("does not import until every flagged expression has a decision, and sends the decisions", async () => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/uploads": page([]), ...drafting(FLAGGED_PREVIEW),
+      // the correction's live preview: the server recognises it as the import would
+      "POST /api/v1/branches/b1/subjects/phy/recognition-preview": (_u: URL, init: RequestInit) => {
+        const { text } = JSON.parse(String(init.body)) as { text: string };
+        return { original: text, text, outcome: "CONVERTED", reasons: [], spans: [], suggestions: [] };
+      },
+    });
+    renderApp("/papers?tab=imports");
+    await screen.findByRole("option", { name: "Physics" });
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "phy" } });
+    fireEvent.change(screen.getByLabelText("Paper title"), { target: { value: "Calculus" } });
+    fireEvent.change(screen.getByLabelText(/Question file/), { target: { files: [new File(["q"], "paper.csv")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
+    expect(await screen.findByText(/A limit seems to be typed on the line/)).toBeTruthy();
+    expect(screen.getByText("∫₀π sin x dx", { selector: "code" })).toBeTruthy();                 // the original, never a guess
+    const importButton = screen.getByRole("button", { name: "1 field(s) still need a decision" });
+    expect((importButton as HTMLButtonElement).disabled).toBe(true);
+    const field = screen.getByTestId("rev-1-question");
+    fireEvent.click(within(field).getByLabelText("Correct it"));
+    fireEvent.change(within(field).getByLabelText(/Corrected text/), { target: { value: "Evaluate \\(\\int_0^\\pi \\sin x\\,dx\\)." } });
+    await waitFor(() => expect(field.querySelector(".recognition-preview .katex")).toBeTruthy());
+    fireEvent.click(await screen.findByRole("button", { name: "Import as a draft paper" }, SAVED));
+    expect(await screen.findByText(/1 questions validated/)).toBeTruthy();
+    const saved = calls.filter((c) => c.method === "PATCH").at(-1)!.body as { changes: Record<string, unknown> };
+    expect(saved.changes).toEqual({ "1:question": { action: "edit", text: "Evaluate \\(\\int_0^\\pi \\sin x\\,dx\\)." } });
+  });
+
+  it("reopens a saved review after a reload, and lists the reviews in progress to continue", async () => {
+    const saved = { ...DRAFT, title: "Calculus", revision: 3,
+      decisions: { "1:question": { decision: { action: "keep_original" }, rev: 3, by: "me", at: "2026-11-13T10:04:00Z" } } };
+    stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/uploads": page([]),
+      "/api/v1/review-drafts": { items: [{ ...saved, decided: 1 }] }, "/api/v1/review-drafts/d1": { draft: saved, preview: FLAGGED_PREVIEW } });
+    renderApp("/papers?tab=imports&draft=d1");                                                // the address the review left after a reload
+    const field = await screen.findByTestId("rev-1-question");
+    expect((within(field).getByLabelText(/Keep the text exactly/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("button", { name: "Import as a draft paper" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Close (continue later)" }));
+    const list = (await screen.findByRole("heading", { name: "Reviews in progress" })).closest(".card") as HTMLElement;
+    expect(within(list).getByText("Calculus")).toBeTruthy();
+    fireEvent.click(within(list).getByRole("button", { name: "Continue" }));
+    expect(await screen.findByTestId("rev-1-question")).toBeTruthy();
+  });
+
+  it("refuses a correction that KaTeX cannot display", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/uploads": page([]), ...drafting(FLAGGED_PREVIEW) });
+    renderApp("/papers?tab=imports");
+    await screen.findByRole("option", { name: "Physics" });
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "phy" } });
+    fireEvent.change(screen.getByLabelText("Paper title"), { target: { value: "Calculus" } });
+    fireEvent.change(screen.getByLabelText(/Question file/), { target: { files: [new File(["q"], "paper.csv")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
+    const field = await screen.findByTestId("rev-1-question");
+    fireEvent.click(within(field).getByLabelText("Correct it"));
+    fireEvent.change(within(field).getByLabelText(/Corrected text/), { target: { value: "\\(\\frac{1}{\\)" } });
+    expect((await screen.findByRole("button", { name: "1 field(s) still need a decision" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(field).getByLabelText(/Keep the text exactly as in the file/));
+    expect((await screen.findByRole("button", { name: "Import as a draft paper" }, SAVED) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows every problem of a rejected upload and that nothing was imported", async () => {
@@ -103,13 +225,14 @@ describe("Import Processing", () => {
       "/api/v1/uploads": page([{ upload_id: "u1", title: "Bad", subject_id: "phy", status: "REJECTED", question_count: 0, error_count: 1, has_answer_key: true,
         errors: [{ row: null, field: "correct", message: "Answer mismatch for question 2: the paper says B, the answer key says C." }],
         paper_version_id: null, paper_version_status: null, version_no: null, created_at: "2026-10-17T10:00:00Z" }]),
-      "POST /api/v1/branches/b1/subjects/phy/papers/upload": fail(422, { code: "EXTRACTION_FAILED", message: "rejected", errors: [{ row: 3, field: "option_b", message: "Option B is empty." }] }) });
+      "/api/v1/review-drafts": { items: [] },
+      [START]: fail(422, { code: "EXTRACTION_FAILED", message: "rejected", errors: [{ row: 3, field: "option_b", message: "Option B is empty." }] }) });
     renderApp("/papers?tab=imports");
     await screen.findByRole("option", { name: "Physics" });
     fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "phy" } });
     fireEvent.change(screen.getByLabelText("Paper title"), { target: { value: "Mock 5" } });
     fireEvent.change(screen.getByLabelText(/Question file/), { target: { files: [new File(["q"], "paper.csv")] } });
-    fireEvent.click(screen.getByRole("button", { name: "Validate & import" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
     expect(await screen.findByText(/No question was imported/)).toBeTruthy();
     expect(screen.getByText("Option B is empty.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "1 problem(s)" }));

@@ -408,3 +408,25 @@ def test_dashboards_never_count_a_unified_exam_for_its_anchor(client, world, gs,
     for exam_id in unified_ids:
         assert rows[exam_id]["unified_global"] is True and rows[exam_id]["provider_name"] is None and rows[exam_id]["branch_name"] is None
     assert rows[str(e.exam_id)]["unified_global"] is False and rows[str(e.exam_id)]["provider_name"] == "Provider p1"
+
+
+def test_a_teachers_view_of_unified_exams_is_the_same_with_the_shared_enrollment_reads(client, world, gs, uni, login, db_factory, monkeypatch):
+    """unified._scopes reads the teacher check's enrollment memberships once for all the exams it scopes; every teacher's lists and
+    exam pages answer exactly as with the former per-subject reads (memberships=None), including refusals."""
+    from inst_exam.services import unified
+    t, occ = uni
+    run_generation(db_factory, t, occ)
+    exam_id = _exam_of(db_factory, occ, "STU000001")
+    paths = ["/exams", f"/exams/{exam_id}", f"/exams/{exam_id}/assignments", f"/branches/{world['p1b1']}/exams", "/tests"]
+
+    def answers():
+        out = {}
+        for who in ("tA", "tC", "tBio"):
+            h = login(gs[who])
+            out.update({(who, path): (r.status_code, r.json()) for path in paths for r in [client.get(f"{API}{path}", headers=h)]})
+        return out
+    shared = answers()
+    original = unified._scope_of
+    monkeypatch.setattr(unified, "_scope_of", lambda *a: original(*a[:6]))                 # the per-subject reads, as before
+    assert answers() == shared
+    assert shared[("tBio", f"/exams/{exam_id}")][0] == 403 and shared[("tC", f"/exams/{exam_id}")][0] == 200

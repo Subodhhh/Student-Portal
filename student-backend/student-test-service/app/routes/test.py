@@ -1,10 +1,13 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_student
 from app.database import get_db
+from app.models.question import Question, QuestionImage
+from app.repositories.test_repository import get_test_for_student
 from app.schemas.test import TestResponse, TestStartResponse
 from app.services.test_service import (
     AttemptRequired,
@@ -141,3 +144,22 @@ def get_test_by_id_route(
         )
 
     return test
+
+PICTURE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "private, max-age=86400, immutable",     # a picture's bytes never change (it is named by its checksum)
+}
+
+
+@router.get("/{test_id}/images/{checksum}")
+def question_picture(test_id: UUID, checksum: str, student_id: str = Depends(get_current_student), db: Session = Depends(get_db)):
+    """A picture of a question or option, for a student who may see this test (its audience, during or after it), and only when one
+    of this test's questions uses it. Every other request gets the same 404, so pictures of other tests cannot be probed."""
+    used = db.scalar(select(Question.question_id).where(Question.test_id == test_id, or_(
+        Question.question_image == checksum, Question.option_a_image == checksum, Question.option_b_image == checksum,
+        Question.option_c_image == checksum, Question.option_d_image == checksum)).limit(1))
+    picture = db.get(QuestionImage, checksum) if used else None
+    if picture is None or not get_test_for_student(db=db, test_id=test_id, student_id=student_id):
+        raise HTTPException(status_code=404, detail="Picture not found")
+    return Response(picture.image_data, media_type=picture.mime_type, headers=PICTURE_HEADERS)

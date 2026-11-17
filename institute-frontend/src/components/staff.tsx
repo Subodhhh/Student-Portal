@@ -3,7 +3,7 @@ import { useAuth, type Role } from "../auth/AuthContext";
 import { ROLE_LABEL } from "../auth/nav";
 import { activeAssignments, GRANTABLE, isGlobalRole, scopeOf, type Assignment, type Staff } from "../auth/roles";
 import { useScope } from "../auth/ScopeContext";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { AuditTable } from "./audit";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, Pagination, SearchField, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "./ui";
@@ -98,7 +98,7 @@ function CreateStaff({ role, providerId: fixedProvider, branchId: fixedBranch, o
   const [branchId, setBranchId] = useState(fixedBranch ?? "");
   const needsProvider = !isGlobalRole(role);
   const needsBranch = role === "BRANCH_ADMIN";
-  const branches = useApi<Page<{ branch_id: string; name: string }>>(needsBranch && providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null);
+  const branches = useReference<Page<{ branch_id: string; name: string }>>(needsBranch && providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null);
   const { busy, error, run } = useAction();
   const body = {
     full_name: f.full_name, email: f.email, phone: f.phone || null,

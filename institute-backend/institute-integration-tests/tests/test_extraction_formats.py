@@ -159,61 +159,14 @@ def test_xlsx_zip_bomb_and_macro_parts_are_rejected(monkeypatch):
     assert not extraction.extract_xlsx(many.getvalue(), 500).ok
 
 
-# ------------------------------------------------------------------ image (OCR behind an interface)
+# ------------------------------------------------------------------ pictures
 
 def png(width=40, height=30) -> bytes:
     def chunk(kind: bytes, body: bytes) -> bytes:
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
-    raw = b"".join(b"\x00" + b"\xff" * width for _ in range(height))
+    # an oversized picture only needs its header (dimensions are refused before decoding): never build gigabytes of pixels
+    raw = b"".join(b"\x00" + b"\xff" * width for _ in range(height)) if width * height <= 10_000_000 else b""
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
-
-
-class FakeOcr:
-    def __init__(self, items):
-        self.items, self.calls = items, 0
-
-    def read_questions(self, image: bytes, mime: str):
-        self.calls += 1
-        return self.items
-
-
-def item(n=1, confidence=0.995, **over):
-    base = {"stem": f"Question {n}?", "options": {"A": "a", "B": "b", "C": "c", "D": "d"}, "correct": "B", "marks": "4", "negative": "1", "confidence": confidence}
-    return extraction.OcrQuestion(**{**base, **over})
-
-
-def test_images_are_rejected_when_no_ocr_backend_is_configured():
-    r = extraction.extract_image(png(), "image/png", None, 500)
-    assert not r.ok and "not enabled" in r.errors[0]["message"].lower()
-
-
-def test_image_extraction_accepts_confident_complete_questions_and_applies_the_same_validation():
-    ocr = FakeOcr([item(1), item(2)])
-    r = extraction.extract_image(png(), "image/png", ocr, 500)
-    assert r.ok and len(r.questions) == 2 and r.questions[0].correct == "B" and ocr.calls == 1
-    dup = extraction.extract_image(png(), "image/png", FakeOcr([item(1), item(1)]), 500)
-    assert not dup.ok                                              # duplicate stems rejected by the shared validator
-
-
-@pytest.mark.parametrize("bad", [item(2, confidence=0.5), item(2, correct="Z"), item(2, stem=""), item(2, marks="abc"),
-                                 item(2, options={"A": "a", "B": "b", "C": "c"})])
-def test_one_unreliable_question_rejects_the_entire_image_paper(bad):
-    r = extraction.extract_image(png(), "image/png", FakeOcr([item(1), bad, item(3)]), 500)
-    assert not r.ok and r.questions == [] and r.errors
-
-
-def test_ocr_failure_or_empty_output_rejects_the_paper():
-    class Boom:
-        def read_questions(self, image, mime): raise RuntimeError("engine crashed")
-    assert not extraction.extract_image(png(), "image/png", Boom(), 500).ok
-    assert not extraction.extract_image(png(), "image/png", FakeOcr([]), 500).ok
-
-
-@pytest.mark.parametrize("data,mime", [(b"not an image at all", "image/png"), (b"\xff\xd8\xff" + b"x" * 10, "image/png"), (png(), "image/jpeg"),
-                                       (png(30000, 30000), "image/png")])
-def test_image_magic_bytes_mime_and_dimensions_are_verified_before_ocr(data, mime):
-    ocr = FakeOcr([item(1)])
-    assert not extraction.extract_image(data, mime, ocr, 500).ok and ocr.calls == 0
 
 
 # ------------------------------------------------------------------ upload endpoint
@@ -258,27 +211,17 @@ def test_a_renamed_non_xlsx_file_is_rejected_by_content_not_by_name(client, worl
     assert r.status_code == 422 and r.json()["detail"]["code"] == "EXTRACTION_FAILED"
 
 
-def test_image_upload_without_an_ocr_backend_is_rejected_clearly(client, world, setup, make_staff, login):
-    _, code = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
-    r = put(client, login(code), world, setup, png(), "scan.png", "image/png")
-    assert r.status_code == 422 and "not enabled" in r.json()["detail"]["errors"][0]["message"].lower()
-
-
-def test_image_upload_with_a_backend_imports_only_when_everything_is_reliable(client, world, setup, make_staff, login):
-    from inst_paper.services.extraction import set_ocr_backend
+def test_a_picture_is_never_read_as_a_paper(client, world, setup, make_staff, login):
+    """OCR was discontinued: a PNG/JPEG of a paper is refused by type; pictures belong inside an .xlsx or .zip paper."""
     _, code = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
     h = login(code)
-    try:
-        set_ocr_backend(FakeOcr([item(1), item(2, confidence=0.4)]))
-        assert put(client, h, world, setup, png(), "scan.png", "image/png").status_code == 422
-        set_ocr_backend(FakeOcr([item(1), item(2)]))
-        ok = put(client, h, world, setup, png(), "scan.png", "image/png", title="Scanned paper")
-        assert ok.status_code == 201 and ok.json()["question_count"] == 2
-    finally:
-        set_ocr_backend(None)
+    for name, ctype in (("scan.png", "image/png"), ("scan.jpg", "image/jpeg"), ("scan.jpeg", "image/jpeg")):
+        r = put(client, h, world, setup, png(), name, ctype)
+        assert r.status_code == 415 and r.json()["detail"]["code"] == "UNSUPPORTED_FILE"
 
 
 def test_oversized_spreadsheet_is_refused_before_parsing(client, world, setup, make_staff, login, monkeypatch):
     _, code = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
     monkeypatch.setattr(settings, "max_upload_bytes", 1000)
+    monkeypatch.setattr(settings, "max_package_upload_bytes", 1000)            # .xlsx may carry pictures: its own (larger) limit
     assert put(client, login(code), world, setup, workbook(), "paper.xlsx", XLSX_MIME).status_code == 413

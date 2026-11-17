@@ -218,6 +218,49 @@ describe("Create Test wizard", () => {
     expect(post(calls, "/api/v1/tests")[0].body).toMatchObject({ subjects: [{ subject_id: "phy", paper_version_id: "pvbank" }] });
   });
 
+  it("shows an approved but unpublished paper as not choosable, and says how to make it usable", async () => {
+    stubApi(routes({
+      "/api/v1/tests/papers": { items: [
+        { paper_id: "pp1", title: "Physics Set 4", scope: "PROVIDER", source: "Own",
+          published_version: { paper_version_id: "pvbank", version_no: 2, question_count: 5, total_marks: "20.00" } },
+        { paper_id: "pp2", title: "P1 Draft", scope: "PROVIDER", source: "Own", published_version: null }], total: 2 },
+    }));
+    renderApp("/tests/new");
+    fireEvent.click(await screen.findByLabelText("Pune"));
+    fireEvent.click(await screen.findByLabelText("NEET A"));
+    next();
+    fireEvent.change(await screen.findByLabelText("Test name"), { target: { value: "Bank Physics" } });
+    next();
+    fireEvent.click(await screen.findByLabelText("Physics"));
+    next();
+    await screen.findByLabelText("Duration (minutes)");
+    next();
+    fireEvent.click(await screen.findByLabelText("Use an approved paper"));
+    const select = (await screen.findByLabelText("Approved paper")) as HTMLSelectElement;
+    const draft = within(select).getByRole("option", { name: /P1 Draft · Own · not published yet/ }) as HTMLOptionElement;
+    expect(draft.disabled).toBe(true);                                            // listed, never selectable: no version to use
+    expect(screen.getByText(/A Daily Test can only use a published version/)).toBeTruthy();
+    expect((within(select).getByRole("option", { name: /Physics Set 4/ }) as HTMLOptionElement).disabled).toBe(false);
+  });
+
+  it("names publication, not approval, when no paper of the subject is published", async () => {
+    stubApi(routes({ "/api/v1/tests/papers": { items: [{ paper_id: "pp2", title: "P1 Draft", scope: "PROVIDER", source: "Own", published_version: null }], total: 1 } }));
+    renderApp("/tests/new");
+    fireEvent.click(await screen.findByLabelText("Pune"));
+    fireEvent.click(await screen.findByLabelText("NEET A"));
+    next();
+    fireEvent.change(await screen.findByLabelText("Test name"), { target: { value: "Bank Physics" } });
+    next();
+    fireEvent.click(await screen.findByLabelText("Physics"));
+    next();
+    await screen.findByLabelText("Duration (minutes)");
+    next();
+    fireEvent.click(await screen.findByLabelText("Use an approved paper"));
+    const select = (await screen.findByLabelText("Approved paper")) as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "No published paper available" })).toBeTruthy();
+    expect(within(select).queryByRole("option", { name: "No approved paper available" })).toBeNull();
+  });
+
   it("reports a failed publication honestly", async () => {
     stubApi(routes({ "POST /api/v1/tests": fail(409, { code: "PUBLICATION_FAILED", message: "Publication refused: not every subject's paper was available." }) }));
     await throughFiles();

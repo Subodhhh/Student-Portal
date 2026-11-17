@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { isGlobalRole } from "../auth/roles";
 import { useScope } from "../auth/ScopeContext";
@@ -66,7 +66,7 @@ export function GlobalScheduleList() {
               { header: "Paper deadline", render: (o) => (o.status === "PUBLISHED" ? fmtDate(o.submission_deadline) : "—") },
               { header: platform ? "Submissions" : "Your submissions", render: (o) => o.submissions.active },
               { header: "State", render: (o) => <DateState o={o} /> },
-              { header: "", render: (o) => <Link className="btn small" to={`/tests/global/occurrences/${o.occurrence_id}`}>
+              { header: "", render: (o) => <Link className="btn small" to={`/tests/global/occurrences/${o.occurrence_id}`} state={{ generated: Boolean(o.generated_at) }}>
                 {!platform && o.submissions_open && o.subjects.some((s) => s.can_submit) ? "Submit paper" : "Open"}</Link> },
             ]} />
           <Pagination page={page} pageSize={25} total={list.data?.total ?? 0} onChange={setPage} />
@@ -77,10 +77,12 @@ export function GlobalScheduleList() {
 }
 
 /** The dates section of a SCHEDULE test's page: planning, single dates, publication, cancellation (platform); published dates (others). */
-export function GlobalTestDates({ test, onChanged }: { test: GlobalTest; onChanged: () => void }) {
+export function GlobalTestDates({ test, onChanged, dates }: { test: GlobalTest; onChanged: () => void; dates?: ReturnType<typeof useApi<{ items: Occurrence[] }>> }) {
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
-  const list = useApi<{ items: Occurrence[] }>(`/api/v1/global-tests/${test.test_id}/occurrences`);
+  // the page may already have requested the dates (dates); otherwise the card requests them itself
+  const own = useApi<{ items: Occurrence[] }>(dates ? null : `/api/v1/global-tests/${test.test_id}/occurrences`);
+  const list = dates ?? own;
   const [planning, setPlanning] = useState(false);
   const [editing, setEditing] = useState<Occurrence | "new" | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "delete" | "cancel" | "publish"; o?: Occurrence } | null>(null);
@@ -132,7 +134,7 @@ export function GlobalTestDates({ test, onChanged }: { test: GlobalTest; onChang
               {o.generation_error && <div className="muted small">Generation error: {o.generation_error}</div>}</> },
             { header: "", render: (o) => (
               <div className="row">
-                {o.status !== "DRAFT" && <Link className="btn small secondary" to={`/tests/global/occurrences/${o.occurrence_id}`}>Open</Link>}
+                {o.status !== "DRAFT" && <Link className="btn small secondary" to={`/tests/global/occurrences/${o.occurrence_id}`} state={{ generated: Boolean(o.generated_at) }}>Open</Link>}
                 {platform && o.status === "DRAFT" && <Button small variant="secondary" onClick={() => setEditing(o)}>Edit</Button>}
                 {platform && o.status === "DRAFT" && <Button small variant="danger" onClick={() => setConfirm({ kind: "delete", o })}>Delete</Button>}
                 {platform && o.status === "PUBLISHED" && !o.generated_at && <Button small variant="danger" onClick={() => setConfirm({ kind: "cancel", o })}>Cancel date</Button>}
@@ -245,7 +247,11 @@ export function GlobalOccurrencePage() {
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
   const d = useApi<OccurrenceDetail>(`/api/v1/global-occurrences/${occurrenceId}`);
   const teacherOnly = me?.primary_role === "TEACHER";   // teachers use the exam pages; the layout API refuses them
-  const layout = useApi<StudentLayouts>(d.data?.generated_at && !teacherOnly ? `/api/v1/global-occurrences/${occurrenceId}/student-subjects` : null);
+  // The student layout is requested WITH the detail when the link that opened the page said the date is generated (or said nothing,
+  // e.g. a direct link); a date the list showed as not generated waits for the detail to confirm. It is shown only for a generated date.
+  const hint = (useLocation().state as { generated?: boolean } | null)?.generated;
+  const wantLayout = !teacherOnly && (hint !== false || Boolean(d.data?.generated_at));
+  const layout = useApi<StudentLayouts>(wantLayout ? `/api/v1/global-occurrences/${occurrenceId}/student-subjects` : null);
   const [submitting, setSubmitting] = useState(false);
   const [withdraw, setWithdraw] = useState<Submission | null>(null);
   const [reason, setReason] = useState("");
@@ -317,7 +323,7 @@ export function GlobalOccurrencePage() {
           ]} />
         </Card>
       )}
-      {layout.data && (
+      {o.generated_at && layout.data && (
         <Card>
           <h2>Students</h2>
           <p className="muted small">{layout.data.scope === "ALL"
@@ -376,7 +382,7 @@ function SubmitPaperDialog({ o, onClose, onDone }: { o: OccurrenceDetail; onClos
         {subjects.map((s) => <option key={s.subject_id} value={s.subject_id}>{s.subject}</option>)}
       </SelectField>
       {papers.loading && !papers.data ? <Spinner /> : (papers.data?.items.length ?? 0) === 0 ? (
-        <EmptyState title="No paper of yours for this subject" hint="Upload it first (file or photos) in Question Bank & Papers, then come back." action={<Link className="btn small" to="/papers">Upload a paper</Link>} />
+        <EmptyState title="No paper of yours for this subject" hint="Upload it first in Question Bank & Papers, then come back." action={<Link className="btn small" to="/papers">Upload a paper</Link>} />
       ) : (
         <SelectField label="Your paper" value={paper} onChange={(e) => setPaper(e.target.value)}>
           <option value="">Choose a paper</option>

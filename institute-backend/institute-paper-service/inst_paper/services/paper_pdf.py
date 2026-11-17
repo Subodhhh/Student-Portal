@@ -7,7 +7,6 @@ Rendered with ReportLab (BSD)."""
 import io
 import os
 import re
-import zipfile
 from datetime import datetime
 from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
@@ -20,6 +19,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as rl_canvas
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from inst_paper.services.math.plain import readable   # stored LaTeX such as \(x^{2}\) -> readable text such as x²
 
 FONT_DIR = os.environ.get("PDF_FONT_DIR", "/usr/share/fonts/truetype/dejavu")
 IST = ZoneInfo("Asia/Kolkata")
@@ -160,15 +161,15 @@ def render(paper: dict, answer_key: bool = False) -> bytes:
     story = _header(w, paper, answer_key, width)
     grey = colors.Color(90 / 255, 90 / 255, 90 / 255)
     for n, q in enumerate(paper["questions"], start=1):
-        block = [w.p(f"{n}. {q['stem']}", bold=True, after=0.5 * mm)]
+        block = [w.p(f"{n}. {readable(q['stem'])}", bold=True, after=0.5 * mm)]
         for letter, option in zip("ABCD", q["options"], strict=True):
             correct = answer_key and q["answer"] == letter
-            block.append(w.p(f"({letter}) {option}{'   ✓ correct' if correct else ''}", bold=correct, indent=6 * mm))
+            block.append(w.p(f"({letter}) {readable(option)}{'   ✓ correct' if correct else ''}", bold=correct, indent=6 * mm))
         block.append(w.p(f"Marks: {plus_marks(q['marks_positive'])} / {minus_marks(q['marks_negative'])}", size=9, indent=6 * mm, color=grey))
         if answer_key:
             block.append(w.p(f"Answer: ({q['answer']})", size=10, bold=True, indent=6 * mm))
             if q.get("explanation"):
-                block.append(w.p(f"Explanation: {q['explanation']}", size=9.5, indent=6 * mm))
+                block.append(w.p(f"Explanation: {readable(q['explanation'])}", size=9.5, indent=6 * mm))
         story += [KeepTogether(block), Spacer(1, 3 * mm)]       # a question stays on one page where it fits
     kind = "Answer key" if answer_key else "Question paper"
     footer = _clean(f"{'ANSWER KEY · ' if answer_key else ''}{paper['title']} · v{paper['version_no']} · {kind}")
@@ -179,16 +180,3 @@ def render(paper: dict, answer_key: bool = False) -> bytes:
 def filename(paper: dict, answer_key: bool = False) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "-", paper["title"]).strip("-")[:80] or "paper"
     return f"{slug}-v{paper['version_no']}{'-answer-key' if answer_key else ''}.pdf"
-
-
-def bundle(papers: list[dict], answer_key: bool = False) -> bytes:
-    """One PDF per paper in a ZIP; two papers with the same title and version get distinct names."""
-    out, used = io.BytesIO(), set()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for paper in papers:
-            name, i = filename(paper, answer_key), 2
-            while name in used:
-                name, i = filename(paper, answer_key).replace(".pdf", f"-{i}.pdf"), i + 1
-            used.add(name)
-            z.writestr(name, render(paper, answer_key))
-    return out.getvalue()

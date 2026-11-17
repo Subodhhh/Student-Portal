@@ -84,6 +84,11 @@ def get_questions_with_answers(
             q.marks,
             q.negative_marks,
             q.image_reference,
+            q.question_image,
+            q.option_a_image,
+            q.option_b_image,
+            q.option_c_image,
+            q.option_d_image,
             q.paper_id,
             la.selected_answer
         FROM questions q

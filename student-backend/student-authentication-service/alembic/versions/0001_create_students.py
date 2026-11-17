@@ -23,12 +23,8 @@ def upgrade() -> None:
 
     op.create_table(
         "students",
-        sa.Column(
-            "student_id",
-            postgresql.UUID(as_uuid=True),
-            server_default=sa.text("gen_random_uuid()"),
-            nullable=False,
-        ),
+        # VARCHAR(20) Student IDs (STU000001, issued by the allocator) - the same as every database and the model; was UUID.
+        sa.Column("student_id", sa.String(length=20), nullable=False),
         sa.Column("first_name", sa.String(length=255), nullable=False),
         sa.Column("last_name", sa.String(length=255), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=False),

@@ -43,7 +43,7 @@ Status: [ ] todo · [~] in progress · [x] done (verified) · [!] blocked
 - [x] Answer review gating, ranking authorization
 ### D. Institute workflows (E2E on the live stack)
 - [x] Lookup + enrollment end to end
-- [x] Paper upload/extraction/preview/validation/approval: CSV, XLSX, DOCX (table or numbered), text PDF, PNG/JPEG via Tesseract OCR (opt-in, confidence-gated)
+- [x] Paper upload/extraction/preview/validation/approval: CSV, XLSX (embedded pictures), ZIP (CSV + pictures), DOCX (table or numbered), text PDF; no OCR (removed 2026-11-16)
 - [x] Exam plans, generation, scheduling, publication, missing-paper notifications (teacher + provider admin notified, live)
 - [x] Composite tests (A+B live-verified; A+B+C in suite; response deadline + EXPIRED state added)
 - [x] Role-specific pages / permissions (Super Admin, Provider Admin, Teacher: API scoping in E2E, nav + pages in Chromium)
@@ -65,3 +65,15 @@ Status: [ ] todo · [~] in progress · [x] done (verified) · [!] blocked
   leaderboards; profile email change needed no password; destructive password-reset test ran against the configured (Neon) DB.
 * 2026-10-16: gateway resolves upstreams at request time (survives container recreation); Student images pinned + non-root.
 * 2026-10-16: institute_portal_test exam chain → 0003_exam_composite_expiry (additive).
+* 2026-11-06: platform improvements. Batch view/edit/deactivate/reactivate and bulk add of enrolled students; paper files only from APPROVED onwards
+  (also `/uploads/{id}/file`), ZIP downloads removed; All Branches on the Papers list;
+  18 query-justified indexes. Additive migrations applied to institute_portal_test and subodh_dev after a disposable PostgreSQL run. Decisions: Delete means INACTIVE, nothing
+  is physically removed; the Stage 2 load-test databases were not touched.
+* 2026-11-16: decision: OCR and picture/handwriting/formula/diagram recognition discontinued. Question and option pictures are stored and
+  shown exactly as uploaded. Backup first (`~/backups/recognition-removal-20261116/`, restore-tested). Switched off by configuration only:
+  paper service `OCR_ENGINE=""`, `RECOGNITION_RECOGNIZERS=[]`; `institute-recognition-worker` stopped (container, image, weights volume and
+  rollback tags kept) and behind the compose profile `recognition`. No code, migration or database change; the recognition tables stay dormant.
+* 2026-11-16: recognition code removed (OCR, picture recognisers, job queue, worker, photo papers; text notation engine kept). Rebuilt and
+  recreated only institute-paper-service, institute-gateway and institute-portal-frontend (rollback tags `:pre-recognition-removal-20261116`);
+  no migration, no Neon change. Verified: Institute suite 2,076 passed; disposable E2E XLSX pictures 28/28, ZIP pictures 27/27, pipeline 28/28;
+  Global Test browser journey 20 + 12 + 53 checks.

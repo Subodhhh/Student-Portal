@@ -15,6 +15,7 @@ AUDIENCE_TYPES = ("BATCHES", "BRANCH", "INSTITUTE", "STUDENTS", "TARGETED")
 class ExamPlan(Base):
     __tablename__ = "exam_plans"
     __table_args__ = (
+        Index("ix_exam_plans_branch", "branch_id"),
         # DRAFT plans are saved from the test-creation wizard and never generate until activated.
         CheckConstraint("status IN ('DRAFT','ACTIVE','INACTIVE')", name="exam_plans_status_check"),
         CheckConstraint("duration_minutes > 0", name="exam_plans_duration_check"),
@@ -151,6 +152,7 @@ class ExamGenerationEvent(Base):
 class Exam(Base):
     __tablename__ = "exams"
     __table_args__ = (
+        Index("ix_exams_branch", "branch_id"),
         CheckConstraint("status IN ('SCHEDULED','PUBLISHED','CANCELLED')", name="exams_status_check"),
         UniqueConstraint("plan_id", "run_key", name="uq_exam_run"),
     )

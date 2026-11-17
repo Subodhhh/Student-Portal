@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../services/api";
+import { loadReference, peekReference } from "../services/referenceCache";
 
 type Result<T> = { key: string; data: T | null; error: string };
 
@@ -26,6 +27,35 @@ export function useApi<T>(path: string | null) {
     data: path === null ? null : (result?.data ?? null),
     error: fresh ? result.error : "",
     loading: path !== null && !fresh,
+    reload,
+  };
+}
+
+/** useApi for shared REFERENCE lists only (services/referenceCache.ts: subject catalogue, provider subjects, provider and branch
+ * lists): a list another page loaded in the last 30 s is shown at once without a request; one up to 5 minutes old is shown while
+ * it is refreshed in the background; pages asking at the same time share one request. `reload()` always asks the server. */
+export function useReference<T>(path: string | null) {
+  const [result, setResult] = useState<Result<T> | null>(null);
+  const [tick, setTick] = useState(0);
+  const key = path === null ? "" : `${path}#${tick}`;
+  const hit = path === null ? undefined : peekReference<T>(path);
+
+  useEffect(() => {
+    if (path === null) return;
+    if (tick === 0 && peekReference(path)?.fresh) return;          // reused as is
+    let cancelled = false;
+    loadReference<T>(path, (p) => api<T>(p), tick > 0)
+      .then((data) => { if (!cancelled) setResult({ key, data, error: "" }); })
+      .catch((e) => { if (!cancelled) setResult({ key, data: null, error: errorMessage(e) }); });
+    return () => { cancelled = true; };
+  }, [path, key, tick]);
+
+  const fresh = path !== null && result?.key === key;
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  return {
+    data: path === null ? null : ((fresh ? result.data : null) ?? hit?.data ?? result?.data ?? null),
+    error: fresh ? result.error : "",
+    loading: path !== null && !fresh && !hit,
     reload,
   };
 }

@@ -8,6 +8,7 @@ contributed to it). Branch admins and teachers may look, not decide. A unified G
 (services/unified.papers_sat): contributors see only attempts that sat one of their papers, and a Provider Admin decides only when
 EVERY paper of the attempt is their provider's (a retake re-sits all of them); a mixed attempt is decided by the platform. The attempt service keeps the records and the decision; nothing
 here changes an attempt's answers or result. Browser events are evidence of activity in the browser, not proof of intent."""
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -54,8 +55,10 @@ def exam_integrity(exam_id: UUID, p: Principal = Depends(get_principal), db: Ses
     request or an authorized retake."""
     e, ev, _scope, allowed = _context(db, p, exam_id)
     try:
-        attempts = ac.exam_attempts(str(ev.exam_version_id))
-        reviews = {r["attempt_id"]: r for r in ac.test_reviews(str(ev.exam_version_id))}
+        with ThreadPoolExecutor(max_workers=2) as pool:         # two independent attempt-service reads (HTTP only, no database session)
+            attempts_f, reviews_f = pool.submit(ac.exam_attempts, str(ev.exam_version_id)), pool.submit(ac.test_reviews, str(ev.exam_version_id))
+            attempts = attempts_f.result()
+            reviews = {r["attempt_id"]: r for r in reviews_f.result()}
     except InternalServiceError:
         raise _unavailable()
     rows = [a for a in attempts if a["student_id"] in allowed and _sat_mine(_scope, a)

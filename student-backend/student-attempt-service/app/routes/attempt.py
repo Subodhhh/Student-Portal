@@ -19,6 +19,7 @@ from app.schemas.attempt import (
     AttemptResponse,
     AttemptSummaryResponse,
     AttemptWorkspaceResponse,
+    NoAttemptResponse,
     StartAttemptRequest,
 )
 from app.schemas.attempt_answer import (
@@ -193,13 +194,15 @@ def choose_paper(
 
 @router.get(
     "/test/{test_id}",
-    response_model=AttemptResponse,
+    response_model=AttemptResponse | NoAttemptResponse,
 )
 def get_test_attempt_by_test(
     test_id: UUID,
     student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
+    """The student's attempt at a test, or {"has_attempt": false} (200) when they have not started it: "not started yet" is an
+    ordinary state the portal asks about for every listed test, not an error. Authentication and server failures stay errors."""
     attempt = get_attempt_by_test(
         db=db,
         student_id=student_id,
@@ -207,10 +210,7 @@ def get_test_attempt_by_test(
     )
 
     if not attempt:
-        raise HTTPException(
-            status_code=404,
-            detail="No attempt found",
-        )
+        return NoAttemptResponse()
 
     return attempt
 

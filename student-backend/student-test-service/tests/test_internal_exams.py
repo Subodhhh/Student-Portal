@@ -204,3 +204,16 @@ def test_question_order_is_per_student_stable_and_keeps_the_configured_subject_o
     assert [r for r in a[:6]] and all(i in {f"q{k}" for k in range(6, 12)} for i in a[:6])  # Physics (configured first) before Chemistry
     assert len({tuple(order(f"STU00000{i}")) for i in range(1, 6)}) > 1                     # students get orders of their own
     assert section_order(rows, None, "STU000001", "test-1", lambda r: r["subject"], lambda r: r["id"]) == rows   # no sections: unchanged
+
+
+def test_typeset_question_text_is_stored_exactly_as_delivered(env):
+    """Questions imported with mathematical/chemical notation arrive as text with LaTeX segments; the student service stores them
+    byte-for-byte (the student page typesets them), never escaping, trimming or rewriting them."""
+    c, Session = env
+    text = r"Evaluate \(\int_{0}^{\pi} \sin x\,dx\) for \(\mathrm{SO_{4}^{2-}}\) at $5 per gram."
+    options = {"A": r"\(0\)", "B": r"\(1\)", "C": r"\(2\)", "D": r"\(\pi\)"}
+    body = payload(questions=[{"order": 1, "subject": "Physics", "text": text, "options": options, "correct": "C", "marks": 4, "negative_marks": 1}])
+    assert c.post("/internal/v1/exams", json=body, headers=H).status_code == 201
+    with Session() as db:
+        q = db.scalars(select(question_models.Question).where(question_models.Question.test_id == uuid.UUID(body["exam_version_id"]))).one()
+        assert q.question_text == text and (q.option_a, q.option_b, q.option_c, q.option_d) == tuple(options.values())

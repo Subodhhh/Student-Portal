@@ -1,4 +1,4 @@
-"""Browser journeys for the Global Test schedule and photo papers (driven by tests/e2e/global_schedule_ui_disposable.py, which owns the
+"""Browser journeys for the Global Test schedule and a teacher's Excel paper with a picture (driven by tests/e2e/global_schedule_ui_disposable.py, which owns the
 disposable environment and checks the persisted results). Every step goes through the real portals in Chromium; nothing is mocked.
 Usage: python global_schedule_ui_browser.py <params.json> staff|student   (needs playwright==1.48)."""
 import json
@@ -12,7 +12,7 @@ from playwright.sync_api import expect, sync_playwright
 
 P = json.loads(Path(sys.argv[1]).read_text())
 PHASE = sys.argv[2]
-UI, SUI, SHOTS, PHOTOS = P["ui"], P["sui"], Path(P["shots"]), Path(P["photos_host"])
+UI, SUI, SHOTS, FILES = P["ui"], P["sui"], Path(P["shots"]), Path(P["files_host"])
 SHOTS.mkdir(parents=True, exist_ok=True)
 results: list[tuple[str, bool]] = []
 counter = [0 if PHASE == "staff" else 50]
@@ -211,8 +211,8 @@ with sync_playwright() as pw:
         step("Admin cannot submit provider papers and cannot open Super Admin-only pages", page, admin_limits)
         ctx.close()
 
-        # ---------------------------------------------------------------- Teacher Tara: photo paper with a separate key, then submit it
-        print("Teacher (Tara): photo paper")
+        # ---------------------------------------------------------------- Teacher Tara: Excel paper with a picture and a separate key, then submit it
+        print("Teacher (Tara): Excel paper")
         ctx, page = sign_in(browser, P["ta"])
         draft = {}
 
@@ -225,148 +225,69 @@ with sync_playwright() as pw:
             shot(page, "teacher-schedule")
         step("the teacher sees the published dates, with Submit paper for Physics (the subject taught) only", page, schedule_visible)
 
-        def start_photo():
+        def upload():
             page.goto(UI + "/papers?tab=imports")
-            page.get_by_role("link", name="Upload photos").click()
+            expect(page.get_by_role("link", name="Upload photos")).to_have_count(0)                 # photo papers (OCR) were removed
             page.get_by_label("Subject").select_option(label="Physics")
-            page.get_by_label("Paper title").fill("Tara photo paper")
-            page.get_by_role("button", name="Start").click()
-            expect(page.get_by_role("heading", level=2, name="Tara photo paper")).to_be_visible()
-            draft["url"] = page.url
-        step("Question Bank & Papers > Upload photos: a new photo paper for Physics", page, start_photo)
+            page.get_by_label("Paper title").fill("Tara Physics paper")
+            page.get_by_label(re.compile("Question file")).set_input_files(str(FILES / "tara-physics.xlsx"))
+            page.get_by_label("The answers are in a separate answer-key file").check()
+            page.get_by_label(re.compile("Answer key")).set_input_files(str(FILES / "tara-key.csv"))
+            page.get_by_role("button", name="Validate & preview").click()
+            expect(page.get_by_text("Preview before import")).to_be_visible(timeout=60000)
+        step("Question Bank & Papers: an .xlsx paper (picture in question 1's image cell) and a separate answer key, validated and previewed",
+             page, upload)
 
-        def upload_pages():
-            page.get_by_label("Add page photos").set_input_files([str(PHOTOS / "page2-sideways.jpg"), str(PHOTOS / "page1.jpg"), str(PHOTOS / "blank.jpg")])
-            expect(page.get_by_text(re.compile(r"Page 3 · "))).to_be_visible(timeout=120000)
-            shot(page, "photo-uploaded")
-        step("three phone photos (one sideways, one blank) uploaded with progress, each read by OCR on upload", page, upload_pages)
-
-        def order_and_remove():
-            page.get_by_role("button", name="Remove 3").click()
-            expect(page.get_by_text(re.compile(r"Page 3 · "))).to_have_count(0)
-            page.get_by_role("button", name="Move 1 down").click()                              # the sideways page 2 was picked first
-            expect(page.locator(".photo-list li").first.get_by_role("img")).to_have_attribute("alt", "Page 1")
-            expect(page.get_by_role("img", name="Page 1")).to_be_visible()
-        step("the blank photo is removed and the pages are put in order", page, order_and_remove)
-
-        def key():
-            page.get_by_label("Add answer-key photos or file").set_input_files(str(PHOTOS / "key.jpg"))
-            expect(page.get_by_text(re.compile(r"Key 1 · "))).to_be_visible(timeout=120000)
-        step("the answer key is uploaded separately, as a photo", page, key)
-
-        ocr = {}
-
-        def extract():
-            page.get_by_role("button", name="Read questions from the photos").click()
-            expect(page.get_by_role("region", name="Question 4")).to_be_visible(timeout=120000)
-            shot(page, "photo-preview")
-            regions = page.get_by_role("region")
-            ocr["n"] = page.locator("section.photo-question").count()
-            ocr["flagged"] = page.locator("section.photo-question.needs-review").count()
-            ocr["fields"] = []
+        def preview():
+            box = page.locator(".recognition-review")
+            only = box.get_by_label("Show only questions that need attention")
+            if only.is_checked():
+                only.uncheck()
+            expect(box.locator("article.recognition-question")).to_have_count(4)
+            img = box.get_by_test_id("pic-1-question").get_by_role("img")
+            expect(img).to_be_visible()
+            check("the question picture is shown in the preview, loaded from the server", img.evaluate("i => i.complete && i.naturalWidth > 0"),
+                  img.get_attribute("src"), page)
+            check("nothing is said about the picture's contents (pictures are never read)",
+                  box.get_by_test_id("pic-1-question").locator("figcaption").count() == 0, None, page)
             for i, e in enumerate(P["expected"], start=1):
-                q = page.get_by_role("region", name=f"Question {i}")
-                ocr["fields"].append((q.get_by_label(f"Question {i} text").input_value(), [q.get_by_label(f"Question {i} option {k}").input_value() for k in "ABCD"],
-                                      q.get_by_label(f"Question {i} correct answer").input_value()))
-            check(f"OCR read {ocr['n']} questions; {ocr['flagged']} highlighted for review", ocr["n"] == 4, ocr, page)
-            del regions
-        step("questions are read from the photos and shown as an editable preview", page, extract)
-        exact = sum(1 for (q, o, _c), e in zip(ocr["fields"], P["expected"], strict=True) if q == e["question"] and o == e["options"])
-        answers = sum(1 for (_q, _o, c), e in zip(ocr["fields"], P["expected"], strict=True) if c == e["correct"])
-        wrong_answers = sum(1 for (_q, _o, c), e in zip(ocr["fields"], P["expected"], strict=True) if c and c != e["correct"])
-        print(f"    OCR: {exact}/4 questions with exact text and options; {answers}/4 answers from the key photo, {wrong_answers} wrong", flush=True)
-        check("no answer is guessed: every answer taken from the key is the printed one (unreadable ones stay empty)", wrong_answers == 0, ocr["fields"], page)
-
-        def diagram_blocks():
-            q = page.get_by_role("region", name="Question 1")
-            q.get_by_label("Question 1 needs its diagram").check()
-            page.get_by_role("button", name="Import paper").click()
-            page.get_by_role("dialog").get_by_role("button", name="Import").click()
-            expect(page.get_by_text(re.compile("diagram", re.IGNORECASE)).first).to_be_visible()
-            expect(page.get_by_text("Imported as a draft paper version")).to_have_count(0)
-            page.get_by_role("region", name="Question 1").get_by_label("Question 1 needs its diagram").uncheck()
-        step("a question marked as needing its diagram blocks the import (diagrams are never silently dropped)", page, diagram_blocks)
-
-        def review_needed():
-            page.get_by_role("button", name="Import paper").click()
-            page.get_by_role("dialog").get_by_role("button", name="Import").click()
-            expect(page.get_by_text("Nothing was imported").first).to_be_visible()
-            expect(page.get_by_text("Imported as a draft paper version")).to_have_count(0)
-        step("importing before the highlighted questions are checked is refused, nothing imported", page, review_needed)
-
-        def correct():
-            for i, e in enumerate(P["expected"], start=1):
-                q = page.get_by_role("region", name=f"Question {i}")
-                if q.get_by_label(f"Question {i} text").input_value() != e["question"]:
-                    q.get_by_label(f"Question {i} text").fill(e["question"])
-                for k, want in zip("ABCD", e["options"], strict=True):
-                    f = q.get_by_label(f"Question {i} option {k}")
-                    if f.input_value() != want:
-                        f.fill(want)
-                if q.get_by_label(f"Question {i} correct answer").input_value() != e["correct"]:
-                    q.get_by_label(f"Question {i} correct answer").select_option(e["correct"])
-                box = q.get_by_label(f"I checked question {i} against the photo")
-                if box.count():
-                    box.check()
-            marks = page.get_by_role("group", name="Marks for questions without marks")
-            marks.get_by_label("Marks for a correct answer").fill("4")
-            marks.get_by_label("Negative marks for a wrong answer").fill("1")
-            marks.get_by_role("button", name="Apply to questions without marks").click()
-            page.get_by_role("button", name="Save corrections").click()
-            expect(page.get_by_text("still to check")).to_have_count(0)
-            expect(page.get_by_role("group", name="Marks for questions without marks")).to_have_count(0)
-            shot(page, "photo-corrected")
-        step("the teacher compares each question with its photo, corrects the OCR output and enters the unreadable answers", page, correct)
+                q = box.get_by_role("article", name=f"Question {i}")
+                expect(q.get_by_text(f"Answer {e['correct']}")).to_be_visible()                     # the answer comes from the key file
+                expect(q.get_by_text(e["question"])).to_be_visible()
+            shot(page, "tara-preview")
+        step("the preview shows all 4 questions with the answers from the key and question 1's picture as uploaded", page, preview)
 
         def accept():
-            page.get_by_role("button", name="Import paper").click()
-            page.get_by_role("dialog").get_by_role("button", name="Import").click()
-            expect(page.get_by_text("Imported as a draft paper version")).to_be_visible()
-            page.get_by_role("link", name="open the paper").click()
-            expect(page.get_by_text("VALIDATED").first).to_be_visible()                       # OCR never publishes: a draft version
+            page.locator(".recognition-review").get_by_role("button", name="Import as a draft paper").click()
+            expect(page.get_by_text(re.compile("validated and imported as a draft"))).to_be_visible(timeout=60000)
+            page.get_by_role("link", name="Review it").click()
+            expect(page.get_by_text("VALIDATED").first).to_be_visible()                       # an import never publishes: a draft version
             page.get_by_role("button", name="Approve").click()
             page.get_by_role("dialog").get_by_role("button", name=re.compile("Approve|Confirm")).click()
             page.get_by_role("button", name="Publish").click()
             page.get_by_role("dialog").get_by_role("button", name=re.compile("Publish|Confirm")).click()
             expect(page.get_by_text("PUBLISHED").first).to_be_visible()
-            shot(page, "photo-paper-published")
+            shot(page, "tara-paper-published")
         step("after explicit confirmation the paper is imported as a draft version, then approved and published as usual", page, accept)
 
-        def torn():
-            page.goto(UI + "/papers/photo")
+        def photo_refused():
+            page.goto(UI + "/papers?tab=imports")
             page.get_by_label("Subject").select_option(label="Physics")
-            page.get_by_label("Paper title").fill("Torn chemistry page")
-            page.get_by_role("button", name="Start").click()
-            page.get_by_label("Add page photos").set_input_files(str(PHOTOS / "torn.jpg"))
-            expect(page.get_by_text(re.compile(r"Page 1 · "))).to_be_visible(timeout=120000)
-            page.get_by_role("button", name="Read questions from the photos").click()
-            expect(page.get_by_role("region", name="Question 2")).to_be_visible(timeout=120000)
-            expect(page.get_by_role("region", name="Question 2").get_by_text("Option C could not be read.")).to_be_visible()
-            for i in (1, 2):
-                page.get_by_role("region", name=f"Question {i}").get_by_label(f"I checked question {i} against the photo").check()
-            marks = page.get_by_role("group", name="Marks for questions without marks")
-            marks.get_by_label("Marks for a correct answer").fill("4")
-            marks.get_by_label("Negative marks for a wrong answer").fill("1")
-            marks.get_by_role("button", name="Apply to questions without marks").click()
-            page.get_by_role("button", name="Import paper").click()
-            page.get_by_role("dialog").get_by_role("button", name="Import").click()
-            expect(page.get_by_text("Nothing was imported").first).to_be_visible()
-            expect(page.get_by_text(re.compile(r"Question 2: .*option", re.IGNORECASE))).to_be_visible()
-            shot(page, "torn-refused")
-            page.reload()
-            expect(page.get_by_role("region", name="Question 2")).to_be_visible()                  # the draft is preserved
-            page.get_by_role("button", name="Discard").click()
-            page.get_by_role("dialog").get_by_role("button", name="Discard").click()
-            expect(page.get_by_role("heading", level=2, name="Photo papers in progress")).to_be_visible()
-        step("a torn page (options and answers missing) is refused as a whole, the draft is kept, then discarded", page, torn)
+            page.get_by_label("Paper title").fill("Photo of a paper")
+            page.get_by_label(re.compile("Question file")).set_input_files(str(FILES / "page-photo.png"))
+            page.get_by_role("button", name="Validate & preview").click()
+            expect(page.get_by_text(re.compile(r"Upload a \.csv, one-sheet \.xlsx"))).to_be_visible()
+            expect(page.get_by_text("Preview before import")).to_have_count(0)
+            shot(page, "photo-refused")
+        step("a picture offered as a whole paper is refused (pictures are never read)", page, photo_refused)
 
         def submit():
             first_date(page)
-            dialog = submit_paper(page, "Tara photo paper", branches=["Pune"], batches=["NEET A"], absent=["NEET B", "Every student of Pune"])
+            dialog = submit_paper(page, "Tara Physics paper", branches=["Pune"], batches=["NEET A"], absent=["NEET B", "Every student of Pune"])
             dialog.get_by_role("button", name="Submit paper").click()
-            expect(page.get_by_text("Submitted “Tara photo paper” for 2 student(s).")).to_be_visible()
+            expect(page.get_by_text("Submitted “Tara Physics paper” for 2 student(s).")).to_be_visible()
             shot(page, "tara-submitted")
-        step("Tara submits her photo paper for her own batch (NEET A); NEET B and the whole branch are not offered", page, submit)
+        step("Tara submits her paper for her own batch (NEET A); NEET B and the whole branch are not offered", page, submit)
         ctx.close()
 
         print("Teacher (Tom)")
@@ -374,7 +295,7 @@ with sync_playwright() as pw:
 
         def tom():
             first_date(page)
-            expect(page.get_by_text("Tara photo paper")).to_have_count(0)                         # teachers see their own submissions
+            expect(page.get_by_text("Tara Physics paper")).to_have_count(0)                         # teachers see their own submissions
             dialog = submit_paper(page, "Tom Physics Set", branches=["Pune"], batches=["NEET B"], absent=["NEET A"])
             dialog.get_by_role("button", name="Submit paper").click()
             expect(page.get_by_text("Submitted “Tom Physics Set” for 1 student(s).")).to_be_visible()
@@ -389,7 +310,7 @@ with sync_playwright() as pw:
             dialog = submit_paper(page, "Pune Chemistry Set", subject="Chemistry", branches=["Pune"], whole=["Pune"], absent=["Mumbai"])
             dialog.get_by_role("button", name="Submit paper").click()
             expect(page.get_by_text("Submitted “Pune Chemistry Set” for 3 student(s).")).to_be_visible()
-            expect(row(page, "Tara photo paper")).to_be_visible()                                  # the branch's submissions
+            expect(row(page, "Tara Physics paper")).to_be_visible()                                  # the branch's submissions
         step("Branch Admin submits Chemistry for all of Pune (Mumbai is not offered) and sees the branch's submissions", page, branch_admin)
         ctx.close()
 
@@ -398,20 +319,30 @@ with sync_playwright() as pw:
 
         def provider_admin():
             first_date(page)
-            dialog = submit_paper(page, "Mumbai Chemistry Draft", subject="Chemistry", branches=["Pune", "Mumbai"], whole=["Pune", "Mumbai"])
+            # Per-student paper choice (commit cd39e29): a DIFFERENT paper for students who already receive one is accepted - those
+            # students then choose one. North's approved second Chemistry paper for all of Pune overlaps the Branch Admin's Pune Chemistry.
+            n = P["pune_chemistry_students"]
+            dialog = submit_paper(page, "North Chemistry Set", subject="Chemistry", branches=["Pune"], whole=["Pune"])
+            dialog.get_by_role("button", name="Submit paper").click()
+            expect(page.get_by_text(f"Submitted “North Chemistry Set” for {n} student(s).")).to_be_visible()
+            shot(page, "pa-overlap-accepted")
+            # the SAME paper version again for students who already receive it is a duplicate: refused, nothing stored
+            dialog = submit_paper(page, "North Chemistry Set", subject="Chemistry", branches=["Pune"], whole=["Pune"])
+            dialog.get_by_role("button", name="Submit paper").click()
+            expect(dialog.get_by_text(re.compile(rf"already submitted for {n} of these students"))).to_be_visible()
+            shot(page, "pa-duplicate-refused")
+            dialog.get_by_role("button", name="Cancel").click()
+            # an unapproved version for Mumbai is accepted now and checked at the deadline (Mumbai has no other Chemistry paper)
+            dialog = submit_paper(page, "Mumbai Chemistry Draft", subject="Chemistry", branches=["Mumbai"], whole=["Mumbai"])
             expect(dialog.get_by_text("This version is not approved yet")).to_be_visible()
             dialog.get_by_role("button", name="Submit paper").click()
-            expect(dialog.get_by_text(re.compile("already receive another paper"))).to_be_visible()
-            shot(page, "pa-overlap-refused")
-            dialog.get_by_label("Every student of Pune").uncheck()
-            dialog.get_by_label("Pune", exact=True).uncheck()
-            dialog.get_by_role("button", name="Submit paper").click()
             expect(page.get_by_text("Submitted “Mumbai Chemistry Draft” for 1 student(s).")).to_be_visible()
-            for title in ("Tara photo paper", "Tom Physics Set", "Pune Chemistry Set"):
+            for title in ("Tara Physics paper", "Tom Physics Set", "Pune Chemistry Set", "North Chemistry Set", "Mumbai Chemistry Draft"):
                 expect(row(page, title)).to_be_visible()
             expect(page.get_by_text("Ravi Biology Set")).to_have_count(0)
             shot(page, "pa-coverage")
-        step("Provider Admin: an overlapping audience is refused; the corrected one (Mumbai, unapproved paper) is accepted; "
+        step("Provider Admin: a different paper for students who already have one is accepted (they will choose); the same paper twice is "
+             "refused; an unapproved Mumbai paper is accepted for later checking; "
              "all of North's submissions are visible, no other provider's", page, provider_admin)
         ctx.close()
 
@@ -423,7 +354,7 @@ with sync_playwright() as pw:
             dialog = submit_paper(page, "Ravi Biology Set", subject="Biology", branches=["Home classes"], students=P["tutor_students"])
             dialog.get_by_role("button", name="Submit paper").click()
             expect(page.get_by_text("Submitted “Ravi Biology Set” for 2 student(s).")).to_be_visible()
-            expect(page.get_by_text("Tara photo paper")).to_have_count(0)
+            expect(page.get_by_text("Tara Physics paper")).to_have_count(0)
         step("an independent tutor without batches submits for two students picked individually; sees only their own", page, tutor)
         ctx.close()
 
@@ -454,11 +385,14 @@ with sync_playwright() as pw:
             expect(card.get_by_role("button", name=re.compile("Start Test|Resume Test"))).to_have_count(0)
             card.get_by_role("button", name=re.compile("No paper available")).click()
             page.wait_for_url(re.compile(r"/tests/[0-9a-f-]+$"))
-            items = page.locator(".test-details-sections li")
+            # one exam per date (cd39e29): her card opens the date's test; with no eligible paper each subject shows the product's reason
+            items = page.locator(".paper-selection li")
             expect(items).to_have_count(len(P["subject_order"]))
-            check("her card lists every configured subject in order, each with the reason she has no paper",
-                  [items.nth(i).locator("strong").inner_text() for i in range(items.count())] == P["subject_order"]
-                  and "not approved in time" in page.locator(".test-details-sections").inner_text(), page.locator(".test-details-sections").inner_text(), page)
+            got_rows = [(items.nth(i).locator("strong").inner_text(), items.nth(i).inner_text()) for i in range(items.count())]
+            check("her test lists every configured subject in order, each with the reason she has no paper (nothing to choose)",
+                  [name for name, _ in got_rows] == P["subject_order"]
+                  and all(P["chitra_messages"][name] in text_ for name, text_ in got_rows)
+                  and page.locator(".paper-selection input[type=radio]").count() == 0, (got_rows, P["chitra_messages"]), page)
             expect(page.get_by_text(re.compile("cannot be started"))).to_be_visible()
             expect(page.get_by_role("button", name="Take Test")).to_have_count(0)
             shot(page, "chitra-card")
@@ -495,10 +429,28 @@ with sync_playwright() as pw:
 
         def take():
             page.goto(SUI + "/tests")
-            card = page.locator("div, article, li").filter(has_text="National Mock").filter(has=page.get_by_role("button", name="Start Test")).last
-            with ctx.expect_page() as opened:                                                    # the portal opens the attempt in a new tab
-                card.get_by_role("button", name="Start Test").click()
-            tab = opened.value
+            card = page.locator("article").filter(has_text="National Mock")
+            card.get_by_role("button", name="Choose Papers").click()                             # a SELECTABLE subject: choose first
+            page.wait_for_url(re.compile(rf"/tests/{P['asha_test']}$"))
+            groups_ = page.locator(".paper-selection fieldset")
+            expect(groups_).to_have_count(len(P["selectable"]))
+            offered = {}
+            for subject, titles in P["selectable"].items():
+                group = page.get_by_role("group", name=f"Choose a {subject} paper")
+                labels = group.locator("label").all_inner_texts()
+                offered[subject] = sorted(t for t in titles if any(t in x for x in labels)) if len(labels) == len(titles) else labels
+            check("only the subjects with two or more eligible papers offer a choice, between exactly her eligible papers",
+                  offered == {s: sorted(ts) for s, ts in P["selectable"].items()}, offered, page)
+            take_test = page.get_by_role("button", name="Take Test")
+            expect(take_test).to_be_disabled()                                                   # never started before the choice
+            for subject, title in P["chosen"].items():
+                radio = page.get_by_role("group", name=f"Choose a {subject} paper").get_by_label(re.compile(re.escape(title)))
+                radio.click()                                                                    # controlled: checked once the server saved it
+                expect(radio).to_be_checked()
+            expect(take_test).to_be_enabled()
+            shot(page, "asha-paper-choice")
+            take_test.click()
+            tab = page                                                                           # Test Details starts in the same tab
             tab.set_default_timeout(20000)
             tab.wait_for_url(re.compile(rf"/tests/{P['asha_test']}/attempt"))
             expect(tab.get_by_text("Before you begin")).to_be_visible()                          # exam rules before anything starts
@@ -512,7 +464,7 @@ with sync_playwright() as pw:
             def index():
                 return int(re.search(r"Question (\d+) of", header.inner_text()).group(1))
             total = int(re.search(r"of (\d+)", header.inner_text()).group(1))
-            check("one exam with the 9 questions of her three papers (4 Physics photo paper + 3 Chemistry from North, 2 Biology from the tutor)",
+            check("one exam with the 9 questions of her three papers (4 Physics from Tara's Excel paper + 3 Chemistry from North, 2 Biology from the tutor)",
                   total == 9, total, tab)
             subjects_seen = []
             stems = []
@@ -554,7 +506,8 @@ with sync_playwright() as pw:
             tab.wait_for_url(re.compile(r"/result"), timeout=30000)
             expect(tab.get_by_text(re.compile(r"\b23\b")).first).to_be_visible(timeout=20000)
             shot(tab, "asha-result")
-        step("she takes her one Global Test exam: answers, reloads mid-way (resume keeps answers), submits, sees one overall score", page, take)
+        step("she chooses her Chemistry paper, then takes her Global Test: answers, reloads mid-way (resume keeps answers), submits, "
+             "sees one overall score", page, take)
         check("no correct answer reached the browser before submission", not leaks, leaks, page)
         ctx.close()
 

@@ -124,18 +124,6 @@ def is_platform(p: Principal, perm: str) -> bool:
     return p.is_global and p.has_perm(perm)
 
 
-def contributions(db: Session, exam_id: UUID) -> dict[UUID, set[UUID]]:
-    """provider_id -> the subjects that provider's papers fill in this exam (from the frozen manifest)."""
-    out: dict[UUID, set[UUID]] = {}
-    for prov, subject in db.execute(
-            select(GlobalPaperSubmission.provider_id, ExamVersionPaper.subject_id)
-            .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
-            .join(ExamVersion, ExamVersion.exam_version_id == ExamVersionPaper.exam_version_id)
-            .where(ExamVersion.exam_id == exam_id)):
-        out.setdefault(prov, set()).add(subject)
-    return out
-
-
 def scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope | None:
     """None = the whole exam (platform roles). Otherwise the caller's subjects and students; empty when they have none. Computed once per
     request (session) for a caller, permission and exam: list pages ask for it more than once per row."""
@@ -148,21 +136,64 @@ def scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope | No
     return cache[key]
 
 
+def prefetch_scopes(db: Session, p: Principal, perm: str, exams) -> None:
+    """scope() of many unified exams in three statements instead of four per exam (list pages)."""
+    if is_platform(p, perm):
+        return
+    cache = db.info.setdefault("unified_scope", {})
+    wanted = [e for e in exams if (p.staff_id, perm, e.exam_id) not in cache]
+    for exam_id, sc in _scopes(db, p, perm, [e.exam_id for e in wanted]).items():
+        cache[(p.staff_id, perm, exam_id)] = sc
+
+
 def _scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope:
-    assigned = [sid for (sid,) in db.execute(select(StudentExamAssignment.student_id).where(StudentExamAssignment.exam_id == exam.exam_id))]
+    return _scopes(db, p, perm, [exam.exam_id])[exam.exam_id]
+
+
+def _scopes(db: Session, p: Principal, perm: str, exam_ids: list[UUID]) -> dict[UUID, SubjectScope]:
+    """The caller's SubjectScope of each exam: its assigned students, its manifest (submission, provider, subject) and those students'
+    enrollments with the contributing providers are read for all exams at once; the rules below are applied per exam."""
+    if not exam_ids:
+        return {}
+    assigned: dict[UUID, set[str]] = {i: set() for i in exam_ids}
+    for exam_id, sid in db.execute(select(StudentExamAssignment.exam_id, StudentExamAssignment.student_id)
+                                   .where(StudentExamAssignment.exam_id.in_(exam_ids))):
+        assigned[exam_id].add(sid)
+    manifest: dict[UUID, list[tuple[str, UUID, UUID]]] = {i: [] for i in exam_ids}       # exam -> (submission, provider, subject)
+    for exam_id, sub_id, prov, subject in db.execute(
+            select(ExamVersion.exam_id, ExamVersionPaper.source_submission_id, GlobalPaperSubmission.provider_id, ExamVersionPaper.subject_id)
+            .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
+            .join(ExamVersion, ExamVersion.exam_version_id == ExamVersionPaper.exam_version_id).where(ExamVersion.exam_id.in_(exam_ids))):
+        manifest[exam_id].append((str(sub_id), prov, subject))
+    provs = {prov for rows in manifest.values() for _s, prov, _subj in rows}
+    students = set().union(*assigned.values())
+    enrolled_by: dict[UUID, list[tuple[str, str, UUID]]] = {}
+    if provs and students:
+        for prov, sid, eid, br in db.execute(select(Enrollment.provider_id, Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id)
+                                             .where(Enrollment.provider_id.in_(provs), Enrollment.student_id.in_(students))):
+            enrolled_by.setdefault(prov, []).append((sid, eid, br))
+    held: list = []
+
+    def memberships():                                   # the teacher check's enrollment reads, once for all these exams (and only if needed)
+        if not held:
+            mine = {t.provider_id for t in p.teaching}         # a teacher matches only at a provider they teach for
+            held.append(teacher_scope._memberships(db, {eid for prov, rows in enrolled_by.items() if prov in mine for _sid, eid, _br in rows}))
+        return held[0]
+    return {exam_id: _scope_of(db, p, perm, assigned[exam_id], manifest[exam_id], enrolled_by, memberships) for exam_id in exam_ids}
+
+
+def _scope_of(db: Session, p: Principal, perm: str, assigned: set[str], manifest: list[tuple[str, UUID, UUID]],
+              enrolled_by: dict[UUID, list[tuple[str, str, UUID]]], memberships=None) -> SubjectScope:
     students: set[str] = set()
     subjects: set[UUID] = set()
     papers: set[str] = set()
-    own = {}                                                                     # provider -> its (submission, subject) in this exam
-    for sub_id, prov, subject in db.execute(
-            select(ExamVersionPaper.source_submission_id, GlobalPaperSubmission.provider_id, ExamVersionPaper.subject_id)
-            .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
-            .join(ExamVersion, ExamVersion.exam_version_id == ExamVersionPaper.exam_version_id).where(ExamVersion.exam_id == exam.exam_id)):
-        own.setdefault(prov, []).append((str(sub_id), subject))
-    for prov, provided in contributions(db, exam.exam_id).items():
-        enrolled = [(sid, eid, br) for sid, eid, br in db.execute(
-            select(Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id)
-            .where(Enrollment.provider_id == prov, Enrollment.student_id.in_(assigned or [""])))]
+    own: dict[UUID, list[tuple[str, UUID]]] = {}                                 # provider -> its (submission, subject) in this exam
+    contributed: dict[UUID, set[UUID]] = {}                                      # provider -> the subjects its papers fill
+    for sub_id, prov, subject in manifest:
+        own.setdefault(prov, []).append((sub_id, subject))
+        contributed.setdefault(prov, set()).add(subject)
+    for prov, provided in contributed.items():
+        enrolled = [(sid, eid, br) for sid, eid, br in enrolled_by.get(prov, []) if sid in assigned]
         if p.can(perm, exclude_roles=(Role.BRANCH_ADMIN, Role.TEACHER), provider_id=prov):
             mine = {sid for sid, _e, _b in enrolled}
             seen = set(provided)
@@ -171,7 +202,8 @@ def _scope(db: Session, p: Principal, perm: str, exam: Exam) -> SubjectScope:
             seen = set(provided) if mine else set()
             if p.has_role(Role.TEACHER) and p.can(perm, provider_id=prov):
                 for subject in provided:
-                    taught = teacher_scope.matching_students(db, p, prov, {subject}, [(sid, eid, None) for sid, eid, _b in enrolled])
+                    taught = teacher_scope.matching_students(db, p, prov, {subject}, [(sid, eid, None) for sid, eid, _b in enrolled],
+                                                             memberships=memberships)
                     if taught:
                         mine |= taught
                         seen.add(subject)

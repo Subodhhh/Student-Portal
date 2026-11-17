@@ -7,6 +7,7 @@ import {
 } from "../../services/api";
 
 import "../../styles/scheduled-tests.css";
+import { isNoAttempt } from "../../services/attempts";
 
 type TestSection = {
   position: number;
@@ -258,8 +259,16 @@ function ScheduledTestsPage() {
               );
             }
 
-            const attempt: Attempt =
-              await response.json();
+            const body: unknown = await response.json();
+
+            if (isNoAttempt(body)) {
+              return {
+                testId: test.test_id,
+                attempt: null,
+              };
+            }
+
+            const attempt = body as Attempt;
 
             return {
               testId: test.test_id,

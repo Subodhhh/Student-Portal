@@ -230,6 +230,10 @@ def copy_paper_to_global(body: GlobalPaperCopyIn, db: Session = Depends(get_db))
                 marks_positive=source_qv.marks_positive,
                 marks_negative=source_qv.marks_negative,
                 created_by=body.copied_by,
+                # the same pictures (assets are never copied: the asset stays with the provider that uploaded it)
+                stem_image_id=source_qv.stem_image_id, option_a_image_id=source_qv.option_a_image_id,
+                option_b_image_id=source_qv.option_b_image_id, option_c_image_id=source_qv.option_c_image_id,
+                option_d_image_id=source_qv.option_d_image_id,
             )
             db.add(global_qv)
             db.flush()

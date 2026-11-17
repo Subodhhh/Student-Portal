@@ -1,4 +1,5 @@
 """Exam plans, generation, exams, composite papers and assignments."""
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -11,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.util import identity_key
 
 from institute_common.core import audit
 from institute_common.core.security import Principal, api_error, get_principal
@@ -22,13 +24,14 @@ from institute_common.models.exams import (
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
     ExamVersion, ExamVersionPaper, GlobalPaperSubmission, GlobalTest, StudentExamAssignment,
 )
-from institute_common.models.org import Batch, Branch, Enrollment, Provider
+from institute_common.models.org import Batch, Branch, Enrollment
 from institute_common.models.papers import Paper, PaperVersion
 from institute_common.util import need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
 from institute_common.core.roles import Role
 from inst_exam.services import exam_generation as gen
+from inst_exam.services.names import names
 from inst_exam.services import assignment_sync, teacher_scope, unified
 from institute_common.clients.attempt_client import AttemptClient, get_attempt_client
 from institute_common.internal_http import InternalServiceError
@@ -606,6 +609,25 @@ def _in_branches(scope: set[UUID] | OnlyStudents | unified.SubjectScope):
     return StudentExamAssignment.enrollment_id.in_(select(Enrollment.enrollment_id).where(Enrollment.branch_id.in_(scope)))
 
 
+def assignment_rows(db: Session, key, ids) -> dict:
+    """(student, status, enrollment's branch) of the assignments of many exams or versions (`key` is the column `ids` are matched on), so
+    that per-caller scoped counts need no statement per exam (see in_scope)."""
+    out: dict = {}
+    if ids:
+        for k, sid, status, branch_id in db.execute(
+                select(key, StudentExamAssignment.student_id, StudentExamAssignment.status, Enrollment.branch_id)
+                .outerjoin(Enrollment, Enrollment.enrollment_id == StudentExamAssignment.enrollment_id).where(key.in_(ids))):
+            out.setdefault(k, []).append((sid, status, branch_id))
+    return out
+
+
+def in_scope(scope: set[UUID] | OnlyStudents | unified.SubjectScope, student_id: str, branch_id: UUID | None) -> bool:
+    """The row test of _in_branches: the caller's students, or students whose enrollment is in the caller's branches."""
+    if isinstance(scope, (OnlyStudents, unified.SubjectScope)):
+        return student_id in scope.ids
+    return branch_id in scope
+
+
 def _exam_out(db: Session, exam: Exam, branches: set[UUID] | None = None) -> ExamOut:
     return _exam_outs(db, [(exam, branches)])[0]
 
@@ -614,10 +636,22 @@ def _prefetch(db: Session, exams) -> None:
     """Load, in two statements, what exam_access/_exam_outs ask per exam: the plans (then served by the session's identity map) and
     which exams are unified (cached for this request)."""
     exams = list(exams)
-    plan_ids = {e.plan_id for e in exams if e.plan_id}
+    # a plan this request already holds (identity map) is not read again: a re-select would not refresh it either
+    plan_ids = {e.plan_id for e in exams if e.plan_id and identity_key(ExamPlan, e.plan_id) not in db.identity_map}
     if plan_ids:
-        db.scalars(select(ExamPlan).where(ExamPlan.plan_id.in_(plan_ids))).all()
+        plans = db.scalars(select(ExamPlan).where(ExamPlan.plan_id.in_(plan_ids))).all()
+        db.info.setdefault("prefetched", []).extend(plans)      # the identity map holds objects weakly: keep them for the request
     unified.prefetch_unified_exams(db, [e.exam_id for e in exams])
+
+
+def _prefetch_access(db: Session, p: Principal, exams) -> None:
+    """_prefetch plus the caller's scope of the unified exams among them (exam_access asks per exam), and a teacher's per-exam reads
+    of the other ones (exam_access's teacher check, teacher_scope.exam_students), in a fixed number of statements."""
+    exams = list(exams)
+    _prefetch(db, exams)
+    unified.prefetch_scopes(db, p, "exam.read", [e for e in exams if unified.is_unified_exam(db, e.exam_id)])
+    if p.has_role(Role.TEACHER):
+        teacher_scope.prefetch_exam_students(db, p, [e for e in exams if not unified.is_unified_exam(db, e.exam_id)])
 
 
 def _exam_outs(db: Session, rows: list[tuple[Exam, object]]) -> list[ExamOut]:
@@ -635,21 +669,25 @@ def _exam_outs(db: Session, rows: list[tuple[Exam, object]]) -> list[ExamOut]:
     papers: dict[UUID, list[ExamVersionPaper]] = {}
     outboxes: dict[UUID, ExamOutbox] = {}
     whole: dict[UUID, dict] = {}
+    scoped: dict[UUID, list] = {}
     if vids:
         for x in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id.in_(vids)).order_by(ExamVersionPaper.position)):
             papers.setdefault(x.exam_version_id, []).append(x)
         for ob in db.scalars(select(ExamOutbox).where(ExamOutbox.exam_version_id.in_(vids), ExamOutbox.operation == "PUBLISH")):
             outboxes.setdefault(ob.exam_version_id, ob)
         unscoped = [versions[e.exam_id].exam_version_id for e, sc in rows if sc is None and e.exam_id in versions]
+        scoped = assignment_rows(db, StudentExamAssignment.exam_version_id,
+                                 [versions[e.exam_id].exam_version_id for e, sc in rows if sc is not None and e.exam_id in versions])
         if unscoped:
             for vid, status, n in db.execute(select(StudentExamAssignment.exam_version_id, StudentExamAssignment.status, func.count())
                                              .where(StudentExamAssignment.exam_version_id.in_(unscoped))
                                              .group_by(StudentExamAssignment.exam_version_id, StudentExamAssignment.status)):
                 whole.setdefault(vid, {})[status] = n
-    return [_build_exam_out(db, exam, branches, versions.get(exam.exam_id), papers, outboxes, whole) for exam, branches in rows]
+    return [_build_exam_out(db, exam, branches, versions.get(exam.exam_id), papers, outboxes, whole, scoped) for exam, branches in rows]
 
 
-def _build_exam_out(db: Session, exam: Exam, branches, ev: ExamVersion | None, papers_of: dict, outboxes: dict, whole: dict) -> ExamOut:
+def _build_exam_out(db: Session, exam: Exam, branches, ev: ExamVersion | None, papers_of: dict, outboxes: dict, whole: dict,
+                    scoped: dict) -> ExamOut:
     out = ExamOut(exam_id=exam.exam_id, plan_id=exam.plan_id, provider_id=exam.provider_id, branch_id=exam.branch_id,
                   name=exam.name, status=exam.status, institute_wide=is_institute_wide(db, exam), unified_global=unified.is_unified_exam(db, exam.exam_id))
     if ev:
@@ -672,9 +710,11 @@ def _build_exam_out(db: Session, exam: Exam, branches, ev: ExamVersion | None, p
         if branches is None:
             out.assignment_status = dict(whole.get(ev.exam_version_id, {}))
         else:
-            counts = (select(StudentExamAssignment.status, func.count()).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
-                      .where(_in_branches(branches)))
-            out.assignment_status = {k: v for k, v in db.execute(counts.group_by(StudentExamAssignment.status)).all()}
+            counts: dict[str, int] = {}
+            for sid, status, branch_id in scoped.get(ev.exam_version_id, []):
+                if in_scope(branches, sid, branch_id):
+                    counts[status] = counts.get(status, 0) + 1
+            out.assignment_status = counts
         out.assigned_students = sum(out.assignment_status.values())
         out.settings = ev.settings
         out.delivery_status = ob.status if ob else "NOT_PUBLISHED"
@@ -702,14 +742,14 @@ def list_my_exams(status: str | None = Query(default=None, pattern="^(SCHEDULED|
     provs = p.scope_provider_ids("exam.read")
     if provs is None:                                   # platform roles: every exam, the whole of each
         res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
-        _prefetch(db, res["items"])
+        _prefetch_access(db, p, res["items"])
         res["items"] = _exam_outs(db, [(e, exam_access(db, p, "exam.read", e)) for e in res["items"]])
         return _named(db, res)
     contributed = (select(ExamVersion.exam_id).join(ExamVersionPaper, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id)
                    .join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamVersionPaper.source_submission_id)
                    .where(GlobalPaperSubmission.provider_id.in_(provs or [None])))
     candidates = db.scalars(stmt.where(Exam.provider_id.in_(provs or [None]) | Exam.exam_id.in_(contributed)).order_by(Exam.created_at.desc())).all()
-    _prefetch(db, candidates)
+    _prefetch_access(db, p, candidates)
     rows = []
     for e in candidates:
         try:
@@ -722,8 +762,8 @@ def list_my_exams(status: str | None = Query(default=None, pattern="^(SCHEDULED|
 def _named(db: Session, res: dict) -> dict:
     """Provider and branch names of a page of exams (a unified Global Test exam's anchor is not where it belongs: left empty)."""
     shown = [x for x in res["items"] if not x.unified_global and x.provider_id]
-    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({x.provider_id for x in shown} or {None}))).all())
-    branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({x.branch_id for x in shown} or {None}))).all())
+    found = names(db, providers={x.provider_id for x in shown}, branches={x.branch_id for x in shown})   # one statement
+    providers, branches = found["providers"], found["branches"]
     for x in shown:
         x.provider_name, x.branch_name = providers.get(x.provider_id), branches.get(x.branch_id)
     return res
@@ -742,7 +782,9 @@ def list_exams(branch_id: UUID, status: str | None = None, q: str | None = Query
         if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
             stmt = stmt.where(Exam.status == status)
         candidates = db.scalars(stmt.order_by(Exam.created_at.desc())).all()
+        _not_unified(db, candidates)
         _prefetch(db, candidates)
+        teacher_scope.prefetch_exam_students(db, p, candidates)   # the per-exam teacher checks below then read no more
         mine = [(e, exam_access(db, p, "exam.read", e)) for e in candidates if teacher_scope.exam_students(db, p, e, branch_id)]
         extra = [x for x in _unified_in_branch(db, p, br, status) if term in x[0].name.lower()]
         return _page_of(db, sorted(mine + extra, key=lambda x: x[0].created_at, reverse=True), page, page_size)
@@ -755,13 +797,20 @@ def list_exams(branch_id: UUID, status: str | None = None, q: str | None = Query
     extra = [x for x in _unified_in_branch(db, p, br, status) if term in x[0].name.lower()]
     if extra:
         exams = db.scalars(stmt).all()
+        _not_unified(db, exams)
         _prefetch(db, exams)
         rows = [(e, exam_access(db, p, "exam.read", e)) for e in exams] + extra
         return _page_of(db, sorted(rows, key=lambda x: x[0].created_at, reverse=True), page, page_size)
     res = paginate(db, stmt.order_by(Exam.created_at.desc()), page, page_size)
+    _not_unified(db, res["items"])
     _prefetch(db, res["items"])
     res["items"] = _exam_outs(db, [(e, exam_access(db, p, "exam.read", e)) for e in res["items"]])
     return res
+
+
+def _not_unified(db: Session, exams) -> None:
+    """Exams selected with ~unified_exam_clause are not unified: cached as such, so prefetch_unified_exams does not ask again."""
+    db.info.setdefault("unified_exam", {}).update({e.exam_id: False for e in exams})
 
 
 def _page_of(db: Session, rows: list[tuple[Exam, object]], page: int, page_size: int) -> dict:
@@ -780,8 +829,13 @@ def _unified_in_branch(db: Session, p: Principal, br: Branch, status: str | None
     if status in {"SCHEDULED", "PUBLISHED", "CANCELLED"}:
         stmt = stmt.where(Exam.status == status)
     out = []
-    exams = db.scalars(stmt).all()
-    _prefetch(db, exams)
+    # with their plans in the same statement (then served by the identity map, so _prefetch does not read them again)
+    rows = db.execute(stmt.add_columns(ExamPlan).outerjoin(ExamPlan, ExamPlan.plan_id == Exam.plan_id)).all()
+    exams = [e for e, _plan in rows]
+    db.info.setdefault("prefetched", []).extend(plan for _e, plan in rows if plan is not None)   # the identity map holds objects weakly
+    # every one is unified by construction: a paper of its manifest came from a submission (unified_exam_clause's second branch)
+    db.info.setdefault("unified_exam", {}).update({e.exam_id: True for e in exams})
+    _prefetch_access(db, p, exams)
     here_by_exam: dict[UUID, set[str]] = {}
     for exam_id, sid in db.execute(select(StudentExamAssignment.exam_id, StudentExamAssignment.student_id)
                                    .join(Enrollment, Enrollment.student_id == StudentExamAssignment.student_id)
@@ -801,7 +855,15 @@ def _unified_in_branch(db: Session, p: Principal, br: Branch, status: str | None
 
 @router.get("/exams/{exam_id}", response_model=ExamOut)
 def get_exam(exam_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    e = _exam(db, exam_id)
+    # the exam, its plan and whether it is unified in one statement (what exam_access and _exam_out would read next)
+    row = db.execute(select(Exam, ExamPlan, unified.unified_exam_clause(Exam.exam_id).label("unified"))
+                     .outerjoin(ExamPlan, ExamPlan.plan_id == Exam.plan_id).where(Exam.exam_id == exam_id)).first()
+    if not row:
+        raise api_error(404, "NOT_FOUND", "Exam not found.")
+    e, plan, is_unified = row
+    if plan is not None:
+        db.info.setdefault("prefetched", []).append(plan)          # the identity map holds objects weakly: keep it for the request
+    db.info.setdefault("unified_exam", {})[e.exam_id] = bool(is_unified)
     return _exam_out(db, e, exam_access(db, p, "exam.read", e))
 
 
@@ -870,11 +932,11 @@ def _papers_total(ev: ExamVersion, papers) -> Decimal:
     return total.quantize(Decimal("0.01"))            # the same 2-decimal form as exam_versions.total_marks
 
 
-def _subject_rows(db: Session, rc: ResultClient, ev: ExamVersion, scope: unified.SubjectScope) -> list[dict]:
+def _subject_rows(db: Session, subject_results: list[dict], scope: unified.SubjectScope) -> list[dict]:
     """A provider's result rows of a unified exam: only its own subjects' marks, summed over those subjects (never the overall)."""
     names = set(db.scalars(select(Subject.name).where(Subject.subject_id.in_(scope.subject_ids or [None]))))
     out = []
-    for r in rc.exam_subject_results(str(ev.exam_version_id)):
+    for r in subject_results:
         # by paper when the attempt reports its papers (students who chose papers: another provider may contribute a paper of the
         # same subject); otherwise by subject, which within one exam is one paper (every exam made for one combination of papers)
         by_paper = any(x.get("paper_id") for x in r["subjects"])
@@ -914,18 +976,24 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
     if e.status != "PUBLISHED" or not ev:
         raise api_error(409, "NOT_PUBLISHED", "Results exist only for published exams.")
     subject_view = isinstance(branches, unified.SubjectScope)
-    try:
-        rows = _subject_rows(db, rc, ev, branches) if subject_view else rc.exam_results(str(ev.exam_version_id))
-        if not subject_view:                    # the subject-wise breakdown of each official result (the provider view already has its own)
-            by_student = {r["student_id"]: r["subjects"] for r in rc.exam_subject_results(str(ev.exam_version_id))}
-            rows = [{**r, "subjects": by_student.get(r["student_id"], [])} for r in rows]
-    except ResultServiceError:
-        raise api_error(503, "RESULT_SERVICE_UNAVAILABLE", "Results are temporarily unavailable.")
-
-    scoped = select(StudentExamAssignment).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
-    if branches is not None:
-        scoped = scoped.where(_in_branches(branches))         # one branch's students, or a teacher's own students only
-    assignments = {a.student_id: a for a in db.scalars(scoped)}
+    vid = str(ev.exam_version_id)
+    # The result service calls are independent of each other and of the scope query below: they run in worker threads (HTTP only; the
+    # database session stays in this thread). Authorization above is already done.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        subject_results = pool.submit(rc.exam_subject_results, vid)
+        official = None if subject_view else pool.submit(rc.exam_results, vid)
+        scoped = select(StudentExamAssignment).where(StudentExamAssignment.exam_version_id == ev.exam_version_id)
+        if branches is not None:
+            scoped = scoped.where(_in_branches(branches))         # one branch's students, or a teacher's own students only
+        assignments = {a.student_id: a for a in db.scalars(scoped)}
+        try:
+            if subject_view:
+                rows = _subject_rows(db, subject_results.result(), branches)
+            else:                    # the subject-wise breakdown of each official result (the provider view already has its own)
+                by_student = {r["student_id"]: r["subjects"] for r in subject_results.result()}
+                rows = [{**r, "subjects": by_student.get(r["student_id"], [])} for r in official.result()]
+        except ResultServiceError:
+            raise api_error(503, "RESULT_SERVICE_UNAVAILABLE", "Results are temporarily unavailable.")
     allowed = set(assignments)
     rows = [r for r in rows if r["student_id"] in allowed]          # never expose results outside the assignment/scope
     try:

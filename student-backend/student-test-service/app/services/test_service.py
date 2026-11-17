@@ -210,6 +210,12 @@ def get_test_for_start(
             "marks": question.marks,
             "negative_marks": question.negative_marks,
             "image_reference": question.image_reference,
+            # picture checksums (GET /tests/{test_id}/images/{checksum}); None where the field has no picture
+            "question_image": question.question_image,
+            "option_a_image": question.option_a_image,
+            "option_b_image": question.option_b_image,
+            "option_c_image": question.option_c_image,
+            "option_d_image": question.option_d_image,
         }
         for question in questions
     ]

@@ -16,8 +16,6 @@ export const ROUTE_TITLES: RouteTitle[] = [
   { path: "/subjects", title: "Subjects" },
   { path: "/batches", title: "Batches" },
   { path: "/papers", title: "Question Bank & Papers" },
-  { path: "/papers/photo", title: "Question Bank & Papers" },
-  { path: "/papers/photo/:draftId", title: "Question Bank & Papers" },
   { path: "/papers/:versionId", title: "Question Bank & Papers" },
   { path: "/tests/new", title: "Daily Test" },
   { path: "/tests/weekly", title: "Weekly Test" },

@@ -16,3 +16,8 @@ class QuestionResponse(BaseModel):
     marks: int
     negative_marks: int
     image_reference: str | None
+    question_image: str | None = None
+    option_a_image: str | None = None
+    option_b_image: str | None = None
+    option_c_image: str | None = None
+    option_d_image: str | None = None

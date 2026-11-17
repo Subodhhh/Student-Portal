@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import exists, func, or_, select, true
+from sqlalchemy import String, cast, exists, func, literal, or_, select, true, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -565,18 +565,29 @@ class _Counts:
     returns a placeholder; resolve() runs the statement and replaces every placeholder in the (nested) result with its number."""
 
     def __init__(self, db: Session):
-        self.db, self.stmts = db, []
+        self.db, self.stmts, self.groups = db, [], []
 
     def add(self, stmt) -> "_Pending":
         self.stmts.append(select(func.count()).select_from(stmt.subquery()).scalar_subquery())
         return _Pending(len(self.stmts) - 1)
 
+    def group(self, stmt, column) -> "_Pending":
+        """`stmt` (key, count) grouped by `column` -> {key: count}. Every group of the response is read by ONE more statement (UNION ALL of
+        the unchanged grouped queries), not one round trip each."""
+        key, count = stmt.group_by(column).subquery().c
+        self.groups.append(select(literal(len(self.groups)).label("g"), cast(key, String).label("k"), count.label("n")))
+        return _Pending(len(self.groups) - 1, grouped=True)
+
     def resolve(self, out):
         values = list(self.db.execute(select(*[q.label(f"c{i}") for i, q in enumerate(self.stmts)])).one()) if self.stmts else []
+        grouped: list[dict] = [{} for _ in self.groups]
+        if self.groups:
+            for g, k, n in self.db.execute(self.groups[0] if len(self.groups) == 1 else union_all(*self.groups)):
+                grouped[g][k] = n
 
         def walk(v):
             if isinstance(v, _Pending):
-                return values[v.index] or 0
+                return grouped[v.index] if v.grouped else (values[v.index] or 0)
             if isinstance(v, dict):
                 return {k: walk(x) for k, x in v.items()}
             return v
@@ -584,11 +595,11 @@ class _Counts:
 
 
 class _Pending:
-    def __init__(self, index: int):
-        self.index = index
+    def __init__(self, index: int, grouped: bool = False):
+        self.index, self.grouped = index, grouped
 
 
-def _paper_status_counts(db: Session, p: Principal) -> dict:
+def _paper_status_counts(p: Principal, counts: _Counts) -> "_Pending":
     stmt = (select(PaperVersion.status, func.count()).join(Paper, Paper.paper_id == PaperVersion.paper_id)
             .where(scope_clause(p, "paper.read", Paper.provider_id, Paper.branch_id)))
     if not p.can("paper.read", exclude_roles=(Role.TEACHER,), provider_id=None) and not p.is_global:
@@ -596,7 +607,7 @@ def _paper_status_counts(db: Session, p: Principal) -> dict:
         non_teacher = [a for a in p.assignments if Role(a.role) != Role.TEACHER]
         if not non_teacher:
             stmt = stmt.where(Paper.subject_id.in_(taught) if taught else false_())
-    return dict(db.execute(stmt.group_by(PaperVersion.status)).all())
+    return counts.group(stmt, PaperVersion.status)
 
 
 def _unified(exam_id_column):
@@ -613,7 +624,7 @@ def false_():
 
 def _platform_overview(db: Session, now: datetime, counts: _Counts) -> dict[str, Any]:
     """Platform-wide counts for the global (Super Admin / Admin) dashboard. Read-only; every number comes from a table."""
-    by_status = lambda col, stmt: {k: v for k, v in db.execute(stmt.group_by(col)).all()}  # noqa: E731
+    by_status = lambda col, stmt: counts.group(stmt, col)  # noqa: E731
     latest = (select(ExamVersion.exam_id, func.max(ExamVersion.version_no).label("v")).group_by(ExamVersion.exam_id).subquery())
     current = (select(Exam, ExamVersion).join(latest, latest.c.exam_id == Exam.exam_id)
                .join(ExamVersion, (ExamVersion.exam_id == Exam.exam_id) & (ExamVersion.version_no == latest.c.v))
@@ -662,7 +673,7 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
     upcoming = (select(Exam).join(ExamVersion, ExamVersion.exam_id == Exam.exam_id)
                 .where(exam_scope, Exam.status != "CANCELLED", ExamVersion.start_at >= now))
     out["upcoming_exams"] = counts.add(upcoming)
-    out["papers_by_status"] = _paper_status_counts(db, p)
+    out["papers_by_status"] = _paper_status_counts(p, counts)
     out["unread_notifications"] = counts.add(select(Notification).where(
         Notification.recipient_staff_id == p.staff_id, Notification.read_at.is_(None)))
 
@@ -670,7 +681,7 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
         out["providers"] = counts.add(select(Provider).where(Provider.status == "ACTIVE", Provider.deleted_at.is_(None)))
         out["branches"] = counts.add(select(Branch).where(Branch.status == "ACTIVE", Branch.deleted_at.is_(None)))
         out["staff"] = counts.add(select(Staff).where(Staff.status == "ACTIVE"))
-        out["exams_by_status"] = dict(db.execute(select(Exam.status, func.count()).group_by(Exam.status)).all())
+        out["exams_by_status"] = counts.group(select(Exam.status, func.count()), Exam.status)
         out["open_tickets"] = counts.add(select(SupportTicket).where(SupportTicket.status.in_(("OPEN", "IN_PROGRESS"))))
         out["security"] = {
             "denied_events_24h": counts.add(select(AuditLog).where(AuditLog.outcome == "DENIED", AuditLog.occurred_at >= now - timedelta(hours=24))),

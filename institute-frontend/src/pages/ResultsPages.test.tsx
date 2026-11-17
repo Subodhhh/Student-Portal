@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/renderApp";
 import { CorrectionsCard } from "./ResultsPages";
-import { me, page, stubApi } from "../test/stubApi";
+import { fail, me, page, stubApi } from "../test/stubApi";
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 0 }, "/api/v1/providers": page([{ provider_id: "p1", name: "Alpha", status: "ACTIVE", email: "a@x.io" }]),
   "/api/v1/providers/p1/branches": page([{ branch_id: "b1", provider_id: "p1", name: "Main", city: null, status: "ACTIVE" }]) };
@@ -13,6 +13,76 @@ const row = (rank: number, id: string, name: string, obtained: number) => ({ ran
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Results", () => {
+  const user = { ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["result.read", "exam.read"]) };
+  const summary = { window_closed: true, total_marks: "16.00", subject_view: false,
+    summary: { assigned: 3, submitted: 2, not_submitted: 1, average: 10, highest: 12, lowest: 8 }, results: [row(1, "STU000002", "Zoya", 12)] };
+
+  it("requests the results together with the exam, not after it", async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    const calls = stubApi({ ...user, "/api/v1/exams/ex1": () => pending, "/api/v1/exams/ex1/results": summary });
+    renderApp("/results/ex1");
+    await vi.waitFor(() => expect(calls.some((c) => c.path === "/api/v1/exams/ex1/results")).toBe(true));
+    release(exam);
+    expect(await screen.findByText("Physics 12/16")).toBeTruthy();
+  });
+
+  it("starts the Super Admin's correction history with the exam, shows its failure only in its card, and never for other roles", async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    const calls = stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["result.read", "exam.read", "result.correct"]), "/api/v1/exams/ex1": () => pending,
+      "/api/v1/exams/ex1/results": summary, "/api/v1/exams/ex1/integrity": { items: [] },
+      "/api/v1/exams/ex1/result-corrections": fail(500, { code: "ERROR", message: "History unavailable." }) });
+    const { unmount } = renderApp("/results/ex1");
+    await vi.waitFor(() => expect(calls.some((c) => c.path === "/api/v1/exams/ex1/result-corrections")).toBe(true));
+    release(exam);
+    expect(await screen.findByText("Physics 12/16")).toBeTruthy();                       // the results still show
+    const card = (await screen.findByRole("heading", { name: "Result corrections" })).closest(".card") as HTMLElement;
+    expect(within(card).getByText("History unavailable.")).toBeTruthy();
+    expect(calls.filter((c) => c.path === "/api/v1/exams/ex1/result-corrections")).toHaveLength(1);   // the card reuses the page's request
+    unmount();
+    vi.unstubAllGlobals();
+    const other = stubApi({ ...user, "/api/v1/exams/ex1": exam, "/api/v1/exams/ex1/results": summary });
+    renderApp("/results/ex1");
+    expect(await screen.findByText("Physics 12/16")).toBeTruthy();
+    expect(other.some((c) => c.path.endsWith("/result-corrections"))).toBe(false);
+  });
+
+  it("shows only the exam's 404, not a correction error, when the exam does not exist", async () => {
+    stubApi({ ...common, "/api/v1/auth/me": me("SUPER_ADMIN", ["result.read", "exam.read", "result.correct"]),
+      "/api/v1/exams/ex1": fail(404, { code: "NOT_FOUND", message: "Exam not found." }),
+      "/api/v1/exams/ex1/results": fail(404, { code: "NOT_FOUND", message: "Exam not found." }),
+      "/api/v1/exams/ex1/result-corrections": fail(404, { code: "NOT_FOUND", message: "Corrections: exam not found." }) });
+    renderApp("/results/ex1");
+    expect(await screen.findByText("Exam not found.")).toBeTruthy();
+    expect(screen.queryByText(/Corrections: exam not found/)).toBeNull();
+  });
+
+  it("shows no results error for an unpublished exam (the results request answers 409)", async () => {
+    stubApi({ ...user, "/api/v1/exams/ex1": { ...exam, status: "SCHEDULED" },
+      "/api/v1/exams/ex1/results": fail(409, { code: "NOT_PUBLISHED", message: "Results exist only for published exams." }) });
+    renderApp("/results/ex1");
+    expect(await screen.findByText("Results exist only for published exams.")).toBeTruthy();   // the page's own notice, once
+    expect(screen.getAllByText("Results exist only for published exams.")).toHaveLength(1);
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("shows the exam's error when the exam cannot be read, whatever the results request answered", async () => {
+    stubApi({ ...user, "/api/v1/exams/ex1": fail(404, { code: "NOT_FOUND", message: "Exam not found." }),
+      "/api/v1/exams/ex1/results": fail(403, { code: "FORBIDDEN", message: "You do not have permission for this action." }) });
+    renderApp("/results/ex1");
+    expect(await screen.findByText("Exam not found.")).toBeTruthy();
+    expect(screen.queryByText(/do not have permission/)).toBeNull();
+  });
+
+  it("shows a results failure of a published exam on its own, keeping the exam header", async () => {
+    stubApi({ ...user, "/api/v1/exams/ex1": exam,
+      "/api/v1/exams/ex1/results": fail(403, { code: "FORBIDDEN", message: "You do not have permission for this action." }) });
+    renderApp("/results/ex1");
+    expect(await screen.findByText("You do not have permission for this action.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Daily Physics" })).toBeTruthy();
+  });
+
   it("lists published exams of every provider and branch in scope, without a Working In selector, and searches them on the server", async () => {
     const calls = stubApi({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", ["result.read", "exam.read"]),
       "/api/v1/exams": page([{ ...exam, provider_name: "Alpha", branch_name: "Main" }, { ...exam, exam_id: "ex2", name: "National Mock", unified_global: true }]) });

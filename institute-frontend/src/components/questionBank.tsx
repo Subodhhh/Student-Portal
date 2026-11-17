@@ -2,10 +2,11 @@ import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { isGlobalRole } from "../auth/roles";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { PATTERN_LABEL, buildPapers, groupBySubject, type BankQuestion, type BuiltPaper, type QuestionVersion, type Source } from "../services/questions";
 import { Alert, Button, DataTable, EmptyState, Field, Modal, Pagination, SearchField, SelectField, Spinner, StatusBadge, TextAreaField } from "./ui";
+import { MathText } from "./MathText";
 
 type Subject = { subject_id: string; code: string; name: string };
 type Facets = { exam_type: string[]; target_class: string[]; chapter: string[]; topic: string[]; subtopic: string[]; difficulty: string[]; pattern: string[] };
@@ -39,7 +40,7 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
   if (!includeUsed) params.set("include_used", "false");
   params.set("page", String(page));
   params.set("page_size", "20");
-  const subjects = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
   const facets = useApi<Facets>(`/api/v1/question-taxonomy?${facetParams.toString()}`);
   const list = useApi<Page<BankQuestion>>(`/api/v1/questions?${params.toString()}`);
   const sName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
@@ -122,14 +123,14 @@ function QuestionPreview({ questionId, subjectName, onClose }: { questionId: str
             {subjectName(q.subject_id)} · {[q.exam_type, q.target_class, q.chapter, q.topic, q.subtopic].filter(Boolean).join(" › ") || "unclassified"} ·{" "}
             {PATTERN_LABEL[q.pattern] ?? q.pattern}{q.difficulty ? ` · ${DIFFICULTY_LABEL[q.difficulty]}` : ""} · {q.scope === "GLOBAL" ? "Platform question" : "Provider question"} · version {v.version_no}
           </p>
-          <p className="question-stem">{v.stem}</p>
+          <MathText as="p" className="question-stem" text={v.stem} />
           <ol type="A" className="options">
             {[v.option_a, v.option_b, v.option_c, v.option_d].map((o, i) => (
-              <li key={i} className={v.correct_option === "ABCD"[i] ? "correct" : undefined}>{o}{v.correct_option === "ABCD"[i] && <span className="sr-only"> (correct answer)</span>}</li>
+              <li key={i} className={v.correct_option === "ABCD"[i] ? "correct" : undefined}><MathText text={o} />{v.correct_option === "ABCD"[i] && <span className="sr-only"> (correct answer)</span>}</li>
             ))}
           </ol>
           <p className="small">Marks: +{Number(v.marks_positive)} for a correct answer, −{Number(v.marks_negative)} for a wrong one, 0 if unanswered.</p>
-          {v.explanation && <p className="small muted">Explanation: {v.explanation}</p>}
+          {v.explanation && <p className="small muted">Explanation: <MathText text={v.explanation} /></p>}
           {v.answers_hidden && <Alert kind="info">This platform question is part of a Global Test. Its answer and explanation are hidden until your students' review window opens.</Alert>}
           {q.forked_from_question_id && <p className="small muted">Your provider's corrected copy of a question it does not own; the original is unchanged.</p>}
           <p className="small muted">Staff-only view. Students see answers and explanations only at result review, after the exam window closes.</p>
@@ -235,8 +236,8 @@ function NewQuestionVersion({ question, onClose, onDone }: { question: BankQuest
 
 /** Add a question to the platform bank (GLOBAL, platform roles) or to a provider branch's bank. */
 export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { scope: "GLOBAL" | "PROVIDER"; branchId?: string; providerId?: string; onClose: () => void; onDone: () => void }) {
-  const catalogue = useApi<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null);
-  const offered = useApi<Subject[]>(scope === "PROVIDER" && providerId ? `/api/v1/providers/${providerId}/subjects` : null);
+  const catalogue = useReference<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null);
+  const offered = useReference<Subject[]>(scope === "PROVIDER" && providerId ? `/api/v1/providers/${providerId}/subjects` : null);
   const subjects = scope === "GLOBAL" ? catalogue.data?.items ?? [] : offered.data ?? [];
   const [subjectId, setSubjectId] = useState("");
   const facets = useApi<Facets>(`/api/v1/question-taxonomy?scope=${scope}${branchId && scope === "PROVIDER" ? `&branch_id=${branchId}` : ""}${subjectId ? `&subject_id=${subjectId}` : ""}`);
@@ -264,7 +265,7 @@ export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { 
 
 export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }: { scope: "GLOBAL" | "PROVIDER"; branchId?: string; selected: Map<string, BankQuestion>;
   onClose: () => void; onDone: (papers: BuiltPaper[]) => void }) {
-  const subjects = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
   const groups = groupBySubject(selected);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [meta, setMeta] = useState({ exam_type: "", target_class: "" });

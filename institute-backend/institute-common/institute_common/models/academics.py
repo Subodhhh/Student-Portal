@@ -56,6 +56,7 @@ class TeacherSubjectAssignment(Base):
 
     __tablename__ = "teacher_subject_assignments"
     __table_args__ = (
+        Index("ix_tsa_branch", "branch_id"),
         CheckConstraint("status IN ('ACTIVE','INACTIVE')", name="tsa_status_check"),
         Index("uq_tsa_all_batches", "staff_id", "branch_id", "subject_id", unique=True,
               postgresql_where=_NO_BATCH, sqlite_where=_NO_BATCH),

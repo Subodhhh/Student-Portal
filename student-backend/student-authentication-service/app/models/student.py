@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, Numeric, String
+from sqlalchemy import Date, DateTime, Enum, Numeric, String
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +39,12 @@ class Student(Base):
 
     password_hash: Mapped[str | None] = mapped_column(
         String(255),
+        nullable=True,
+    )
+
+    # Optional; read and updated by the Student profile service. Column added by migration 0003_students_date_of_birth.
+    date_of_birth: Mapped[date | None] = mapped_column(
+        Date,
         nullable=True,
     )
 

@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, Field, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, literal, null, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -53,6 +53,7 @@ from inst_exam.routes.exams import api_error_detail
 from inst_exam.services import exam_generation as gen
 from inst_exam.services import global_generation as gg
 from inst_exam.services import teacher_scope, unified
+from inst_exam.services.names import names
 from inst_exam.services.test_policy import can_create_test
 
 router = APIRouter(prefix="/api/v1", tags=["Tests"])
@@ -408,37 +409,49 @@ def _summaries(db: Session, plans: list[ExamPlan], viewer: Principal | None = No
     jobs: dict = {}
     for j in db.scalars(select(ExamGenerationJob).where(ExamGenerationJob.plan_id.in_(ids)).order_by(ExamGenerationJob.started_at)):
         jobs[j.plan_id] = j
-    subjects: dict = {}
-    for pid, name in db.execute(select(ExamPlanSubject.plan_id, Subject.name).join(Subject, Subject.subject_id == ExamPlanSubject.subject_id)
-                                .where(ExamPlanSubject.plan_id.in_(ids)).order_by(ExamPlanSubject.position)):
-        subjects.setdefault(pid, []).append(name)
-    branches: dict = {}
-    for pid, name in db.execute(select(ExamPlanBranch.plan_id, Branch.name).join(Branch, Branch.branch_id == ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id.in_(ids))):
-        branches.setdefault(pid, []).append(name)
-    batches: dict = {}
-    for pid, name in db.execute(select(ExamPlanBatch.plan_id, Batch.name).join(Batch, Batch.batch_id == ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id.in_(ids))):
-        batches.setdefault(pid, []).append(name)
-    students = dict(db.execute(select(ExamPlanStudent.plan_id, func.count()).where(ExamPlanStudent.plan_id.in_(ids)).group_by(ExamPlanStudent.plan_id)).all())
-    assigned = dict(db.execute(select(StudentExamAssignment.exam_id, func.count()).where(StudentExamAssignment.exam_id.in_(exam_ids or [None]))
-                               .group_by(StudentExamAssignment.exam_id)).all())
+    # the plans' subject, branch and batch names in one statement (UNION ALL of the three unchanged joins); subjects keep their position
+    named: dict = {"s": {}, "b": {}, "t": {}}
+    no_position = null().cast(Integer)
+    for kind, pid, name, position in db.execute(union_all(
+            select(literal("s"), ExamPlanSubject.plan_id, Subject.name, ExamPlanSubject.position)
+            .join(Subject, Subject.subject_id == ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id.in_(ids)),
+            select(literal("b"), ExamPlanBranch.plan_id, Branch.name, no_position)
+            .join(Branch, Branch.branch_id == ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id.in_(ids)),
+            select(literal("t"), ExamPlanBatch.plan_id, Batch.name, no_position)
+            .join(Batch, Batch.batch_id == ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id.in_(ids)))):
+        named[kind].setdefault(pid, []).append((position, name))
+    subjects = {pid: [n for _p, n in sorted(rows, key=lambda r: r[0])] for pid, rows in named["s"].items()}
+    branches = {pid: [n for _p, n in rows] for pid, rows in named["b"].items()}
+    batches = {pid: [n for _p, n in rows] for pid, rows in named["t"].items()}
+    # targeted students per plan and assigned students per exam, in one statement
+    students: dict = {}
+    assigned: dict = {}
+    for kind, key, n in db.execute(union_all(
+            select(literal("p"), ExamPlanStudent.plan_id, func.count()).where(ExamPlanStudent.plan_id.in_(ids)).group_by(ExamPlanStudent.plan_id),
+            select(literal("e"), StudentExamAssignment.exam_id, func.count()).where(StudentExamAssignment.exam_id.in_(exam_ids or [None]))
+            .group_by(StudentExamAssignment.exam_id))):
+        (students if kind == "p" else assigned)[key] = n
     if viewer is not None:
         from fastapi import HTTPException
-        from inst_exam.routes.exams import _in_branches, _prefetch, exam_access
-        _prefetch(db, exams.values())
+        from inst_exam.routes.exams import _prefetch_access, assignment_rows, exam_access, in_scope
+        _prefetch_access(db, viewer, exams.values())
+        scopes = {}
         for e in exams.values():
             try:
-                scope = exam_access(db, viewer, "exam.read", e)
+                scopes[e.exam_id] = exam_access(db, viewer, "exam.read", e)
             except HTTPException:
-                scope = frozenset()
+                scopes[e.exam_id] = frozenset()
+        rows = assignment_rows(db, StudentExamAssignment.exam_id, [i for i, sc in scopes.items() if sc is not None and sc != frozenset()])
+        for exam_id, scope in scopes.items():
             if scope == frozenset():
-                assigned[e.exam_id] = 0
+                assigned[exam_id] = 0
             elif scope is not None:
-                assigned[e.exam_id] = db.scalar(select(func.count()).select_from(StudentExamAssignment)
-                                                .where(StudentExamAssignment.exam_id == e.exam_id, _in_branches(scope))) or 0
-    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({pl.provider_id for pl in plans}))).all())
-    homes = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_({pl.branch_id for pl in plans}))).all())
+                assigned[exam_id] = sum(1 for sid, _st, br in rows.get(exam_id, []) if in_scope(scope, sid, br))
+    found = names(db, providers={pl.provider_id for pl in plans}, branches={pl.branch_id for pl in plans})    # one statement
+    providers, homes = found["providers"], found["branches"]
     # a unified Global Test plan is filed under an anchor provider/branch that does not own it: shown as the Global Test instead
-    unified_ids = set(db.scalars(select(ExamPlan.plan_id).where(ExamPlan.plan_id.in_(ids), unified.unified_plan_clause(ExamPlan.plan_id))))
+    unified.prefetch_unified_plans(db, ids)             # one statement, or none when visible_plans already asked this request
+    unified_ids = {i for i in ids if unified.is_unified_plan(db, i)}
     out = []
     for plan in plans:
         exam, job = exams.get(plan.plan_id), jobs.get(plan.plan_id)
@@ -560,19 +573,20 @@ def _jsonable(d: dict) -> dict:
 def visible_plans(db: Session, p: Principal, plans: list[ExamPlan]) -> list[ExamPlan]:
     """Plans the caller may see: admins of the plan's branch (platform, provider, branch admin), its creator, and teachers with at
     least one targeted student in their teaching scope for one of the plan's subjects (services/teacher_scope.py)."""
-    visible = []
     unified.prefetch_unified_plans(db, [plan.plan_id for plan in plans])
+    decided: dict = {}                                  # plan_id -> visible, or None: decided by the teacher scope below
     for plan in plans:
         if unified.is_unified_plan(db, plan.plan_id):   # a unified Global Test plan belongs to the platform, whatever its anchor branch
-            if unified.is_platform(p, "exam.read"):
-                visible.append(plan)
+            decided[plan.plan_id] = unified.is_platform(p, "exam.read")
         elif _manager(p, plan.provider_id, plan.branch_id) or plan.created_by == p.staff_id:
-            visible.append(plan)
+            decided[plan.plan_id] = True
         elif p.can("exam.read", provider_id=plan.provider_id, branch_id=plan.branch_id, exclude_roles=(Role.TEACHER,)):
-            visible.append(plan)
-        elif p.has_role(Role.TEACHER) and p.can("exam.read", provider_id=plan.provider_id) and teacher_scope.plan_students(db, p, plan):
-            visible.append(plan)
-    return visible
+            decided[plan.plan_id] = True
+        else:
+            decided[plan.plan_id] = None if (p.has_role(Role.TEACHER) and p.can("exam.read", provider_id=plan.provider_id)) else False
+    # every remaining plan's teacher scope in a fixed number of statements, not three or more per plan
+    taught = teacher_scope.plans_students(db, p, [plan for plan in plans if decided[plan.plan_id] is None])
+    return [plan for plan in plans if decided[plan.plan_id] or (decided[plan.plan_id] is None and taught[plan.plan_id])]
 
 
 def reader_provider_ids(p: Principal) -> set[UUID] | None:
@@ -603,7 +617,10 @@ def list_tests(provider_id: UUID | None = None, test_type: str | None = Query(de
     provs = reader_provider_ids(p)
     if provs is not None:
         stmt = stmt.where(ExamPlan.provider_id.in_(provs or [None]))
-    visible = visible_plans(db, p, db.scalars(stmt.order_by(ExamPlan.created_at.desc())).all())
+    # each plan with whether it is a unified Global Test plan, in one statement (fills the cache visible_plans reads; same clause)
+    listed = db.execute(stmt.add_columns(unified.unified_plan_clause(ExamPlan.plan_id).label("unified")).order_by(ExamPlan.created_at.desc())).all()
+    db.info.setdefault("unified_plan", {}).update({plan.plan_id: bool(u) for plan, u in listed})
+    visible = visible_plans(db, p, [plan for plan, _u in listed])
     rows: list = [(plan.created_at, plan) for plan in visible]
     if test_type in (None, "GLOBAL") and provider_id is None and unified.is_platform(p, "exam.read"):
         rows += [(occ.published_at or occ.created_at, (occ, test)) for occ, test in _ungenerated_dates(db, global_test_id)]
@@ -630,6 +647,8 @@ def _ungenerated_dates(db: Session, global_test_id: UUID | None) -> list[tuple[G
 
 def _date_summaries(db: Session, dates: list[tuple[GlobalTestOccurrence, GlobalTest]]) -> dict:
     """The Scheduled Tests row of an ungenerated Global Test date: the same fields as a plan's (see _summaries), with no exam yet."""
+    if not dates:
+        return {}
     subjects: dict = {}
     for tid, name in db.execute(select(GlobalTestSubject.test_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
                                 .where(GlobalTestSubject.test_id.in_({t.test_id for _o, t in dates} or {None})).order_by(GlobalTestSubject.position)):

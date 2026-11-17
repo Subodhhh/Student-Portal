@@ -151,3 +151,58 @@ def test_docx_upload_through_the_api(client, world, make_staff, login, db_factor
     files = {"file": ("paper.pdf", pdf(None), "application/pdf")}
     r = client.post(f"/api/v1/branches/{world['p1b1']}/subjects/{sid}/papers/upload", data={"title": "Scan"}, files=files, headers=h)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "EXTRACTION_FAILED"
+
+
+# ------------------------------------------------------------------ Word automatic list numbering (the number is not text in the file)
+
+def _numbering(*abstracts: tuple[int, str, str, int], nums: dict[int, int] | None = None, overrides: dict[int, int] | None = None) -> bytes:
+    """numbering.xml: abstracts are (abstractNumId, numFmt, lvlText, start) for level 0; nums maps numId -> abstractNumId."""
+    a = "".join(f'<w:abstractNum w:abstractNumId="{i}"><w:lvl w:ilvl="0"><w:start w:val="{s}"/><w:numFmt w:val="{f}"/>'
+                f'<w:lvlText w:val="{t}"/></w:lvl></w:abstractNum>' for i, f, t, s in abstracts)
+    n = "".join(f'<w:num w:numId="{k}"><w:abstractNumId w:val="{v}"/>'
+                + (f'<w:lvlOverride w:ilvl="0"><w:startOverride w:val="{(overrides or {})[k]}"/></w:lvlOverride>' if k in (overrides or {}) else "")
+                + "</w:num>" for k, v in (nums or {i: i for i, *_ in abstracts}).items())
+    return f'<?xml version="1.0" encoding="UTF-8"?><w:numbering {W_NS}>{a}{n}</w:numbering>'.encode()
+
+
+def _np(text: str, num_id: int) -> str:
+    return (f'<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr>'
+            f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>')
+
+
+OPTS = "".join(_p(x) for x in ("A) one", "B) two", "C) three", "D) four", "Answer: A", "Marks: 4", "Negative: 1"))
+
+
+def test_word_auto_numbered_questions_are_read_with_their_displayed_numbers():
+    # Word for the web: one list definition per question, each starting at that question's number (as in the genuine fixture)
+    body = _np("What is 2 + 2?", 1) + OPTS + _np("What is 3 + 3?", 2) + OPTS
+    r = documents.extract_docx(docx(body, {"word/numbering.xml": _numbering((1, "decimal", "%1.", 1), (2, "decimal", "%1.", 2))}), 500)
+    assert r.ok, r.errors
+    assert [q.stem for q in r.questions] == ["What is 2 + 2?", "What is 3 + 3?"]
+
+
+def test_one_word_list_counts_on_and_a_start_override_restarts_it():
+    body = _np("First?", 1) + OPTS + _np("Second?", 1) + OPTS + _np("Third?", 1) + OPTS
+    r = documents.extract_docx(docx(body, {"word/numbering.xml": _numbering((1, "decimal", "%1.", 1))}), 500)
+    assert r.ok, r.errors
+    assert [q.stem for q in r.questions] == ["First?", "Second?", "Third?"]
+    # a second list instance of the same definition with a start override restarts at that number: "5." follows "1." -> a gap
+    body = _np("First?", 1) + OPTS + _np("Fifth?", 2) + OPTS
+    r = documents.extract_docx(docx(body, {"word/numbering.xml": _numbering((1, "decimal", "%1.", 1), nums={1: 1, 2: 1}, overrides={2: 5})}), 500)
+    assert not r.ok and any("missing" in e["message"].lower() for e in r.errors), r.errors
+
+
+def test_word_auto_lettered_options_are_read():
+    body = (_np("Pick the vector.", 1) + "".join(_np(x, 2) for x in ("Mass", "Speed", "Velocity", "Time"))
+            + "".join(_p(x) for x in ("Answer: C", "Marks: 4", "Negative: 1")))
+    r = documents.extract_docx(docx(body, {"word/numbering.xml": _numbering((1, "decimal", "%1.", 1), (2, "upperLetter", "%1)", 1))}), 500)
+    assert r.ok, r.errors
+    assert r.questions[0].options == {"A": "Mass", "B": "Speed", "C": "Velocity", "D": "Time"} and r.questions[0].correct == "C"
+
+
+def test_bullets_and_unknown_lists_never_invent_a_number():
+    # a bullet carries no number, and a list missing from numbering.xml is not guessed: the paper has no numbered question
+    for numbering in (_numbering((1, "bullet", "•", 1)), None):
+        extra = {"word/numbering.xml": numbering} if numbering else {}
+        r = documents.extract_docx(docx(_np("What is 2 + 2?", 1) + OPTS, extra), 500)
+        assert not r.ok and not r.questions

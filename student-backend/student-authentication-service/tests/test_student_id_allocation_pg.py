@@ -157,7 +157,7 @@ def test_migration_seeds_from_the_historical_floor_and_keeps_students(db_url):
     up = _alembic(db_url, "upgrade", "head")
     assert up.returncode == 0, up.stderr[-2000:]
     after = _state(db_url)
-    assert after["head"] == "0002_student_id_allocator" and after["counter"] == 100          # the safety floor (evidence: STU000012)
+    assert after["head"] == "0003_students_date_of_birth" and after["counter"] == 100        # the safety floor (evidence: STU000012)
     assert after["students"] == before["students"] and after["search_path"] == '""'           # students untouched; nothing leaked
     again = _alembic(db_url, "upgrade", "head")
     assert again.returncode == 0 and _state(db_url)["counter"] == 100                          # re-running never reseeds

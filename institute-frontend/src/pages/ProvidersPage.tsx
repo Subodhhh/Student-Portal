@@ -8,7 +8,7 @@ import { AuditTable } from "../components/audit";
 import { StudentDirectory } from "../components/students";
 import { StaffList } from "../components/staff";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, Field, Modal, PageHeader, Pagination, SearchField, SelectField, Spinner, StatCard, StatusBadge, Tabs, TextAreaField } from "../components/ui";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { Batches } from "./BatchesPage";
 import { StudentCount } from "../components/StudentCount";
@@ -178,7 +178,7 @@ export function ProviderDetailPage() {
 function ProviderBranches({ providerId, onChange }: { providerId: string; onChange: (c: StatusChange) => void }) {
   const { can } = useAuth();
   const scope = useScope();
-  const branches = useApi<Page<Branch>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
+  const branches = useReference<Page<Branch>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
   const [adding, setAdding] = useState(false);
   return (
     <div className="stack">

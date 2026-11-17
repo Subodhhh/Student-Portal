@@ -82,9 +82,9 @@ is never the boundary.
    several sheets, oversized or heavily compressed parts are all rejected rather than interpreted. **Word (.docx)** papers are accepted as
    a table with the CSV columns or as numbered question blocks (`1. …`, `A) … D) …`, `Answer: B`, optional `Marks:`/`Negative:` or
    paper-level `Default marks:`/`Default negative:`); **text PDFs** use the same numbered layout. A numbering gap is reported as a possibly
-   missing question and rejects the paper. Scanned PDFs (no text layer) are rejected. **Images** (PNG/JPEG) are accepted when
-   `OCR_ENGINE=tesseract` (docker-compose enables it): magic bytes and size are verified first, each question must reach
-   `OCR_MIN_CONFIDENCE` on its scoring-critical lines, and one unreliable question rejects the whole paper. `.xls`/`.xlsm` are not supported.
+   missing question and rejects the paper. Scanned PDFs (no text layer) and PNG/JPEG papers are rejected: nothing is OCR'd. Question and
+   option **pictures** go in an .xlsx (embedded) or a .zip (CSV + picture files); they are stored and shown exactly as uploaded, never
+   read. `.xls`/`.xlsm` are not supported.
 2. **Plans**: subject slots (an exact paper version, or "latest published version of this paper"), batches, window,
    one shared duration, auto-publish, optional `generate_at`.
 3. **Generation** (`app/services/exam_generation.py`): only approved/published versions the provider owns or was granted by an

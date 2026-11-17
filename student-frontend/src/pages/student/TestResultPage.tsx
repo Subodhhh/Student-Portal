@@ -10,6 +10,32 @@ import { TEST_API_URL } from "../../services/api";
 import { getResultDetails } from "../../services/resultService";
 
 import "../../styles/test-result.css";
+import { MathText } from "../../components/MathText";
+
+/** The text of option A-D of a reviewed question, or "" when the letter has no stored option. */
+function optionText(q: { option_a: string | null; option_b: string | null; option_c: string | null; option_d: string | null }, letter: string): string {
+  const key = `option_${letter.toLowerCase()}` as "option_a" | "option_b" | "option_c" | "option_d";
+  return q[key] ?? "";
+}
+
+type PictureFields = { question_image?: string | null; option_a_image?: string | null; option_b_image?: string | null;
+  option_c_image?: string | null; option_d_image?: string | null };
+
+/** The picture checksum of option A-D, or null when that option is text. */
+function optionImage(q: PictureFields, letter: string): string | null {
+  const key = `option_${letter.toLowerCase()}_image` as keyof PictureFields;
+  return q[key] ?? null;
+}
+
+/** An option as the student saw it: its picture, or its text typeset. */
+function OptionShown({ q, letter, testId }: { q: PictureFields & Parameters<typeof optionText>[0]; letter: string; testId?: string }) {
+  const image = optionImage(q, letter);
+  if (image && testId) {
+    return <> — <img className="question-image option-image" src={`${TEST_API_URL}/tests/${testId}/images/${image}`} alt={`Option ${letter} picture`} /></>;
+  }
+  const text = optionText(q, letter);
+  return text ? <> — <MathText text={text} /></> : null;
+}
 
 interface Result {
   result_id: string;
@@ -55,6 +81,11 @@ interface QuestionReview {
   marks: number;
   negative_marks: number;
   image_reference: string | null;
+  question_image?: string | null;
+  option_a_image?: string | null;
+  option_b_image?: string | null;
+  option_c_image?: string | null;
+  option_d_image?: string | null;
 }
 
 interface ResultDetails {
@@ -529,9 +560,15 @@ export default function TestResultPage() {
 
                   <div className="question-review-content">
 
-                    <p className="question-text">
-                      {question.question_text}
-                    </p>
+                    {question.question_text && <MathText as="p" className="question-text" text={question.question_text} />}
+
+                    {question.question_image && result?.test_id && (
+                      <img
+                        src={`${TEST_API_URL}/tests/${result.test_id}/images/${question.question_image}`}
+                        alt={`Question ${question.question_order} picture`}
+                        className="question-image"
+                      />
+                    )}
 
                     {question.image_reference && (
                       <img
@@ -547,27 +584,12 @@ export default function TestResultPage() {
                         <span>Your Answer</span>
 
                         <strong>
-                          {question.selected_answer
-                            ? `${question.selected_answer}${
-                                question[
-                                  `option_${question.selected_answer.toLowerCase()}` as
-                                    | "option_a"
-                                    | "option_b"
-                                    | "option_c"
-                                    | "option_d"
-                                ]
-                                  ? ` — ${
-                                      question[
-                                        `option_${question.selected_answer.toLowerCase()}` as
-                                          | "option_a"
-                                          | "option_b"
-                                          | "option_c"
-                                          | "option_d"
-                                      ]
-                                    }`
-                                  : ""
-                              }`
-                            : "Not Answered"}
+                          {question.selected_answer ? (
+                            <>
+                              {question.selected_answer}
+                              <OptionShown q={question} letter={question.selected_answer} testId={result?.test_id} />
+                            </>
+                          ) : "Not Answered"}
                         </strong>
                       </div>
 
@@ -576,23 +598,7 @@ export default function TestResultPage() {
 
                         <strong>
                           {question.correct_answer}
-                          {question[
-                            `option_${question.correct_answer.toLowerCase()}` as
-                              | "option_a"
-                              | "option_b"
-                              | "option_c"
-                              | "option_d"
-                          ]
-                            ? ` — ${
-                                question[
-                                  `option_${question.correct_answer.toLowerCase()}` as
-                                    | "option_a"
-                                    | "option_b"
-                                    | "option_c"
-                                    | "option_d"
-                                ]
-                              }`
-                            : ""}
+                          <OptionShown q={question} letter={question.correct_answer} testId={result?.test_id} />
                         </strong>
                       </div>
 

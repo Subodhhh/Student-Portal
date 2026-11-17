@@ -422,6 +422,9 @@ def test_results_unavailable_or_cross_tenant(client, world, ctx, pa, login, db_f
     class Down:
         def exam_results(self, t):
             raise ResultServiceError("down")
+
+        def exam_subject_results(self, t):
+            raise ResultServiceError("down")
     set_result_client(Down())
     try:
         assert client.get(f"{API}/exams/{exam_id}/results", headers=h).json()["detail"]["code"] == "RESULT_SERVICE_UNAVAILABLE"
@@ -433,3 +436,57 @@ def test_results_unavailable_or_cross_tenant(client, world, ctx, pa, login, db_f
         assert client.get(f"{API}/exams/{exam_id}/results", headers=login(pa2)).status_code == 403
     finally:
         set_result_client(None)
+
+
+class PicturePublisher(FakePublisher):
+    """A receiver that already holds some pictures: the outbox must upload exactly the others, before the exam."""
+    def __init__(self, held=()):
+        super().__init__()
+        self.held, self.uploaded, self.order = set(held), {}, []
+
+    def ensure_images(self, wanted):
+        self.order.append("images")
+        for checksum, (mime, load) in wanted.items():
+            if checksum not in self.held:
+                self.uploaded[checksum] = (mime, load())
+
+    def send(self, payload):
+        self.order.append("exam")
+        super().send(payload)
+
+
+def test_an_exam_with_pictures_names_them_and_uploads_missing_ones_first(client, world, ctx, pa, login, db_factory):
+    import hashlib
+    from institute_common.models.papers import QuestionImageAsset, QuestionVersion
+    h = login(pa)
+    plan = create_plan(client, h, world, ctx)
+    client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", json={}, headers=h)
+    pictures = {name: b"\x89PNG\r\n\x1a\n" + name.encode() for name in ("stem", "opt")}
+    sums = {name: hashlib.sha256(data).hexdigest() for name, data in pictures.items()}
+    with db_factory() as db:
+        assets = {}
+        for name, data in pictures.items():
+            a = QuestionImageAsset(provider_id=world["p1"], file_name=f"{name}.png", mime_type="image/png", file_size=len(data), width=1,
+                                   height=1, checksum=sums[name], image_data=data, created_by=world["p1"])
+            db.add(a)
+            db.flush()
+            assets[name] = a.asset_id
+        for qv in db.query(QuestionVersion).all():          # every question: a picture and a picture option A
+            qv.stem_image_id, qv.option_a_image_id, qv.option_a = assets["stem"], assets["opt"], ""
+        db.commit()
+        pub = PicturePublisher(held={sums["stem"]})
+        assert outbox.deliver_due(db, pub)["sent"] == 1
+    q = pub.sent[0]["questions"][0]
+    assert q["images"] == {"question": sums["stem"], "A": sums["opt"]} and q["options"]["A"] == ""
+    assert pub.order == ["images", "exam"]                                        # pictures before the exam
+    assert pub.uploaded == {sums["opt"]: ("image/png", pictures["opt"])}          # only what the receiver lacked
+
+
+def test_an_exam_without_pictures_keeps_its_payload_unchanged(client, world, ctx, pa, login, db_factory):
+    h = login(pa)
+    plan = create_plan(client, h, world, ctx)
+    client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", json={}, headers=h)
+    pub = PicturePublisher()
+    with db_factory() as db:
+        assert outbox.deliver_due(db, pub)["sent"] == 1
+    assert all("images" not in q for q in pub.sent[0]["questions"]) and pub.order == ["exam"]

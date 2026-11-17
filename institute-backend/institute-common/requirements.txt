@@ -12,6 +12,8 @@ redis==8.1.0
 tzdata==2026.5
 uvicorn==0.54.0
 pypdf==6.21.4
+# Hardened XML parsing of uploaded Office files (paper service); PSF licence, pure Python.
+defusedxml==0.7.1
 # PDF generation dependencies; Pillow is pinned here for consistent versions across Institute services and CI.
 reportlab==4.2.5
 chardet==7.7.0

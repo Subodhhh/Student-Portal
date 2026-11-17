@@ -15,7 +15,7 @@ from institute_common.config import settings
 from institute_common.database import utcnow
 from institute_common.models.academics import Subject
 from institute_common.models.exams import Exam, ExamOutbox, ExamPlan, ExamVersion, ExamVersionPaper, StudentExamAssignment
-from institute_common.models.papers import PaperVersionQuestion, QuestionVersion
+from institute_common.models.papers import IMAGE_FIELD_COLUMNS, PaperVersionQuestion, QuestionImageAsset, QuestionVersion
 from inst_exam.services.notify import notify, responsible_staff
 from inst_exam.services.student_notifications import enqueue as enqueue_student_notification
 from inst_exam.services.student_notifications import fmt_ist
@@ -56,8 +56,26 @@ class HttpExamPublisher:
             raise TransientPublishError(f"receiver returned {r.status_code}")
         if r.status_code == 409:
             # REFERENCE_MISSING: the provider/branch is not yet in the Student database's reference projection; retry.
-            raise TransientPublishError("Student database does not have this provider/branch yet (reference sync pending)")
+            # IMAGES_MISSING: a picture the exam needs did not arrive (ensure_images runs first); retry sends it again.
+            raise TransientPublishError("Student database does not have this provider/branch or picture yet (sync pending)")
         raise PermanentPublishError(f"receiver rejected the exam ({r.status_code})")
+
+    def ensure_images(self, wanted: dict[str, tuple[str, "callable"]]) -> None:
+        """Make the Student test service hold every picture the exam uses: {checksum: (mime type, loader of the bytes)}. It is asked
+        which checksums it lacks, and only those are uploaded (a picture is sent once, however many exams use it)."""
+        try:
+            r = self._http.post("/question-images/missing", json={"checksums": sorted(wanted)})
+            if r.status_code != 200:
+                raise TransientPublishError(f"picture check returned {r.status_code}")
+            for checksum in r.json().get("missing", []):
+                mime, load = wanted[checksum]
+                put = self._http.put(f"/question-images/{checksum}", content=load(), headers={"Content-Type": mime})
+                if put.status_code not in (200, 201, 204):
+                    if 400 <= put.status_code < 500 and put.status_code not in (408, 429):
+                        raise PermanentPublishError(f"receiver rejected a picture ({put.status_code})")
+                    raise TransientPublishError(f"picture upload returned {put.status_code}")
+        except httpx.TransportError as exc:
+            raise TransientPublishError(str(exc)[:200]) from exc
 
 
 _publisher: ExamPublisher | None = None
@@ -108,6 +126,10 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
             select(QuestionVersion).join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
             .where(PaperVersionQuestion.paper_version_id == p.paper_version_id).order_by(PaperVersionQuestion.position)
         ).scalars().all()
+        # picture asset id -> its checksum (the Student service names pictures by content); bytes are never loaded here
+        ids = {getattr(q, c) for q in rows for c in IMAGE_FIELD_COLUMNS.values() if getattr(q, c) is not None}
+        checksums = dict(db.execute(select(QuestionImageAsset.asset_id, QuestionImageAsset.checksum)
+                                    .where(QuestionImageAsset.asset_id.in_(ids))).all()) if ids else {}
         for q in rows:
             order += 1
             if uniform:
@@ -117,11 +139,13 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
                     if Decimal(val) != Decimal(val).to_integral_value():
                         raise PermanentPublishError(f"Question marks must be whole numbers for student delivery ({label}={val}).")
                 marks, negative = int(q.marks_positive), int(q.marks_negative)
+            pictures = {f: checksums[getattr(q, c)] for f, c in IMAGE_FIELD_COLUMNS.items() if getattr(q, c) is not None}
             payload["questions"].append({
                 "order": order, "subject": subject.name if subject else None, "text": q.stem,
                 "options": {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d},
                 "correct": q.correct_option, "marks": marks, "negative_marks": negative,
                 **({"paper_id": p_id} if p_id else {}),
+                **({"images": pictures} if pictures else {}),      # only questions with pictures: other payloads are unchanged
             })
     payload["total_questions"] = len(payload["questions"])
     payload["total_marks"] = sum(q["marks"] for q in payload["questions"])
@@ -201,6 +225,29 @@ def _paper_choice(db: Session, payload: dict, exam: Exam, plan: ExamPlan, papers
     return True
 
 
+def _ensure_images(db: Session, sender, payload: dict) -> None:
+    """Before an exam with pictures is sent, the receiver must hold every picture (publishers without pictures support skip this)."""
+    wanted = {cs for q in payload.get("questions", []) for cs in q.get("images", {}).values()}
+    if not wanted or not hasattr(sender, "ensure_images"):
+        return
+    rows = dict(db.execute(select(QuestionImageAsset.checksum, QuestionImageAsset.mime_type)
+                           .where(QuestionImageAsset.checksum.in_(wanted))).all())
+    missing = wanted - set(rows)
+    if missing:
+        raise PermanentPublishError(f"{len(missing)} picture(s) of this exam are no longer stored")
+    sender.ensure_images({cs: (mime, _bytes_loader(db, cs)) for cs, mime in rows.items()})
+
+
+def _bytes_loader(db: Session, checksum: str):
+    """Reads one picture's bytes only when the receiver says it lacks it."""
+    def load() -> bytes:
+        asset = db.scalar(select(QuestionImageAsset).where(QuestionImageAsset.checksum == checksum).limit(1))
+        if asset is None or asset.storage != "db" or asset.image_data is None:
+            raise PermanentPublishError("a picture of this exam has no stored bytes")
+        return asset.image_data
+    return load
+
+
 def deliver_due(db: Session, publisher: ExamPublisher | None = None, now=None) -> dict:
     now = now or utcnow()
     stats = {"sent": 0, "retry": 0, "failed": 0}
@@ -212,7 +259,9 @@ def deliver_due(db: Session, publisher: ExamPublisher | None = None, now=None) -
         row.attempts += 1
         try:
             payload = build_payload(db, row.exam_version_id, row.operation)
-            (publisher or get_publisher()).send(payload)
+            sender = publisher or get_publisher()
+            _ensure_images(db, sender, payload)
+            sender.send(payload)
             row.status, row.sent_at, row.last_error = "SENT", now, None
             stats["sent"] += 1
             _queue_student_notice(db, row, payload)   # students are told only once the exam is really available

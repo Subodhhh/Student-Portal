@@ -77,4 +77,19 @@ describe("Scheduled Tests", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Start Test" }));
     expect(await screen.findByText("attempt page")).toBeTruthy();
   });
+
+  it("treats the attempt service's 200 {has_attempt: false} as not started (no 404 needed)", async () => {
+    renderList([test("t2", "Weekly Physics", "Apex", "Thane", { start_at: "2020-01-01T00:00:00+00:00" })],
+      () => json(200, { has_attempt: false }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start Test" }));
+    expect(await screen.findByText("attempt page")).toBeTruthy();
+  });
+
+  it("still reports a real server error from the attempt lookup", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderList([test("t2", "Weekly Physics", "Apex", "Thane", { start_at: "2020-01-01T00:00:00+00:00" })],
+      () => json(500, { detail: "boom" }));
+    expect(await screen.findByText("Unable to load scheduled tests.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start Test" })).toBeNull();
+  });
 });

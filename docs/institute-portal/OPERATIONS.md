@@ -22,7 +22,6 @@ Each service documents its variables in its `.env.example`; real `.env` files ar
 | `EMAIL_BACKEND` (`console` dev only, `smtp`), `SMTP_*`, `EMAIL_FROM` | provider-agnostic email |
 | `STUDENT_SERVICE_URL/API_KEY`, `STUDENT_TEST_SERVICE_URL/API_KEY`, `STUDENT_RESULT_SERVICE_URL/API_KEY`, `STUDENT_ATTEMPT_SERVICE_URL/API_KEY`, `STUDENT_NOTIFICATION_SERVICE_URL/API_KEY` | outbound service keys, one per receiving service (the test-service pair is also used for answer-key corrections, the result-service pair for result corrections) |
 | `INSTITUTE_SERVICE_API_KEYS` (set on each *student* service: authentication, test, result, attempt, notification) | inbound keys accepted by `/internal/v1`; empty disables the API (404) |
-| `OCR_MIN_CONFIDENCE` | minimum per-question confidence for image papers; irrelevant while no OCR backend is registered (none is bundled) |
 | `FILE_STORE_DIR`, `MAX_UPLOAD_BYTES`, `MAX_PAPER_QUESTIONS` | private upload storage and limits |
 
 ### Service-key rotation (no downtime)
@@ -79,8 +78,8 @@ All steps are idempotent, so overlapping or repeated runs are safe. Watch the da
 * Older Student-service tests (`student-authentication-service/tests/test_password_reset.py`) use the configured `DATABASE_URL`; do not run them
   with live credentials. The new internal-API tests use in-memory SQLite only.
 * Uploads: CSV and one-sheet `.xlsx` are parsed in-process with the standard library (size, part-count, expansion and row limits, no formulas/macros/entities).
-  That is reasonable for a 2 MB staff-only upload, but a sandboxed worker would be stronger. Images are rejected unless an OCR backend is registered in code;
-  none is bundled, so image extraction is **not available** (see blockers). `.xls`, `.docx` and PDF are not supported.
+  That is reasonable for a 2 MB staff-only upload, but a sandboxed worker would be stronger. A PNG/JPEG paper is refused: OCR was removed on 2026-11-16,
+  and question/option pictures are stored and shown exactly as uploaded, never read. `.xls` is not supported.
 * Result corrections are Super Admin only. Re-evaluation deliberately skips results a person adjusted by hand (reported as `skipped_manual`); to change those, adjust them again.
   A correction changes only `test_results` (plus `result_history`) through the result service.
 * The existing Student notification route `POST /notifications` (not the internal one) predates this work and is **unauthenticated by default**: anyone who can reach
@@ -145,8 +144,7 @@ Verified facts about the existing Student migrations (found by replaying them on
 
 Other limitations that are not production blockers but should be known:
 
-* **Image/OCR extraction is not available.** The interface, validation and all-or-nothing handling exist and are tested with a test double, but no OCR engine is bundled or
-  selected; OCR of printed answer keys is unreliable by nature, so enabling it needs a chosen engine, a labelled test set and an agreed accuracy bar first.
+* **No OCR or picture recognition** (product decision, 2026-11-16). Papers are typed text plus original pictures; pictures are never read.
 * `.xlsx` support is limited to one plain sheet with the CSV columns (no formulas, merged/hidden cells, macros). Question images/assets and topic tagging are not built.
 * The CI workflows have not run on GitHub (see verification table); the first run may need small environment fixes.
 * Docker images and `docker compose up` were never built or started here.

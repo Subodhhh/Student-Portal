@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -16,6 +17,12 @@ class AttemptResponse(BaseModel):
     status: str
 
 
+class NoAttemptResponse(BaseModel):
+    """GET /attempts/test/{test_id} when the student has not started the test: an explicit, successful answer ("no attempt yet"),
+    not an error. An existing attempt is still returned as AttemptResponse, unchanged."""
+    has_attempt: Literal[False] = False
+
+
 class WorkspaceQuestion(BaseModel):
     question_id: UUID
     question_order: int
@@ -29,6 +36,11 @@ class WorkspaceQuestion(BaseModel):
     marks: int
     negative_marks: int
     image_reference: str | None
+    question_image: str | None = None
+    option_a_image: str | None = None
+    option_b_image: str | None = None
+    option_c_image: str | None = None
+    option_d_image: str | None = None
     selected_answer: str | None
     question_state: str
 

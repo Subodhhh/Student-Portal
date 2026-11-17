@@ -1,3 +1,5 @@
+import { clearReference } from "./referenceCache";
+
 export const API_URL: string = import.meta.env.VITE_INSTITUTE_API_URL ?? "http://localhost:8010";
 
 export class ApiError extends Error {
@@ -52,6 +54,7 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   } catch {
     throw new ApiError(0, "NETWORK", "Cannot reach the server. Check your connection and try again.");
   }
+  if (response.ok && method !== "GET") clearReference();       // a change may affect any cached reference list
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => null);
   if (!response.ok) {
@@ -76,7 +79,7 @@ export function uploadWithProgress<T = unknown>(path: string, form: FormData, on
     xhr.onload = () => {
       let data: { detail?: unknown } | null;
       try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { data = null; }
-      if (xhr.status >= 200 && xhr.status < 300) { onProgress(1); resolve(data as T); return; }
+      if (xhr.status >= 200 && xhr.status < 300) { clearReference(); onProgress(1); resolve(data as T); return; }
       const { code, message, extra } = messageFrom(data?.detail);
       if (xhr.status === 401) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
       reject(new ApiError(xhr.status, code, message, extra));

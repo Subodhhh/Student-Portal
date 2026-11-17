@@ -2,6 +2,7 @@
 
 Student identities are owned by the Student service: this module only searches and
 creates them through its authenticated API and never writes the students table."""
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -21,7 +22,7 @@ from institute_common.models.academics import (BatchSubject, EnrollmentAcademicP
                                                EnrollmentTransfer, Subject)
 from institute_common.models.exams import Exam, ExamVersion, ExamVersionPaper, GlobalPaperSubmission, StudentExamAssignment
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch, Provider
-from institute_common.util import need_reason, paginate
+from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
 from institute_common.clients.student_client import StudentClient, StudentRateLimited, StudentServiceError, get_student_client
@@ -119,6 +120,10 @@ class EnrollmentOut(BaseModel):
     batch_subjects: dict[UUID, list[UUID]] = {}
     # Class and Academic Year of this enrollment; null only for enrollments made before Classes existed (incomplete: set it).
     academic: AcademicOut | None = None
+
+
+class MembersIn(Strict):
+    enrollment_ids: list[str] = Field(min_length=1, max_length=100)
 
 
 class BatchRef(Strict):
@@ -353,13 +358,13 @@ def _enrollment_rows(db: Session, student_ids: list[str], visible) -> dict[str, 
     if visible is not None:
         stmt = stmt.where(visible)
     rows = db.execute(stmt.order_by(Enrollment.enrolled_at)).all()
-    batches = db.execute(select(EnrollmentBatch.enrollment_id, Batch.name).join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
-                         .where(EnrollmentBatch.enrollment_id.in_([e.enrollment_id for e, _, _ in rows]))).all() if rows else []
+    ids = [e.enrollment_id for e, _, _ in rows]
+    links = _batch_links(db, ids)                         # read once: batch names and the subjects taken in each batch
     by_e: dict[str, list[str]] = {}
-    for eid, name in batches:
+    for _ebid, eid, _bid, name in links:
         by_e.setdefault(eid, []).append(name)
-    profiles = _profiles(db, [e.enrollment_id for e, _, _ in rows])
-    subjects = _enrollment_subjects(db, [e.enrollment_id for e, _, _ in rows])
+    profiles = _profiles(db, ids)
+    subjects = _enrollment_subjects(db, ids, links)
     out: dict[str, list[dict]] = {}
     for e, prov_name, br_name in rows:
         ac = _academic(profiles.get(e.enrollment_id))
@@ -370,23 +375,33 @@ def _enrollment_rows(db: Session, student_ids: list[str], visible) -> dict[str, 
     return out
 
 
-def _enrollment_subjects(db: Session, enrollment_ids: list[str]) -> dict[str, list[dict]]:
+def _batch_links(db: Session, enrollment_ids: list[str]) -> list:
+    """(enrollment_batch_id, enrollment_id, batch_id, batch name) of every batch membership of these enrollments."""
+    if not enrollment_ids:
+        return []
+    return db.execute(select(EnrollmentBatch.enrollment_batch_id, EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id, Batch.name)
+                      .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id).where(EnrollmentBatch.enrollment_id.in_(enrollment_ids))).all()
+
+
+def _enrollment_subjects(db: Session, enrollment_ids: list[str], links: list) -> dict[str, list[dict]]:
     """The subjects each enrollment takes, from its batch memberships (the rule `_check_subjects` / `_set_subjects` enforce): the subjects
     chosen in a membership, or every subject its batch offers when nothing was chosen. An enrollment in no batch takes no subject here.
     Each entry names the batch it comes from and whether it was chosen; nothing is inferred from other data."""
-    if not enrollment_ids:
+    if not links:
         return {}
-    links = db.execute(select(EnrollmentBatch.enrollment_batch_id, EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id, Batch.name)
-                       .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id).where(EnrollmentBatch.enrollment_id.in_(enrollment_ids))).all()
     chosen: dict = {}
-    for ebid, sid in db.execute(select(EnrollmentBatchSubject.enrollment_batch_id, EnrollmentBatchSubject.subject_id)
-                                .where(EnrollmentBatchSubject.enrollment_batch_id.in_([x[0] for x in links] or [None]))):
+    names: dict = {}
+    for ebid, sid, name in db.execute(select(EnrollmentBatchSubject.enrollment_batch_id, EnrollmentBatchSubject.subject_id, Subject.name)
+                                      .outerjoin(Subject, Subject.subject_id == EnrollmentBatchSubject.subject_id)
+                                      .where(EnrollmentBatchSubject.enrollment_batch_id.in_([x[0] for x in links]))):
         chosen.setdefault(ebid, set()).add(sid)
+        names[sid] = name
     offered: dict = {}
-    for bid, sid in db.execute(select(BatchSubject.batch_id, BatchSubject.subject_id).where(BatchSubject.batch_id.in_({x[2] for x in links} or {None}))):
+    for bid, sid, name in db.execute(select(BatchSubject.batch_id, BatchSubject.subject_id, Subject.name)
+                                     .outerjoin(Subject, Subject.subject_id == BatchSubject.subject_id)
+                                     .where(BatchSubject.batch_id.in_({x[2] for x in links}))):
         offered.setdefault(bid, set()).add(sid)
-    wanted = set().union(*chosen.values(), *offered.values()) if (chosen or offered) else set()
-    names = dict(db.execute(select(Subject.subject_id, Subject.name).where(Subject.subject_id.in_(wanted or {None}))).all())
+        names[sid] = name
     out: dict[str, list[dict]] = {}
     for ebid, eid, bid, batch_name in links:
         picked = ebid in chosen
@@ -433,11 +448,13 @@ def student_directory(q: str | None = Query(default=None, max_length=100), provi
     total = db.scalar(select(func.count()).select_from(ids)) or 0
     page, page_size = max(page, 1), min(max(page_size, 1), 100)
     page_ids = [sid for (sid,) in db.execute(select(ids.c.student_id).order_by(ids.c.student_id).limit(page_size).offset((page - 1) * page_size))]
-    try:
-        names = sc.get_many(page_ids)
-    except StudentServiceError:
-        names = {}   # degrade to IDs, like the branch roster
-    enrollments = _enrollment_rows(db, page_ids, visible)
+    with ThreadPoolExecutor(max_workers=1) as pool:      # the names (Student service, HTTP) while this thread reads the enrollments
+        names_f = pool.submit(sc.get_many, page_ids)
+        enrollments = _enrollment_rows(db, page_ids, visible)
+        try:
+            names = names_f.result()
+        except StudentServiceError:
+            names = {}   # degrade to IDs, like the branch roster
     items = []
     for sid in page_ids:
         s = names.get(sid)
@@ -457,7 +474,9 @@ def student_detail(student_id: str, p: Principal = Depends(get_principal), db: S
     enrollments = _enrollment_rows(db, [student_id], visible).get(student_id, [])
     if not enrollments:
         raise api_error(404, "NOT_FOUND", "Student not found.")
-    s = _students(sc, sc.get, student_id)
+    pool = ThreadPoolExecutor(max_workers=1)               # the profile (Student service, HTTP) while this thread reads the exams
+    profile = pool.submit(_students, sc, sc.get, student_id)
+    pool.shutdown(wait=False)
     # Only assignments made through an enrollment the caller manages: a branch admin never sees a sibling branch's exams.
     # A unified Global Test exam records one reference enrollment; it is listed to every provider that supplied one of its papers.
     contributed = (select(ExamVersion.exam_id).join(ExamVersionPaper, ExamVersionPaper.exam_version_id == ExamVersion.exam_version_id)
@@ -469,6 +488,7 @@ def student_detail(student_id: str, p: Principal = Depends(get_principal), db: S
         .where(StudentExamAssignment.student_id == student_id,
                StudentExamAssignment.enrollment_id.in_([e["enrollment_id"] for e in enrollments]) | StudentExamAssignment.exam_id.in_(contributed))
         .order_by(ExamVersion.start_at.desc()).limit(100)).all()
+    s = profile.result()
     return {
         "profile": {"student_id": student_id, "first_name": s.first_name if s else None, "last_name": s.last_name if s else None,
                     "email": s.email if s else None, "phone": s.phone if s else None, "account_status": s.status if s else None},
@@ -479,8 +499,8 @@ def student_detail(student_id: str, p: Principal = Depends(get_principal), db: S
 
 
 @router.get("/branches/{branch_id}/enrollments", response_model=Page[EnrollmentOut])
-def list_enrollments(branch_id: UUID, batch_id: UUID | None = None, status: str | None = None, page: int = 1,
-                     page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+def list_enrollments(branch_id: UUID, batch_id: UUID | None = None, not_in_batch: UUID | None = None, q: str | None = Query(default=None, max_length=50),
+                     status: str | None = None, page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
                      sc: StudentClient = Depends(get_student_client)):
     br = _branch(db, branch_id)
     p.require(db, "enrollment.manage", provider_id=br.provider_id, branch_id=branch_id)
@@ -489,7 +509,11 @@ def list_enrollments(branch_id: UUID, batch_id: UUID | None = None, status: str 
         stmt = stmt.where(Enrollment.status == status)
     if batch_id:
         stmt = stmt.where(Enrollment.enrollment_id.in_(select(EnrollmentBatch.enrollment_id).where(EnrollmentBatch.batch_id == batch_id)))
-    res = paginate(db, stmt.order_by(Enrollment.enrolled_at.desc()), page, page_size)
+    if not_in_batch:
+        stmt = stmt.where(Enrollment.enrollment_id.not_in(select(EnrollmentBatch.enrollment_id).where(EnrollmentBatch.batch_id == not_in_batch)))
+    if q and q.strip():                        # Student ID only: names live in the Student database
+        stmt = stmt.where(Enrollment.student_id.ilike(f"%{escape_like(q.strip())}%", escape="\\"))
+    res = paginate(db, stmt.order_by(Enrollment.enrolled_at.desc(), Enrollment.enrollment_id), page, page_size)
     try:
         names = sc.get_many([e.student_id for e in res["items"]])
     except StudentServiceError:
@@ -511,6 +535,7 @@ def add_to_batch(enrollment_id: str, batch_id: UUID, body: SubjectsIn | None = N
     """Add the student to the batch. With a body, also set the subjects taken in it (also for an existing membership)."""
     e = _enrollment(db, enrollment_id)
     p.require(db, "enrollment.manage", provider_id=e.provider_id, branch_id=e.branch_id)
+    db.refresh(e, with_for_update=True)        # enrollment_batches has no unique key: concurrent adds wait here instead of duplicating
     b = db.get(Batch, batch_id)
     if e.status != "ACTIVE" or not b or b.branch_id != e.branch_id or b.status != "ACTIVE":
         raise api_error(422, "INVALID_BATCH", "Enrollment is inactive, or the batch is not an active batch of this branch.")
@@ -535,6 +560,40 @@ def add_to_batch(enrollment_id: str, batch_id: UUID, body: SubjectsIn | None = N
         audit.record(db, "enrollment.batch_subjects", "SUCCESS", actor=p.staff_id, target_type="enrollment", target_id=enrollment_id,
                      provider_id=e.provider_id, branch_id=e.branch_id, ip=p.ip,
                      details={"batch_id": str(batch_id), "subject_ids": None if body.subject_ids is None else [str(s) for s in body.subject_ids]})
+
+
+@router.post("/batches/{batch_id}/members")
+def add_batch_members(batch_id: UUID, body: MembersIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Add existing enrollments to an active batch of their own branch. Only a membership is created, never a student or an enrollment.
+    Students already in the batch are reported, not repeated; an ID that is not an active enrollment of this branch is reported as rejected
+    (without saying why, so another branch's enrollments cannot be probed)."""
+    b = db.get(Batch, batch_id)
+    if not b:
+        raise api_error(404, "NOT_FOUND", "Batch not found.")
+    br = _branch(db, b.branch_id)
+    p.require(db, "enrollment.manage", provider_id=br.provider_id, branch_id=br.branch_id)
+    if b.status != "ACTIVE":
+        raise api_error(422, "INVALID_BATCH", "This batch is inactive. Reactivate it first.")
+    ids = list(dict.fromkeys(body.enrollment_ids))
+    rows = {e.enrollment_id: e for e in db.scalars(select(Enrollment).where(Enrollment.enrollment_id.in_(ids)).order_by(Enrollment.enrollment_id).with_for_update())}
+    members = set(db.scalars(select(EnrollmentBatch.enrollment_id).where(EnrollmentBatch.batch_id == batch_id, EnrollmentBatch.enrollment_id.in_(ids))))
+    added, already, rejected = [], [], []
+    for eid in ids:
+        e = rows.get(eid)
+        if not e or e.branch_id != br.branch_id or e.status != "ACTIVE":
+            rejected.append(eid)
+        elif eid in members:
+            already.append(eid)
+        else:
+            db.add(EnrollmentBatch(enrollment_id=eid, batch_id=batch_id))
+            _event(db, e, "BATCH_ADDED", p.staff_id, batch_id=batch_id)
+            added.append(eid)
+    if added:
+        db.commit()
+        request_sync()
+        audit.record(db, "enrollment.batch_add", "SUCCESS", actor=p.staff_id, target_type="batch", target_id=batch_id,
+                     provider_id=br.provider_id, branch_id=br.branch_id, ip=p.ip, details={"enrollment_ids": added})
+    return {"added": added, "already_members": already, "rejected": rejected}
 
 
 @router.delete("/enrollments/{enrollment_id}/batches/{batch_id}", status_code=204)

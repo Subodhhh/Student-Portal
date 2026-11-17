@@ -10,7 +10,9 @@ import {
 } from "../../services/api";
 
 import "../../styles/test-attempt.css";
+import { MathText } from "../../components/MathText";
 import { enterFullscreen, useExamIntegrity, type IntegrityState } from "./examIntegrity";
+import { isNoAttempt } from "../../services/attempts";
 
 type QuestionStatus =
   | "not-visited"
@@ -31,7 +33,16 @@ type ApiQuestion = {
   marks: number;
   negative_marks: number;
   image_reference: string | null;
+  // picture checksums (served by GET /tests/{id}/images/{checksum}); absent or null where the field has no picture
+  question_image?: string | null;
+  option_a_image?: string | null;
+  option_b_image?: string | null;
+  option_c_image?: string | null;
+  option_d_image?: string | null;
 };
+
+/** One answer option: identified by its letter (what the server stores), shown as its text or its picture. */
+type QuestionOption = { letter: string; text: string; image: string | null };
 
 type TestResponse = {
   test_id: string;
@@ -93,8 +104,9 @@ type Question = {
   id: string;
   section: string;
   question: string;
-  options: string[];
-  answer: string | null;
+  questionImage: string | null;
+  options: QuestionOption[];
+  answer: string | null;            // the chosen option's letter
   status: QuestionStatus;
   imageReference: string | null;
   marks: number;
@@ -265,7 +277,8 @@ function TestAttemptPage() {
           }
           // already finished (e.g. submitted automatically after warnings, then the page was reloaded): show that state, never an error
           const finishedResponse = await fetch(`${ATTEMPT_API_URL}/attempts/test/${currentTestId}`, { credentials: "include" });
-          const last: AttemptResponse | null = finishedResponse.ok ? await finishedResponse.json() : null;
+          const found: unknown = finishedResponse.ok ? await finishedResponse.json() : null;
+          const last = found && !isNoAttempt(found) ? (found as AttemptResponse) : null;
           if (!last || last.status === "IN_PROGRESS") {
             throw new Error(
               `Failed to start attempt: ${attemptResponse.status}`
@@ -313,15 +326,15 @@ function TestAttemptPage() {
          */
         const mappedQuestions: Question[] =
           testData.questions.map((question) => {
-            const options = [
-              question.option_a,
-              question.option_b,
-              question.option_c,
-              question.option_d,
-            ].filter(
-              (option): option is string =>
-                Boolean(option)
-            );
+            // every option keeps its letter; a picture option has no text, so it is never dropped or shifted
+            const options: QuestionOption[] = [
+              ["A", question.option_a, question.option_a_image],
+              ["B", question.option_b, question.option_b_image],
+              ["C", question.option_c, question.option_c_image],
+              ["D", question.option_d, question.option_d_image],
+            ]
+              .map(([letter, text, image]) => ({ letter: letter as string, text: text ?? "", image: image ?? null }))
+              .filter((option) => Boolean(option.text) || Boolean(option.image));
 
             return {
               id: question.question_id,
@@ -330,6 +343,8 @@ function TestAttemptPage() {
                 question.subject?.trim() || "Uncategorized",
 
               question: question.question_text,
+
+              questionImage: question.question_image ?? null,
 
               options,
 
@@ -419,12 +434,9 @@ function TestAttemptPage() {
               return question;
             }
 
-            const optionIndex =
-              savedAnswer.selected_answer.charCodeAt(0) -
-              65;
-
-            const selectedOption =
-              question.options[optionIndex];
+            const selectedOption = question.options.find(
+              (option) => option.letter === savedAnswer.selected_answer
+            );
 
             if (!selectedOption) {
               return question;
@@ -432,7 +444,7 @@ function TestAttemptPage() {
 
             return {
               ...question,
-              answer: selectedOption,
+              answer: selectedOption.letter,
               status: "answered",
             };
           })
@@ -609,15 +621,12 @@ function TestAttemptPage() {
       return;
     }
 
-    const optionIndex =
-      currentQuestion.options.indexOf(answer);
-
-    if (optionIndex === -1) {
+    // `answer` is the option's letter
+    if (!currentQuestion.options.some((option) => option.letter === answer)) {
       return;
     }
 
-    const selectedAnswer =
-      String.fromCharCode(65 + optionIndex);
+    const selectedAnswer = answer;
 
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
@@ -1111,9 +1120,20 @@ function TestAttemptPage() {
           </div>
 
           <div className="test-attempt-question">
-            <h2>
-              {currentQuestion.question}
-            </h2>
+            {currentQuestion.question && (
+              <h2>
+                <MathText text={currentQuestion.question} />
+              </h2>
+            )}
+
+            {currentQuestion.questionImage && (
+              <div className="test-attempt-question-image">
+                <img
+                  src={`${TEST_API_URL}/tests/${currentTestId}/images/${currentQuestion.questionImage}`}
+                  alt="Question picture"
+                />
+              </div>
+            )}
 
             {currentQuestion.imageReference && (
               <div className="test-attempt-question-image">
@@ -1127,51 +1147,40 @@ function TestAttemptPage() {
             )}
 
             <div className="test-attempt-options">
-              {currentQuestion.options.map(
-                (option, index) => {
-                  const optionLetter =
-                    String.fromCharCode(
-                      65 + index
-                    );
+              {currentQuestion.options.map((option) => (
+                <label
+                  key={option.letter}
+                  className={
+                    currentQuestion.answer === option.letter
+                      ? "test-attempt-option selected"
+                      : "test-attempt-option"
+                  }
+                >
+                  <input
+                    type="radio"
+                    name={`question-${currentQuestion.id}`}
+                    value={option.letter}
+                    checked={currentQuestion.answer === option.letter}
+                    onChange={() => handleAnswerSelect(option.letter)}
+                  />
 
-                  return (
-                    <label
-                      key={option}
-                      className={
-                        currentQuestion.answer ===
-                        option
-                          ? "test-attempt-option selected"
-                          : "test-attempt-option"
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name={`question-${currentQuestion.id}`}
-                        value={option}
-                        checked={
-                          currentQuestion.answer ===
-                          option
-                        }
-                        onChange={() =>
-                          handleAnswerSelect(
-                            option
-                          )
-                        }
-                      />
+                  <span className="option-radio" />
 
-                      <span className="option-radio" />
+                  <span className="option-letter">
+                    {option.letter}.
+                  </span>
 
-                      <span className="option-letter">
-                        {optionLetter}.
-                      </span>
-
-                      <span>
-                        {option}
-                      </span>
-                    </label>
-                  );
-                }
-              )}
+                  {option.image ? (
+                    <img
+                      className="test-attempt-option-image"
+                      src={`${TEST_API_URL}/tests/${currentTestId}/images/${option.image}`}
+                      alt={`Option ${option.letter} picture`}
+                    />
+                  ) : (
+                    <MathText text={option.text} />
+                  )}
+                </label>
+              ))}
             </div>
           </div>
 

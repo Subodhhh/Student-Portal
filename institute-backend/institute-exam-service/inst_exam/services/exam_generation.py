@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, literal, null, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -150,21 +150,48 @@ def resolve_slots(db: Session, plan: ExamPlan) -> Resolution:
 UNMATCHABLE = "!unmatchable"   # a class code no enrollment has: a plan whose target cannot be matched reaches nobody through batches
 
 
-def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None) -> list[tuple[str, str, UUID | None]]:
-    """The plan's audience resolved from CURRENT data (see `resolve_audience`), including its Class (plan.target_class)."""
-    if unified_plan(db, plan.plan_id):
+def eligible_students(db: Session, plan: ExamPlan, report: dict | None = None, inputs: dict | None = None) -> list[tuple[str, str, UUID | None]]:
+    """The plan's audience resolved from CURRENT data (see `resolve_audience`), including its Class (plan.target_class). `inputs`: the
+    plan's reads below already made for many plans at once (eligible_inputs), for read-only pages; generation never passes them."""
+    if (unified_plan(db, plan.plan_id) if inputs is None else inputs["unified"]):
         return unified_students(db, plan)
     class_level, problem = class_target(plan.target_class)
     if problem:                 # fail-safe for every reader (generation itself refuses such a plan before calling this)
         class_level = UNMATCHABLE
         if report is not None:
             report["class_problem"] = problem
-    batch_ids = [b for (b,) in db.execute(select(ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id))]
-    student_ids = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id))]
-    branch_ids = [b for (b,) in db.execute(select(ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id == plan.plan_id))]
-    subject_ids = list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)))
+    if inputs is None:
+        batch_ids = [b for (b,) in db.execute(select(ExamPlanBatch.batch_id).where(ExamPlanBatch.plan_id == plan.plan_id))]
+        student_ids = [sid for (sid,) in db.execute(select(ExamPlanStudent.student_id).where(ExamPlanStudent.plan_id == plan.plan_id))]
+        branch_ids = [b for (b,) in db.execute(select(ExamPlanBranch.branch_id).where(ExamPlanBranch.plan_id == plan.plan_id))]
+        subject_ids = list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan.plan_id)))
+    else:
+        batch_ids, student_ids, branch_ids, subject_ids = (inputs[k] for k in ("batches", "students", "branches", "subjects"))
     return resolve_audience(db, plan.provider_id, plan.branch_id, plan.audience_type, batch_ids, student_ids, branch_ids=branch_ids,
                             subject_ids=subject_ids, class_level=class_level, report=report)
+
+
+def eligible_inputs(db: Session, plan_ids) -> dict[UUID, dict]:
+    """What eligible_students reads per plan (whether it is unified, its batches, listed students, branches and subjects) for many plans in
+    ONE statement: UNION ALL of the same six reads, each returned in its own order. Values travel as text and are restored to their types."""
+    ids = list(plan_ids)
+    out = {pid: {"unified": False, "batches": [], "students": [], "branches": [], "subjects": []} for pid in ids}
+    if not ids:
+        return out
+    none = null().cast(String)
+    for kind, pid, value in db.execute(union_all(
+            select(literal("u"), GlobalTestStudent.plan_id, none).where(GlobalTestStudent.plan_id.in_(ids)).distinct(),
+            select(literal("u"), ExamPlanSubject.plan_id, none).join(GlobalPaperSubmission, GlobalPaperSubmission.submission_id == ExamPlanSubject.source_submission_id)
+            .where(ExamPlanSubject.plan_id.in_(ids)).distinct(),
+            select(literal("batches"), ExamPlanBatch.plan_id, cast(ExamPlanBatch.batch_id, String)).where(ExamPlanBatch.plan_id.in_(ids)),
+            select(literal("students"), ExamPlanStudent.plan_id, cast(ExamPlanStudent.student_id, String)).where(ExamPlanStudent.plan_id.in_(ids)),
+            select(literal("branches"), ExamPlanBranch.plan_id, cast(ExamPlanBranch.branch_id, String)).where(ExamPlanBranch.plan_id.in_(ids)),
+            select(literal("subjects"), ExamPlanSubject.plan_id, cast(ExamPlanSubject.subject_id, String)).where(ExamPlanSubject.plan_id.in_(ids)))):
+        if kind == "u":
+            out[pid]["unified"] = True
+        else:
+            out[pid][kind].append(value if kind == "students" else UUID(value))
+    return out
 
 
 def unified_plan(db: Session, plan_id: UUID) -> bool:
@@ -238,23 +265,39 @@ def _snapshot(db: Session, provider_id: UUID) -> dict | None:
     if provider_id not in cache:
         # every provider the page announced (db.info["audience_snapshot_providers"]) in the same 6 statements
         provs = sorted({provider_id, *db.info.get("audience_snapshot_providers", ())} - set(cache), key=str)
-        rows = db.execute(select(Enrollment.provider_id, Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id, EnrollmentBatch.batch_id)
-                          .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
-                          .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
-                          .where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE", Batch.status == "ACTIVE",
-                                 Batch.branch_id == Enrollment.branch_id)).all()
+        # the memberships with each enrollment's academic profile (at most one per enrollment, so no row is repeated)
+        joined = db.execute(select(Enrollment.provider_id, Enrollment.student_id, Enrollment.enrollment_id, Enrollment.branch_id, EnrollmentBatch.batch_id,
+                                   EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
+                            .join(EnrollmentBatch, EnrollmentBatch.enrollment_id == Enrollment.enrollment_id)
+                            .join(Batch, Batch.batch_id == EnrollmentBatch.batch_id)
+                            .outerjoin(EnrollmentAcademicProfile, EnrollmentAcademicProfile.enrollment_id == Enrollment.enrollment_id)
+                            .where(Enrollment.provider_id.in_(provs), Enrollment.status == "ACTIVE", Batch.status == "ACTIVE",
+                                   Batch.branch_id == Enrollment.branch_id)).all()
+        rows = [r[:5] for r in joined]
+        classes = {r[5]: r[6] for r in joined if r[5] is not None}
         eids, bids = {r[2] for r in rows}, {r[4] for r in rows}
         batch_branch: dict = {}
-        for prov, bid, br in db.execute(select(Branch.provider_id, Batch.batch_id, Batch.branch_id).join(Branch, Branch.branch_id == Batch.branch_id)
-                                        .where(Branch.provider_id.in_(provs))):
-            batch_branch.setdefault(prov, {})[bid] = br
         active: dict = {}
-        for prov, br in db.execute(select(Branch.provider_id, Branch.branch_id).where(Branch.provider_id.in_(provs), Branch.status == "ACTIVE",
-                                                                                     Branch.deleted_at.is_(None))):
-            active.setdefault(prov, set()).add(br)
-        chosen, offered = subjects_taken(db, eids), batch_subjects(db, bids)      # keyed by enrollment/batch: shared safely
-        classes = dict(db.execute(select(EnrollmentAcademicProfile.enrollment_id, EnrollmentAcademicProfile.class_level)
-                                  .where(EnrollmentAcademicProfile.enrollment_id.in_(eids or {None}))).all())
+        # every branch of the providers with its batches, in one statement: batch -> branch, and the ACTIVE undeleted branches
+        for prov, br, status, deleted_at, bid in db.execute(select(Branch.provider_id, Branch.branch_id, Branch.status, Branch.deleted_at, Batch.batch_id)
+                                                            .outerjoin(Batch, Batch.branch_id == Branch.branch_id).where(Branch.provider_id.in_(provs))):
+            if bid is not None:
+                batch_branch.setdefault(prov, {})[bid] = br
+            if status == "ACTIVE" and deleted_at is None:
+                active.setdefault(prov, set()).add(br)
+        # subjects_taken(eids) and batch_subjects(bids), the same two queries, in one statement (UNION ALL; both need only the rows above)
+        chosen: dict = {}
+        offered: dict = {}
+        for kind, eid, bid, sid in db.execute(union_all(
+                select(literal("c"), EnrollmentBatch.enrollment_id, EnrollmentBatch.batch_id, EnrollmentBatchSubject.subject_id)
+                .join(EnrollmentBatchSubject, EnrollmentBatchSubject.enrollment_batch_id == EnrollmentBatch.enrollment_batch_id)
+                .where(EnrollmentBatch.enrollment_id.in_(list(eids) or [None])),
+                select(literal("o"), null().cast(EnrollmentBatch.enrollment_id.type), BatchSubject.batch_id, BatchSubject.subject_id)
+                .where(BatchSubject.batch_id.in_(list(bids) or [None])))):
+            if kind == "c":
+                chosen.setdefault((eid, bid), set()).add(sid)
+            else:
+                offered.setdefault(bid, set()).add(sid)                   # keyed by enrollment/batch: shared safely
         for prov in provs:
             cache[prov] = {"members": sorted(((s, e, br, b) for p, s, e, br, b in rows if p == prov), key=lambda r: (r[0], r[3])),
                            "batch_branch": batch_branch.get(prov, {}), "active_branches": active.get(prov, set()),

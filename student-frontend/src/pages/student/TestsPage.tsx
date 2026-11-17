@@ -6,6 +6,7 @@ import {
   ATTEMPT_API_URL,
   TEST_API_URL,
 } from "../../services/api";
+import { isNoAttempt } from "../../services/attempts";
 
 type Enrollment = {
   enrollment_id: string;
@@ -159,8 +160,16 @@ function TestsPage() {
               );
             }
 
-            const attempt: Attempt =
-              await response.json();
+            const body: unknown = await response.json();
+
+            if (isNoAttempt(body)) {
+              return {
+                testId: test.test_id,
+                attempt: null,
+              };
+            }
+
+            const attempt = body as Attempt;
 
             return {
               testId: test.test_id,

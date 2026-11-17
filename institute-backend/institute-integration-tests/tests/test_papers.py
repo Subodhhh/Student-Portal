@@ -21,7 +21,8 @@ def tmp_store(tmp_path):
 
 
 @pytest.fixture()
-def setup(client, world, make_staff, login, db_factory):
+def setup(client, world, make_staff, login, db_factory, monkeypatch):
+    from institute_common.config import settings
     from institute_common.models.academics import ProviderSubject, Subject, TeacherSubjectAssignment
     with db_factory() as db:
         phy, chem = Subject(code="PHYSICS", name="Physics"), Subject(code="CHEM", name="Chemistry")
@@ -32,6 +33,8 @@ def setup(client, world, make_staff, login, db_factory):
                 db.add(ProviderSubject(provider_id=world[prov], subject_id=s.subject_id))
         db.commit()
         ids = {"phy": phy.subject_id, "chem": chem.subject_id}
+    # the explicit subject-category mapping a deployment configures (RECOGNITION_SUBJECT_CATEGORIES)
+    monkeypatch.setattr(settings, "recognition_subject_categories", {str(ids["phy"]): "PHYSICS", str(ids["chem"]): "CHEMISTRY"})
     teacher, tcode = make_staff([(Role.TEACHER, world["p1"], None)])
     other_teacher, ocode = make_staff([(Role.TEACHER, world["p1"], None)])
     with db_factory() as db:
@@ -179,6 +182,9 @@ def test_cross_tenant_paper_access_denied(client, world, setup, make_staff, logi
         assert client.get(f"{API}/branches/{world['p1b1']}/papers", headers=h).status_code == 403
         assert client.get(f"{API}/branches/{world['p1b1']}/questions", headers=h).status_code == 403
     h1 = login(ba1)
+    # the source file holds the same questions: not downloadable until the paper is approved
+    assert client.get(f"{API}/uploads/{j['upload_id']}/file", headers=h1).json()["detail"]["code"] == "PAPER_NOT_APPROVED"
+    assert client.post(f"{API}/paper-versions/{j['paper_version_id']}/approve", json={}, headers=h1).status_code == 200
     f = client.get(f"{API}/uploads/{j['upload_id']}/file", headers=h1)
     assert f.status_code == 200 and f.headers["content-disposition"].startswith("attachment") and f.text == GOOD
 

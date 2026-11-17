@@ -55,7 +55,8 @@ the service chains reproduce the legacy schema object for object (863 objects), 
 
 ## New behaviour
 
-* **Paper pipeline:** upload (CSV or one-sheet XLSX; images only if an OCR backend is registered) → validate every row (any failure rejects the whole
+* **Paper pipeline:** upload (CSV, one-sheet XLSX with embedded pictures, ZIP of CSV + pictures, DOCX or text PDF; pictures are stored and
+  shown exactly as uploaded, never read) → validate every row (any failure rejects the whole
   paper) → private storage → draft version → **preview** (questions + history) → **correct** with `POST /paper-versions/{id}/revisions` (creates the
   next version; untouched questions are shared, nothing is overwritten; the whole paper is validated again) → approve → publish. Published versions
   are immutable (database triggers on PostgreSQL); editing creates a new version.
@@ -84,7 +85,7 @@ Keys are per contract (root `.env`), interpolated into both ends by docker-compo
 * Inside the Institute database the services share one schema. Writes are single-owner and enforced; **reads of other services' tables
   are still direct SQL** (for example exam generation reads papers, enrollments and batches).
 * Cross-service foreign keys inherited from the monolith remain inside the Institute database.
-* OCR: `OCR_ENGINE=tesseract` (enabled in docker-compose) reads printed pages in the numbered layout; handwriting and poor scans are
-  rejected by the per-question confidence bar, and every OCR draft still needs human preview and approval.
+* No OCR or picture recognition (removed 2026-11-16): a PNG/JPEG paper is refused (415); question and option pictures travel inside an
+  .xlsx or .zip paper and are never read.
 * Contributions share a *paper* (the existing share granularity), not a single version.
 * Docker image builds and the 18-check black-box run (`tests/e2e/run-stack.sh`) were executed in the sandbox, not in your environment.

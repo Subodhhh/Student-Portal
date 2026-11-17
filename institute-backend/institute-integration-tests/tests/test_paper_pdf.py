@@ -1,15 +1,15 @@
-"""Paper PDFs: the question paper and, separately, the answer key; one version, or every paper of a filter as a ZIP (one PDF per paper,
-at most 30). The paper service decides, never the page: the same paper.read scope for both documents, and the answer key also needs the
+"""Paper PDFs: the question paper and, separately, the answer key; one version at a time, and only once approved.
+The paper service decides, never the page: the same paper.read scope for both documents, and the answer key also needs the
 correct answers by the paper page's own rule (AnswerPolicy). A question paper never holds answers or explanations; both have a structured
 header (provider, branch, Global Test, paper, subject, totals) and the subject-wise marking scheme that actually applies."""
 import hashlib
 import io
 import re
-import zipfile
 from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from pypdf import PdfReader
 
 from institute_common.core.roles import Role
@@ -25,16 +25,11 @@ def text_of(pdf: bytes) -> str:
     return " ".join(" ".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages).split())
 
 
-def names_in(zipped: bytes) -> dict[str, str]:
-    with zipfile.ZipFile(io.BytesIO(zipped)) as z:
-        return {n: text_of(z.read(n)) for n in z.namelist()}
-
-
 def _staff(make_staff, login, role, provider=None, branch=None):
     return login(make_staff([(role, provider, branch)])[1])
 
 
-def paper(db_factory, world, ctx, title, questions, provider="p1", branch="p1b1", scope="PROVIDER"):
+def paper(db_factory, world, ctx, title, questions, provider="p1", branch="p1b1", scope="PROVIDER", status="PUBLISHED"):
     """A published paper written once (question versions are append-only). questions: [(stem, correct, explanation, +marks, -marks)]."""
     from institute_common.models.papers import Paper, PaperVersion, PaperVersionQuestion, Question, QuestionVersion
     prov, br = (None, None) if scope == "GLOBAL" else (world[provider], world[branch])
@@ -42,7 +37,7 @@ def paper(db_factory, world, ctx, title, questions, provider="p1", branch="p1b1"
         x = Paper(scope=scope, provider_id=prov, branch_id=br, subject_id=ctx["phy"], title=title, created_by=uuid4())
         db.add(x)
         db.flush()
-        v = PaperVersion(paper_id=x.paper_id, version_no=1, status="PUBLISHED", question_count=len(questions),
+        v = PaperVersion(paper_id=x.paper_id, version_no=1, status=status, question_count=len(questions),
                          total_marks=sum(Decimal(q[3]) for q in questions), content_hash=hashlib.sha256(uuid4().bytes).hexdigest(), created_by=uuid4())
         db.add(v)
         db.flush()
@@ -159,40 +154,6 @@ def test_reading_a_paper_does_not_grant_its_answer_key(client, world, ctx, make_
     assert client.get(f"{API}/paper-versions/{pv}/answer-key", headers=sa).status_code == 200
 
 
-def test_bulk_question_papers_and_answer_keys_hold_exactly_the_papers_in_scope(client, world, ctx, make_staff, login, db_factory):
-    make_paper(db_factory, world["p1"], world["p1b2"], ctx["phy"], "Branch Two Physics", "PUBLISHED")
-    make_paper(db_factory, world["p2"], world["p2b1"], ctx["phy"], "Other Provider Physics", "PUBLISHED")
-    pa = _staff(make_staff, login, Role.PROVIDER_ADMIN, world["p1"])
-    expected = ["Branch-Two-Physics-v1", "Chem-Mock-v1", "Physics-Mock-v1"]                  # every branch of the provider
-    qp = client.get(f"{API}/papers/pdf", params={"provider_id": str(world["p1"])}, headers=pa)
-    keys = client.get(f"{API}/papers/answer-keys", params={"provider_id": str(world["p1"])}, headers=pa)
-    assert qp.status_code == keys.status_code == 200 and qp.headers["content-type"] == keys.headers["content-type"] == "application/zip"
-    assert keys.headers["content-disposition"] == 'attachment; filename="answer-keys.zip"'
-    papers, answer_keys = names_in(qp.content), names_in(keys.content)
-    assert sorted(papers) == [f"{n}.pdf" for n in expected] and sorted(answer_keys) == [f"{n}-answer-key.pdf" for n in expected]
-    assert "Branch p1-b2" in papers["Branch-Two-Physics-v1.pdf"]
-    assert all("Answer:" not in t and "ANSWER KEY" not in t for t in papers.values())
-    assert all(t.startswith("ANSWER KEY") and "Answer: (A)" in t for t in answer_keys.values())
-    _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
-    _, other = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
-    for kind in ("pdf", "answer-keys"):                   # one session per client: sign in right before each request
-        assert len(names_in(client.get(f"{API}/papers/{kind}", headers=login(ba)).content)) == 2                     # own branch only
-        assert client.get(f"{API}/papers/{kind}", params={"branch_id": str(world["p1b2"])}, headers=login(ba)).status_code == 403
-        assert client.get(f"{API}/papers/{kind}", params={"provider_id": str(world["p1"])}, headers=login(other)).status_code == 403
-        assert len(names_in(client.get(f"{API}/papers/{kind}", headers=login(ctx["tphy"])).content)) == 1  # taught subject only
-
-
-def test_bulk_answer_keys_cannot_bypass_a_withheld_key(client, world, ctx, make_staff, login, db_factory):
-    _reserved_platform_paper(db_factory, world, ctx)
-    paper(db_factory, world, ctx, "Open Platform Physics", MIXED, scope="GLOBAL")
-    pa = _staff(make_staff, login, Role.PROVIDER_ADMIN, world["p1"])
-    assert len(names_in(client.get(f"{API}/papers/pdf", params={"scope": "GLOBAL"}, headers=pa).content)) == 2
-    assert client.get(f"{API}/papers/answer-keys", params={"scope": "GLOBAL"}, headers=pa).status_code == 403       # one key withheld: none
-    assert len(names_in(client.get(f"{API}/papers/answer-keys", params={"scope": "GLOBAL", "q": "Open"}, headers=pa).content)) == 1
-    sa = _staff(make_staff, login, Role.SUPER_ADMIN)
-    assert len(names_in(client.get(f"{API}/papers/answer-keys", params={"scope": "GLOBAL"}, headers=sa).content)) == 2
-
-
 def test_global_test_papers_show_their_own_provider_and_the_tests_uniform_marking(client, world, ctx, make_staff, login, db_factory):
     from institute_common.models.exams import GlobalPaperSubmission, GlobalTest, GlobalTestOccurrence
     p1 = paper(db_factory, world, ctx, "Alpha Physics", MIXED)
@@ -229,16 +190,6 @@ def test_global_test_papers_show_their_own_provider_and_the_tests_uniform_markin
     assert "Marks: +2 / −0.5" in both                                                       # each question's own marks otherwise
 
 
-def test_bulk_is_limited_to_30_papers_per_request(client, world, ctx, make_staff, login, db_factory, monkeypatch):
-    from inst_paper.routes import papers
-    assert papers.MAX_PDF_PAPERS == 30
-    monkeypatch.setattr(papers, "MAX_PDF_PAPERS", 1)
-    pa = _staff(make_staff, login, Role.PROVIDER_ADMIN, world["p1"])
-    for kind in ("pdf", "answer-keys"):
-        r = client.get(f"{API}/papers/{kind}", params={"provider_id": str(world["p1"])}, headers=pa)
-        assert r.status_code == 422 and r.json()["detail"]["code"] == "TOO_MANY_PAPERS"
-
-
 def test_a_long_paper_paginates_readably():
     q = {"stem": "A particle moves with v = 3t² − 2t m/s; find a at t = 2 s (a = dv/dt). " + "Context. " * 12,
          "options": ["10 m/s²", "√2 m/s²", "π m/s²", "∞"], "marks_positive": Decimal(4), "marks_negative": Decimal(1)}
@@ -250,3 +201,46 @@ def test_a_long_paper_paginates_readably():
     assert len(pages) > 10 and all(f"Page {i} of {len(pages)}" in t for i, t in enumerate(pages, start=1))
     text = "\n".join(pages)
     assert all(f"{n}. A particle" in text for n in (1, 60, 120)) and "√2" in text and "π" in text and "∞" in text
+
+
+@pytest.mark.parametrize(("status", "allowed"), [("VALIDATED", False), ("WITHDRAWN", False), ("APPROVED", True), ("PUBLISHED", True), ("SUPERSEDED", True)])
+def test_only_approved_papers_can_be_downloaded_even_by_the_api(status, allowed, client, world, ctx, make_staff, login, db_factory):
+    pv = paper(db_factory, world, ctx, f"Paper {status}", MIXED, status=status)
+    for h in (_staff(make_staff, login, Role.PROVIDER_ADMIN, world["p1"]), _staff(make_staff, login, Role.SUPER_ADMIN)):
+        for doc in ("pdf", "answer-key"):
+            r = client.get(f"{API}/paper-versions/{pv}/{doc}", headers=h)
+            assert r.status_code == (200 if allowed else 403), (status, doc)
+            if not allowed:
+                assert r.json()["detail"]["code"] == "PAPER_NOT_APPROVED"
+
+
+def test_zip_downloads_no_longer_exist(client, world, ctx, make_staff, login, db_factory):
+    paper(db_factory, world, ctx, "Physics Mock", MIXED)
+    h = _staff(make_staff, login, Role.SUPER_ADMIN)
+    for path in ("papers/pdf", "papers/answer-keys"):
+        assert client.get(f"{API}/{path}", params={"provider_id": str(world["p1"])}, headers=h).status_code in (404, 405)
+
+
+def test_all_branches_lists_every_readable_branch_and_nothing_else(client, world, ctx, make_staff, login, db_factory):
+    paper(db_factory, world, ctx, "Branch one", MIXED)
+    paper(db_factory, world, ctx, "Branch two", MIXED, branch="p1b2")
+    paper(db_factory, world, ctx, "Branch of another provider", MIXED, provider="p2", branch="p2b1")
+
+    def titles(h, **params):
+        r = client.get(f"{API}/papers", params={"provider_id": str(world["p1"]), "q": "Branch", **params}, headers=h)       # not the fixture's own papers
+        assert r.status_code == 200, r.text
+        return sorted(x["title"] for x in r.json()["items"])
+
+    pa = _staff(make_staff, login, Role.PROVIDER_ADMIN, world["p1"])
+    assert titles(pa) == ["Branch one", "Branch two"]                                 # no duplicates, no other provider
+    assert titles(pa, q="two") == ["Branch two"]                                      # with the other filters
+    assert titles(pa, status="PUBLISHED", subject_id=str(ctx["phy"])) == ["Branch one", "Branch two"]
+    assert titles(pa, subject_id=str(uuid4())) == []
+    assert titles(pa, branch_id=str(world["p1b1"])) == ["Branch one"]                 # a named branch still wins
+    ba = _staff(make_staff, login, Role.BRANCH_ADMIN, world["p1"], world["p1b1"])
+    assert titles(ba) == ["Branch one"]                                               # never a sibling branch
+    assert client.get(f"{API}/papers", params={"branch_id": str(world["p1b2"])}, headers=ba).status_code == 403
+    assert titles(login(ctx["tphy"])) == ["Branch one"]                               # teaches this subject in that branch only
+    assert titles(login(ctx["tchem"])) == []                                          # teaches another subject
+    outsider = _staff(make_staff, login, Role.PROVIDER_ADMIN, world["p2"])
+    assert client.get(f"{API}/papers", params={"provider_id": str(world["p1"])}, headers=outsider).status_code == 403

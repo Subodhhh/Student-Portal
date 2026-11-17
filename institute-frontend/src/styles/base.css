@@ -1349,15 +1349,27 @@ button.chip {
   margin-top: var(--space-4);
 }
 
-/* Photo papers */
-.photo-list { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
-.photo-list li { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.photo-thumb { border: 1px solid var(--c-border); border-radius: 6px; padding: 0; background: none; cursor: zoom-in; }
-.photo-thumb img { display: block; width: 72px; height: 96px; object-fit: cover; border-radius: 6px; }
-.photo-question { border: 1px solid var(--c-border); border-radius: 8px; padding: var(--space-3); }
-.photo-question.needs-review { border-color: var(--c-warn, #b7791f); background: color-mix(in srgb, var(--c-warn, #b7791f) 6%, transparent); }
-
 /* A number that opens the list behind it (student counts). */
 .link-button { background: none; border: 0; padding: 0; color: var(--c-link, #1d4ed8); text-decoration: underline; cursor: pointer; font: inherit; }
 .link-button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .subject-providers { display: flex; flex-direction: column; gap: 2px; line-height: 1.35; }
+
+/* ---------------------------------------------------------------- typeset notation and the import preview */
+.math-display { display: block; margin: var(--space-2, 8px) 0; overflow-x: auto; }
+.math-inline .katex { font-size: 1.05em; }
+.math-fallback { background: var(--c-warn-soft); border-radius: 4px; padding: 0 4px; }
+.recognition-question { border-bottom: 1px solid var(--c-border); padding: var(--space-3, 12px) 0; }
+.recognition-field { border-left: 3px solid transparent; padding: 6px 0 6px 10px; margin: 6px 0; display: grid; gap: 6px; }
+.recognition-field.needs-attention { border-left-color: var(--c-warn); background: var(--c-warn-soft); }
+.recognition-original { white-space: pre-wrap; word-break: break-word; }
+.recognition-reasons { margin: 0; padding-left: 18px; }
+.recognition-actions { flex-wrap: wrap; gap: 12px; }
+.recognition-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.recognition-suggestions button { height: auto; min-height: 36px; white-space: normal; text-align: left; max-width: 100%; }
+.recognition-preview { padding: 6px 8px; border: 1px dashed var(--c-border); border-radius: 6px; }
+.recognition-field textarea { width: 100%; font: inherit; }
+.recognition-readings { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.recognition-readings li { display: grid; gap: 2px; max-width: 100%; }
+.recognition-completeness { width: 100%; margin: 0; }
+.question-picture { margin: 4px 0; }
+.question-picture img { max-width: min(100%, 520px); height: auto; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }

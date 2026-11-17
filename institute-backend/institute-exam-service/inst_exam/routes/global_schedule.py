@@ -35,9 +35,8 @@ from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.exams import (
     Exam, ExamPlan, GlobalPaperSubmission, GlobalTest, GlobalTestOccurrence, GlobalTestSubject, StudentExamAssignment,
 )
-from institute_common.models.org import Batch, Branch, Provider
+from institute_common.models.org import Provider
 from institute_common.models.papers import Paper, PaperVersion
-from institute_common.models.staff import Staff
 from institute_common.util import Strict, need_reason
 from inst_exam.routes import tests as daily
 from inst_exam.routes.exams import api_error_detail
@@ -45,6 +44,7 @@ from inst_exam.routes.global_tests import _is_platform, _require_platform, publi
 from inst_exam.routes.test_series import occurrences as month_occurrences
 from inst_exam.services import global_generation as gg
 from inst_exam.services import unified
+from inst_exam.services.names import names as lookup_names
 
 router = APIRouter(prefix="/api/v1", tags=["Global Test schedule"])
 UPLOAD = "paper.upload"
@@ -117,9 +117,12 @@ def _schedule_test(db: Session, p: Principal, test_id: UUID) -> GlobalTest:
 
 
 def _occurrence(db: Session, p: Principal, occurrence_id: UUID, *, lock: bool = False) -> tuple[GlobalTestOccurrence, GlobalTest]:
-    stmt = select(GlobalTestOccurrence).where(GlobalTestOccurrence.occurrence_id == occurrence_id)
-    occ = db.scalar(stmt.with_for_update() if lock else stmt)
-    test = db.get(GlobalTest, occ.test_id) if occ else None
+    if lock:
+        occ = db.scalar(select(GlobalTestOccurrence).where(GlobalTestOccurrence.occurrence_id == occurrence_id).with_for_update())
+        test = db.get(GlobalTest, occ.test_id) if occ else None
+    else:                                               # the date and its test in one statement (same rows as the two lookups)
+        occ, test = db.execute(select(GlobalTestOccurrence, GlobalTest).outerjoin(GlobalTest, GlobalTest.test_id == GlobalTestOccurrence.test_id)
+                               .where(GlobalTestOccurrence.occurrence_id == occurrence_id)).first() or (None, None)
     if not occ or not test or (not _is_platform(p) and (occ.status == "DRAFT" or test.status == "DRAFT" or not _applies(db, p, test))):
         raise api_error(404, "NOT_FOUND", "Scheduled Global Test not found.")
     return occ, test
@@ -208,27 +211,24 @@ def _occ_out(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
 
 
 def _prefetch_papers(db: Session, subs) -> None:
-    """The submissions' paper versions and papers in two statements (then served by the session's identity map to db.get)."""
+    """The submissions' paper versions and their papers in one statement (then served by the session's identity map to db.get)."""
     have = db.info.setdefault("prefetched_versions", set())
     vids = {s.paper_version_id for s in subs} - have
     have |= vids
     if vids:
-        versions = db.scalars(select(PaperVersion).where(PaperVersion.paper_version_id.in_(vids))).all()
-        papers = db.scalars(select(Paper).where(Paper.paper_id.in_({v.paper_id for v in versions} or {None}))).all()
-        db.info.setdefault("prefetched", []).extend(versions + papers)    # the identity map holds objects weakly: keep them for the request
+        rows = db.execute(select(PaperVersion, Paper).outerjoin(Paper, Paper.paper_id == PaperVersion.paper_id)
+                          .where(PaperVersion.paper_version_id.in_(vids))).all()
+        db.info.setdefault("prefetched", []).extend(x for row in rows for x in row if x is not None)   # the identity map holds objects weakly: keep them for the request
 
 
 def _subs_out(db: Session, p: Principal, subs: list[GlobalPaperSubmission]) -> list[dict]:
     if not subs:
         return []
     _prefetch_papers(db, subs)
-    names = dict(db.execute(select(Subject.subject_id, Subject.name).where(Subject.subject_id.in_({s.subject_id for s in subs}))).all())
-    providers = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_({s.provider_id for s in subs}))).all())
-    branch_ids = {s.branch_id for s in subs} | {UUID(b) for s in subs for b in s.audience.get("whole_branch_ids", [])}
-    branches = dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids))).all())
-    batch_ids = {UUID(b) for s in subs for b in s.audience.get("batch_ids", [])}
-    batch_names = dict(db.execute(select(Batch.batch_id, Batch.name).where(Batch.batch_id.in_(batch_ids or {None}))).all())
-    people = dict(db.execute(select(Staff.staff_id, Staff.full_name).where(Staff.staff_id.in_({s.submitted_by for s in subs}))).all())
+    found = lookup_names(db, subjects={s.subject_id for s in subs}, providers={s.provider_id for s in subs},     # one statement
+                         branches={s.branch_id for s in subs} | {UUID(b) for s in subs for b in s.audience.get("whole_branch_ids", [])},
+                         batches={UUID(b) for s in subs for b in s.audience.get("batch_ids", [])}, staff={s.submitted_by for s in subs})
+    names, providers, branches, batch_names, people = (found[k] for k in ("subjects", "providers", "branches", "batches", "staff"))
     out = []
     for s in subs:
         v = db.get(PaperVersion, s.paper_version_id)
@@ -425,8 +425,14 @@ def global_schedule(when: str = Query(default="upcoming", pattern="^(upcoming|pa
 def get_occurrence(occurrence_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     db.info["audience_snapshot"] = True     # this read-only page resolves every submission (twice): one input snapshot for its providers
     occ, t = _occurrence(db, p, occurrence_id)
-    subs = db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id)
-                      .order_by(GlobalPaperSubmission.submitted_at)).all()           # the date's submissions, read once for the whole page
+    # the date's submissions, read once for the whole page, with their paper versions and papers (what _prefetch_papers would read next)
+    rows = db.execute(select(GlobalPaperSubmission, PaperVersion, Paper)
+                      .outerjoin(PaperVersion, PaperVersion.paper_version_id == GlobalPaperSubmission.paper_version_id)
+                      .outerjoin(Paper, Paper.paper_id == PaperVersion.paper_id)
+                      .where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id).order_by(GlobalPaperSubmission.submitted_at)).all()
+    subs = [s for s, _v, _p in rows]
+    db.info.setdefault("prefetched", []).extend(x for _s, v, pp in rows for x in (v, pp) if x is not None)   # keep them for the request
+    db.info.setdefault("prefetched_versions", set()).update(s.paper_version_id for s in subs)
     db.info.setdefault("occurrence_submissions", {})[occ.occurrence_id] = subs
     db.info["audience_snapshot_providers"] = {s.provider_id for s in subs if s.status == "ACTIVE"}
     out = _occ_out(db, p, occ, t, detail=True, all_subs=subs)
@@ -436,10 +442,15 @@ def get_occurrence(occurrence_id: UUID, p: Principal = Depends(get_principal), d
         plans = db.scalars(select(ExamPlan).where(ExamPlan.global_occurrence_id == occ.occurrence_id)).all()
         visible = {x.plan_id for x in (daily.visible_plans(db, p, plans) if not _is_platform(p) else plans)}
         out["exams"] = []
-        exams = db.scalars(select(Exam).where(Exam.plan_id.in_([x.plan_id for x in plans] or [None]))).all()
-        unified.prefetch_unified_exams(db, [e.exam_id for e in exams])                  # one statement, not one per exam
-        counts = dict(db.execute(select(StudentExamAssignment.exam_id, func.count()).where(StudentExamAssignment.exam_id.in_([e.exam_id for e in exams] or [None]))
-                                 .group_by(StudentExamAssignment.exam_id)).all())
+        # the exams with whether each is unified and its assignment count, in one statement
+        assigned_count = (select(func.count()).where(StudentExamAssignment.exam_id == Exam.exam_id).correlate(Exam).scalar_subquery())
+        rows = db.execute(select(Exam, unified.unified_exam_clause(Exam.exam_id).label("unified"), assigned_count.label("assigned"))
+                          .where(Exam.plan_id.in_([x.plan_id for x in plans] or [None]))
+                          .order_by(Exam.created_at, Exam.exam_id)).all()             # a stable order: oldest exam first
+        exams = [e for e, _u, _n in rows]
+        db.info.setdefault("unified_exam", {}).update({e.exam_id: bool(u) for e, u, _n in rows})   # what prefetch_unified_exams caches
+        unified.prefetch_scopes(db, p, "exam.read", [e for e in exams if unified.is_unified_exam(db, e.exam_id)])
+        counts = {e.exam_id: n for e, _u, n in rows if n}
         for e in exams:
             if unified.is_unified_exam(db, e.exam_id):      # by contribution: own subjects' students only, never by anchor
                 s = unified.scope(db, p, "exam.read", e)
@@ -523,19 +534,21 @@ def coverage(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
     """Per provider (in the caller's scope) and subject of the test: usable submissions, students covered now, and what is missing.
     Teachers see only their own subjects' rows computed from their own submissions."""
     subjects = _subjects(db, test.test_id)
-    if _is_platform(p):
-        providers = sorted({x for (x,) in db.execute(select(ProviderSubject.provider_id).where(
-            ProviderSubject.subject_id.in_([s for s, _ in subjects] or [None])))}, key=str)
-    else:
-        providers = sorted(_my_providers(p), key=str)
-    names = dict(db.execute(select(Provider.provider_id, Provider.name).where(Provider.provider_id.in_(providers or [None]))).all())
+    # the providers' offered subjects and names in one statement; only a provider offering a subject can have a row below, so it
+    # is the only one whose name is needed (platform: every provider offering one of the test's subjects)
+    scope = (ProviderSubject.provider_id.in_(select(ProviderSubject.provider_id).where(ProviderSubject.subject_id.in_([s for s, _ in subjects] or [None])))
+             if _is_platform(p) else ProviderSubject.provider_id.in_(_my_providers(p) or [None]))
+    offered_rows = db.execute(select(ProviderSubject.provider_id, ProviderSubject.subject_id, Provider.name)
+                              .outerjoin(Provider, Provider.provider_id == ProviderSubject.provider_id).where(scope)).all()
+    providers = sorted({x for x, _s, _n in offered_rows} if _is_platform(p) else _my_providers(p), key=str)
+    names = {x: n for x, _s, n in offered_rows}
     loaded = db.info.get("occurrence_submissions", {}).get(occ.occurrence_id)
     active = ([s for s in loaded if s.status == "ACTIVE"] if loaded is not None else
               db.scalars(select(GlobalPaperSubmission).where(GlobalPaperSubmission.occurrence_id == occ.occurrence_id,
                                                              GlobalPaperSubmission.status == "ACTIVE")).all())   # once, not per provider and subject
     _prefetch_papers(db, active)
     offered_by: dict = {}
-    for prov, subj in db.execute(select(ProviderSubject.provider_id, ProviderSubject.subject_id).where(ProviderSubject.provider_id.in_(providers or [None]))):
+    for prov, subj, _n in offered_rows:
         offered_by.setdefault(prov, set()).add(subj)
     out = []
     for prov in providers:

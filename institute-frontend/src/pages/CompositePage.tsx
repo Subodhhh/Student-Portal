@@ -4,7 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
 import NeedBranch from "../components/NeedBranch";
 import { Alert, Button, Card, DataTable, EmptyState, Modal, PageHeader, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "../components/ui";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 
 type Subject = { subject_id: string; name: string };
@@ -20,7 +20,7 @@ export default function CompositePage() {
   const canRequest = can("examplan.manage");
   const [chosen, setChosen] = useState("");
   const tab = chosen || (canRequest ? "requests" : "invitations");     // derived, so it is right even before the session has loaded
-  const subjects = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
   const subjectName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
   return (
     <>

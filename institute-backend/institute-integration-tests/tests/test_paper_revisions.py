@@ -143,3 +143,112 @@ def test_revised_papers_work_in_exam_generation_with_their_exact_version(client,
     with db_factory() as db:
         assert {v.version_no: v.status for v in db.query(PaperVersion).all()} == {1: "PUBLISHED", 2: "VALIDATED"}
     assert v2["version_no"] == 2
+
+
+def test_a_corrected_formula_is_stored_typeset_and_an_unreadable_one_is_refused(client, world, setup, admin, db_factory):
+    from institute_common.models.papers import PaperVersion
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    r = revise(client, admin, v1, [{"position": 1, "stem": r"\int \frac{\ln x}{x}\,dx", "option_a": "½(ln x)²+C", "option_b": "x/ln x+C",
+                                    "explanation": "By parts: xe^x−∫e^x dx."}])
+    assert r.status_code == 201, r.text
+    q = detail(client, admin, r.json()["paper_version_id"])["questions"][0]
+    assert q["stem"] == r"\(\int \frac{\ln x}{x}\,dx\)"
+    assert q["option_a"] == r"\(\frac{1}{2}(\ln x)^{2} + C\)" and q["option_b"] == r"\(\frac{x}{\ln x} + C\)"
+    assert q["explanation"] == r"By parts: \(xe^{x} - \int e^{x}\,dx\)."
+    with db_factory() as db:
+        before = db.query(PaperVersion).count()
+    bad = revise(client, admin, v1, [{"position": 1, "stem": "∫ln x dx/x"}])
+    body = bad.json().get("detail", bad.json())
+    assert bad.status_code == 422 and body["code"] == "REVISION_INVALID", bad.text
+    assert body["errors"][0]["field"] == "question" and body["errors"][0]["row"] == 1 and "AMBIGUOUS" not in body["errors"][0]["message"]
+    with db_factory() as db:
+        assert db.query(PaperVersion).count() == before
+
+
+def test_a_corrected_derivative_is_stored_typeset(client, world, setup, admin):
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    r = revise(client, admin, v1, [{"position": 1, "stem": "Find d[(x²+1)/(x−1)]/dx.", "option_a": "(x²−2x−1)/(x−1)²",
+                                    "explanation": "Derivative is cos x/sin x."}])
+    assert r.status_code == 201, r.text
+    q = detail(client, admin, r.json()["paper_version_id"])["questions"][0]
+    assert q["stem"] == r"Find \(\frac{d[\frac{x^{2} + 1}{x - 1}]}{dx}\)."
+    assert q["option_a"] == r"\(\frac{x^{2} - 2x - 1}{(x - 1)^{2}}\)" and q["explanation"] == r"Derivative is \(\frac{\cos x}{\sin x}\)."
+    bad = revise(client, admin, v1, [{"position": 1, "stem": "Find sin x/x."}])
+    assert bad.status_code == 422, bad.text
+
+
+def test_a_corrected_matrix_is_stored_typeset_like_an_imported_one(client, world, setup, admin):
+    from inst_paper.services.math import recognise
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    r = revise(client, admin, v1, [{"position": 1, "stem": "Inverse of [[1,0],[0,2]].", "option_a": "[[1,0],[0,2]]",
+                                    "option_b": "[[1,0],[0,1/2]]", "explanation": "If A = [[1,0],[0,2]], take reciprocals."}])
+    assert r.status_code == 201, r.text
+    q = detail(client, admin, r.json()["paper_version_id"])["questions"][0]
+    m = r"\begin{bmatrix}1 & 0 \\ 0 & 2\end{bmatrix}"
+    assert q["stem"] == rf"Inverse of \({m}\)." and q["option_a"] == rf"\({m}\)"
+    assert q["option_b"] == r"\(\begin{bmatrix}1 & 0 \\ 0 & \frac{1}{2}\end{bmatrix}\)"
+    assert q["explanation"] == rf"If \(A = {m}\), take reciprocals."
+    assert q["option_a"] == recognise("[[1,0],[0,2]]", formula_field=True).text          # correction == import
+    bad = revise(client, admin, v1, [{"position": 1, "option_a": "[[1,0],[0]]"}])
+    assert bad.status_code == 422, bad.text
+
+
+def test_the_correction_preview_shows_exactly_what_saving_stores(client, world, setup, admin, make_staff, login):
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    for text, field in (("∫ (ln x)/x dx", "question"), ("x/ln x+C", "option_a"), ("If A = [[1,0],[0,2]], take reciprocals.", "explanation")):
+        pv = client.post(f"{API}/paper-versions/{v1}/recognition-preview", json={"text": text, "field": field}, headers=admin)
+        assert pv.status_code == 200, pv.text
+        assert pv.json()["outcome"] == "CONVERTED" and pv.json()["original"] == text
+        key = {"question": "stem"}.get(field, field)
+        saved = revise(client, admin, v1, [{"position": 1, key: text}])
+        assert saved.status_code == 201, saved.text
+        assert detail(client, admin, saved.json()["paper_version_id"])["questions"][0][key] == pv.json()["text"]
+    doubt = client.post(f"{API}/paper-versions/{v1}/recognition-preview", json={"text": "ex / x + 4", "field": "option_b"}, headers=admin).json()
+    assert doubt["outcome"] == "NEEDS_REVIEW" and doubt["reasons"] == ["FLATTENED_POWER"] and len(doubt["suggestions"]) == 2
+    assert doubt["spans"][0]["reason"]                                    # the reason is shown with the preview
+    span = doubt["spans"][0]                                              # where the doubt is, and what a teacher is told about it
+    assert doubt["original"][span["start"]:span["end"]] == span["original"] and "FLATTENED" not in span["explanation"]
+    # bad input is refused; another provider may not preview against this paper (the same rules as saving)
+    assert client.post(f"{API}/paper-versions/{v1}/recognition-preview", json={"text": "x²", "field": "topic"}, headers=admin).status_code == 422
+    assert client.post(f"{API}/paper-versions/{v1}/recognition-preview", json={"text": "x" * 5001, "field": "question"},
+                       headers=admin).status_code == 422
+    _, pa2 = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
+    assert client.post(f"{API}/paper-versions/{v1}/recognition-preview", json={"text": "x²", "field": "question"},
+                       headers=login(pa2)).status_code in (403, 404)
+
+
+def test_the_import_review_preview_uses_the_subjects_rules(client, world, setup, admin, make_staff, login):
+    url = f"{API}/branches/{world['p1b1']}/subjects/{setup['phy']}/recognition-preview"
+    r = client.post(url, json={"text": "Find e^(x) / x + 4.", "field": "question"}, headers=admin)
+    assert r.status_code == 200 and r.json()["text"] == r"Find \(\frac{e^{x}}{x} + 4\).", r.text
+    _, pa2 = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
+    assert client.post(url, json={"text": "x²", "field": "question"}, headers=login(pa2)).status_code == 403
+
+
+def test_a_correction_records_every_field_before_and_after_in_the_audit(client, world, setup, admin, db_factory):
+    from institute_common.models.staff import AuditLog
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    before = detail(client, admin, v1)["questions"][0]
+    r = revise(client, admin, v1, [{"position": 1, "stem": "Evaluate x^2 + 1 at x = 2.", "correct_option": "C"}], reason="Formatting check")
+    assert r.status_code == 201, r.text
+    with db_factory() as db:
+        row = db.query(AuditLog).filter_by(action="paper.revise", outcome="SUCCESS").one()
+        fields = {f["field"]: f for f in row.details["fields"]}
+    assert set(fields) == {"stem", "correct_option"} and all(f["position"] == 1 for f in fields.values())
+    assert fields["stem"]["before"] == before["stem"] and fields["stem"]["after"] == r"Evaluate \(x^{2} + 1\) at \(x = 2\)."
+    assert fields["correct_option"] == {"position": 1, "field": "correct_option", "before": before["correct_option"], "after": "C"}
+    assert row.reason == "Formatting check" and row.actor_staff_id is not None
+
+
+def test_correcting_only_an_explanation_creates_the_next_version(client, world, setup, admin):
+    v1 = upload(client, admin, world, setup).json()["paper_version_id"]
+    r = revise(client, admin, v1, [{"position": 1, "explanation": "By parts: xe^x−∫e^x dx."}])
+    assert r.status_code == 201, r.text                                   # not refused as a duplicate of itself
+    v2 = r.json()
+    assert v2["paper_id"] == detail(client, admin, v1)["paper_id"] and v2["version_no"] == 2
+    assert detail(client, admin, v2["paper_version_id"])["questions"][0]["explanation"] == r"By parts: \(xe^{x} - \int e^{x}\,dx\)."
+    assert revise(client, admin, v1, [{"position": 1, "explanation": "By parts: xe^x−∫e^x dx."}]).status_code == 409   # but not twice
+    v3 = revise(client, admin, v2["paper_version_id"], [{"position": 1, "explanation": "Integrate by parts once."}])
+    assert v3.status_code == 201 and v3.json()["version_no"] == 3, v3.text  # a different explanation again is a new version
+    back = revise(client, admin, v3.json()["paper_version_id"], [{"position": 1, "explanation": "Basic sum"}])
+    assert back.status_code == 409 and back.json()["detail"]["paper_version_id"] == v1, back.text      # identical to v1 again

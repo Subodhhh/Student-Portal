@@ -122,3 +122,159 @@ def test_visibility_grants_nothing_else(client, world, tv, login):
     assert client.post(f"{API}/exams/{t['exam_id']}/publish", headers=h).status_code == 403
     assert client.post(f"{API}/global-test-contributions/{uuid.uuid4()}/approve", json={}, headers=h).status_code == 403
     assert "test.create" not in client.get(f"{API}/auth/me", headers=h).json()["permissions"]
+
+
+def test_bulk_teacher_scope_equals_the_per_plan_rule_with_a_fixed_number_of_statements(client, world, tv, login, db_factory, make_staff):
+    """The Scheduled Tests list decides every plan's teacher visibility at once (teacher_scope.plans_students): same students as the
+    per-plan rule (plan_students) for every teacher and plan, including a plan with no exam yet and a teacher at two providers, the
+    same list across pages, and a statement count that does not grow with the number of plans that have an exam."""
+    from sqlalchemy import event, select
+    from institute_common.core.security import Principal, load_principal
+    from institute_common.models.academics import TeacherSubjectAssignment
+    from institute_common.models.exams import Exam, ExamPlan
+    from institute_common.models.staff import Staff
+    from inst_exam.services import teacher_scope
+    for i, batch in enumerate(("batch_a", "batch_b", "batch_a")):
+        physics_chemistry(client, login, world, tv, f"Test {i}", batches=(batch,))
+    h = login(tv["pa"])
+    assert create_series(client, h, series(world, tv, audience=aud(world, tv, batches=("batch_b",)))).status_code == 201
+    # plans without an exam for every audience shape: whole branch, several batches, listed students, a mix across both branches, and
+    # class targets (only STU000001's enrollment is in Class 11, STU000002's in Class 12, the others have no profile)
+    from institute_common.models.academics import EnrollmentAcademicProfile
+    from institute_common.models.org import Enrollment
+    with db_factory() as db:
+        for sid, code in (("STU000001", "11TH"), ("STU000002", "12TH")):
+            for (eid,) in db.execute(select(Enrollment.enrollment_id).where(Enrollment.student_id == sid, Enrollment.provider_id == world["p1"])):
+                db.add(EnrollmentAcademicProfile(enrollment_id=eid, class_level=code, academic_year="2026-2027"))
+        db.commit()
+    shapes = [(aud(world, tv, whole=("p1b1",)), None), (aud(world, tv, batches=("batch_a", "batch_b")), None),
+              (aud(world, tv, students=("STU000002", "STU000004")), None),
+              (aud(world, tv, branches=("p1b1", "p1b2"), whole=("p1b2",), batches=("batch_b",), students=("STU000001",)), None),
+              (aud(world, tv, whole=("p1b1",)), "11th"), (aud(world, tv, batches=("batch_a", "batch_b")), "12th")]
+    for i, (audience, cls) in enumerate(shapes):
+        body = series(world, tv, audience=audience, name=f"Weekly {i}", **({"target_class": cls} if cls else {}))
+        r = create_series(client, h, body, key=f"weekly-bulk-{i:04d}")
+        assert r.status_code == 201, r.text
+    # a teacher at two providers who teaches Physics only at the other provider: nothing of p1's tests is theirs
+    two_id, two = make_staff([(Role.TEACHER, world["p1"], None), (Role.TEACHER, world["p2"], None)])
+    with db_factory() as db:
+        db.add(TeacherSubjectAssignment(staff_id=two_id, provider_id=world["p2"], branch_id=world["p2b1"], subject_id=tv["phy"]))
+        db.commit()
+    teachers = [tv[k] for k in ("t_phy_a", "t_phy_b", "t_chem_a", "t_bio", "t_phy_b2")] + [two]
+    with db_factory() as db:
+        plans = list(db.scalars(select(ExamPlan).order_by(ExamPlan.created_at)))
+        with_exam = [pl for pl in plans if db.scalar(select(Exam.exam_id).where(Exam.plan_id == pl.plan_id).limit(1))]
+        assert len(with_exam) >= 3 and len(with_exam) < len(plans)                   # some plans have no exam yet
+        statements = []
+        event.listen(db.get_bind(), "before_cursor_execute", lambda *a: statements.append(1))
+        # the bulk inputs + provider snapshot give every plan without an exam exactly the audience gen.eligible_students resolves alone
+        from inst_exam.services import exam_generation as gen
+        no_exam = [pl for pl in plans if pl not in with_exam]
+        inputs = gen.eligible_inputs(db, [pl.plan_id for pl in no_exam])
+        plain = {pl.plan_id: gen.eligible_students(db, pl) for pl in no_exam}
+        db.info["audience_snapshot"] = True
+        assert {pl.plan_id: gen.eligible_students(db, pl, inputs=inputs[pl.plan_id]) for pl in no_exam} == plain
+        assert any(plain.values()) and len(no_exam) >= 5
+        del db.info["audience_snapshot"]
+        for code in teachers:
+            staff_id = db.scalar(select(Staff.staff_id).where(Staff.staff_code == code))
+            p = Principal(*load_principal(db, staff_id), "s", "", "127.0.0.1")
+            bulk = teacher_scope.plans_students(db, p, plans)
+            assert bulk == {pl.plan_id: teacher_scope.plan_students(db, p, pl) for pl in plans}, code
+            if code == two:
+                assert not any(bulk.values())                                        # no cross-provider exposure
+            for subset in (with_exam, no_exam):                                      # fixed, whatever the number of plans
+                del statements[:]
+                teacher_scope.plans_students(db, p, subset[:1])
+                one = len(statements)
+                del statements[:]
+                teacher_scope.plans_students(db, p, subset)
+                # only an audience listing students reads them per plan (resolve_audience's STUDENTS rule has no snapshot)
+                listed = sum(1 for pl in subset[1:] if inputs.get(pl.plan_id, {}).get("students"))
+                assert len(statements) <= one + listed, (code, one, listed, len(statements))
+            assert "audience_snapshot" not in db.info                                # the opt-in never outlives the check
+    for code in teachers:                                                            # pages of 2 make up the whole list, in order
+        h = login(code)
+        whole = [x["name"] for x in client.get(f"{API}/tests?page_size=100", headers=h).json()["items"]]
+        paged = []
+        for page in range(1, 50):
+            chunk = [x["name"] for x in client.get(f"{API}/tests?page={page}&page_size=2", headers=h).json()["items"]]
+            if not chunk:
+                break
+            paged += chunk
+        assert paged == whole, code
+
+
+def test_prefetched_teacher_exam_checks_equal_the_per_exam_rule(client, world, tv, login, db_factory, make_staff):
+    """exam_access's teacher check (teacher_scope.exam_students) for a list of exams reads its inputs once (prefetch_exam_students): the
+    same students for every teacher, exam and branch filter as the per-exam reads, nothing read per exam afterwards, a statement count
+    that does not grow with the number of exams, and unchanged refusals (403 + authz.denied) for an exam a teacher may not read."""
+    from sqlalchemy import event, func, select
+    from institute_common.core.security import Principal, load_principal
+    from institute_common.models.academics import TeacherSubjectAssignment
+    from institute_common.models.staff import AuditLog
+    from institute_common.models.exams import Exam
+    from institute_common.models.staff import Staff
+    from inst_exam.services import teacher_scope
+    made = [physics_chemistry(client, login, world, tv, f"Exam {i}", batches=batches)
+            for i, batches in enumerate((("batch_a",), ("batch_b",), ("batch_a", "batch_b")))]
+    two_id, two = make_staff([(Role.TEACHER, world["p1"], None), (Role.TEACHER, world["p2"], None)])
+    multi_id, multi = make_staff([(Role.TEACHER, world["p1"], None)])                   # two subjects, two branches
+    with db_factory() as db:
+        db.add(TeacherSubjectAssignment(staff_id=two_id, provider_id=world["p2"], branch_id=world["p2b1"], subject_id=tv["phy"]))
+        db.add(TeacherSubjectAssignment(staff_id=multi_id, provider_id=world["p1"], branch_id=world["p1b1"], subject_id=tv["chem"], batch_id=tv["batch_b"]))
+        db.add(TeacherSubjectAssignment(staff_id=multi_id, provider_id=world["p1"], branch_id=world["p1b2"], subject_id=tv["phy"]))
+        db.commit()
+    teachers = [tv[k] for k in ("t_phy_a", "t_phy_b", "t_chem_a", "t_bio", "t_phy_b2")] + [two, multi]
+    branches = (None, world["p1b1"], world["p1b2"], world["p2b1"])
+    seen = set()
+    for code in teachers:
+        with db_factory() as db:
+            staff_id = db.scalar(select(Staff.staff_id).where(Staff.staff_code == code))
+            p = Principal(*load_principal(db, staff_id), "s", "", "127.0.0.1")
+            exams = list(db.scalars(select(Exam).order_by(Exam.created_at)))
+            plain = {(e.exam_id, b): teacher_scope.exam_students(db, p, e, b) for e in exams for b in branches}
+        with db_factory() as db:
+            p = Principal(*load_principal(db, staff_id), "s", "", "127.0.0.1")
+            exams = list(db.scalars(select(Exam).order_by(Exam.created_at)))
+            statements = []
+            count = lambda *a, _seen=statements: _seen.append(1)  # noqa: E731
+            event.listen(db.get_bind(), "before_cursor_execute", count)
+            teacher_scope.prefetch_exam_students(db, p, exams[:1])
+            one = len(statements)
+            db.info.pop("teacher_exam_inputs"); db.info.pop("teacher_exam_memberships", None)
+            del statements[:]
+            teacher_scope.prefetch_exam_students(db, p, exams)
+            assert len(statements) <= one + 1, (code, one, len(statements))               # +1: memberships once any exam is taught
+            del statements[:]
+            assert {(e.exam_id, b): teacher_scope.exam_students(db, p, e, b) for e in exams for b in branches} == plain, code
+            assert statements == []                                                        # answered from the request's reads
+            event.remove(db.get_bind(), "before_cursor_execute", count)
+        if code == two:
+            assert not any(plain.values())                                                 # no cross-provider exposure
+        seen |= {k for k, v in plain.items() if v}
+    assert seen                                                                            # some teacher does see students
+    # refusals are unchanged: an exam the teacher may not read answers 403 and is audited, also after a list prefetched it
+    h = login(tv["t_bio"])
+    assert client.get(f"{API}/exams", headers=h).json()["items"] == []
+    with db_factory() as db:
+        before = db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "authz.denied"))
+    assert client.get(f"{API}/exams/{made[0]['exam_id']}", headers=h).status_code == 403
+    with db_factory() as db:
+        assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "authz.denied")) == before + 1
+    # every list a teacher reads is the same across page sizes, in order
+    for code in teachers:
+        h = login(code)
+        for path in ("/exams", f"/branches/{world['p1b1']}/exams", "/tests"):
+            full = client.get(f"{API}{path}?page_size=100", headers=h)
+            if full.status_code != 200:                                    # e.g. a branch the teacher does not teach in: refused
+                assert full.status_code == 403 and client.get(f"{API}{path}?page=1&page_size=2", headers=h).status_code == 403, (code, path)
+                continue
+            whole = [x.get("exam_id") or x.get("plan_id") for x in full.json()["items"]]
+            paged = []
+            for page in range(1, 50):
+                chunk = [x.get("exam_id") or x.get("plan_id") for x in client.get(f"{API}{path}?page={page}&page_size=2", headers=h).json()["items"]]
+                if not chunk:
+                    break
+                paged += chunk
+            assert paged == whole, (code, path)

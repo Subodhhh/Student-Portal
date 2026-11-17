@@ -1,17 +1,15 @@
-"""Global Test schedule + photo papers in a REAL browser, on DISPOSABLE infrastructure
+"""Global Test schedule + a teacher's Excel paper with a picture, in a REAL browser, on DISPOSABLE infrastructure
 (run: tests/e2e/pipeline_disposable.sh global_schedule_ui_disposable.py).
 
 Like test_types_ui_disposable.py: the Institute services run in-process behind the in-process gateway and serve a production build of
 the Institute portal; the six real Student services run as processes on a throwaway PostgreSQL, and a production build of the STUDENT
-portal is served on a second origin that proxies to them. Photo OCR is the real Tesseract code of this revision, run inside the
-institute-paper-service image (the host has no Tesseract). Chromium (Playwright run-server container) drives both portals:
+portal is served on a second origin that proxies to them. Chromium (Playwright run-server container) drives both portals:
 tests/e2e/global_schedule_ui_browser.py (phase "staff", then phase "student"). This driver creates the starting data through the
 APIs, simulates the clock reaching the first date's paper deadline (the only time shift), runs the worker's generation, and checks in
-the database and through the Student services what the browser did.
+the database and through the Student services what the browser did. Teacher Tara's paper is an ordinary Question Bank upload: an .xlsx
+with a picture inserted into a question's image cell and a separate answer key (pictures are never read: OCR was removed 2026-11-16).
 
-Photos are SYNTHETIC phone-camera-like images (tests/e2e/phone_photos.py), not photos taken with a real phone.
-
-Needs: Docker, the images mcr.microsoft.com/playwright/python:v1.48.0-noble and institute-paper-service:latest, npm, and a Python with
+Needs: Docker, the image mcr.microsoft.com/playwright/python:v1.48.0-noble, npm, and a Python with
 playwright==1.48 for the browser script (PW_PYTHON, default: python3).
 """
 import hashlib
@@ -24,7 +22,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 DB, KEY, AUTH_LOG = os.environ["PIPELINE_DB"], os.environ["PIPELINE_KEY"], Path(os.environ["PIPELINE_AUTH_LOG"])
 if not re.search(r"@127\.0\.0\.1:\d+/pipeline_verify$", DB):
@@ -46,15 +44,13 @@ import tests.conftest  # noqa: F401  (service paths + test settings; the databas
 import uvicorn
 from fastapi.testclient import TestClient
 from inst_enrollment.services import reference_sync
-from inst_exam.services import global_generation, notify, outbox
-from inst_paper.services import extraction
+from inst_exam.services import global_generation, global_layout, notify, outbox
 from institute_common.core import email, redis_store
 from institute_common.core.passwords import hash_password
 from institute_common.database import get_db
 from institute_common.internal_http import set_peer_client
 from institute_common.models.staff import Staff, StaffRoleAssignment
 from institute_common.ownership import attach_guard
-from phone_photos import blank_photo, phone_photo
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from tests.gateway import SERVICES
@@ -75,7 +71,7 @@ def check(name, ok, detail=""):
 def summary():
     failed = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} driver checks passed" + (f"; FAILED: {failed}" if failed else ""), flush=True)
-    subprocess.run(["docker", "rm", "-f", "gs-pw", "gs-ocr"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", "gs-pw"], capture_output=True)
     os._exit(1 if failed else 0)
 
 
@@ -121,30 +117,6 @@ for name, service_app in SERVICES.items():
     service_app.dependency_overrides[get_db] = override
     set_peer_client(name, TestClient(service_app, base_url=f"http://{name}"))
 
-
-# ------------------------------------------------------------------ real Tesseract (this revision's code) inside the paper-service image
-OCR_SNIPPET = ("import sys, json\nfrom inst_paper.services.ocr_tesseract import TesseractBackend\n"
-               "data = sys.stdin.buffer.read()\nprint(json.dumps(TesseractBackend().read_lines(data, sys.argv[1])))\n")
-subprocess.run(["docker", "rm", "-f", "gs-ocr"], capture_output=True)
-subprocess.run(["docker", "run", "-d", "--name", "gs-ocr", "-w", "/", "-v", f"{ROOT / 'institute-backend'}:/src:ro", "-e", "DATABASE_URL=sqlite://",
-                "-e", "PYTHONPATH=/src/institute-paper-service:/src/institute-common", "institute-paper-service:latest", "sleep", "infinity"],
-               check=True, capture_output=True)
-
-
-class DockerTesseract:
-    """The paper service's OCR backend, executed by the real TesseractBackend in the paper-service image."""
-
-    def read_lines(self, data: bytes, mime: str) -> list[list]:
-        r = subprocess.run(["docker", "exec", "-i", "gs-ocr", "python", "-c", OCR_SNIPPET, mime], input=data, capture_output=True, timeout=120)
-        if r.returncode:
-            raise RuntimeError(r.stderr.decode()[-300:])
-        return json.loads(r.stdout)
-
-    def extract_text(self, data: bytes, mime: str) -> str:
-        return "\n".join(t for t, *_ in self.read_lines(data, mime))
-
-
-extraction.set_ocr_backend(DockerTesseract())
 
 with factory() as db:
     sa = Staff(staff_code="STF000001", email="owner@example.com", full_name="Platform Owner", password_hash=hash_password(PW), status="ACTIVE",
@@ -252,7 +224,9 @@ with TestClient(gateway, base_url="http://localhost") as c:
 
     PV_TOM = csv_paper(c, login(c, TB["staff_code"]), B1, PHY, "T", 4, "Tom Physics Set")
     PV_BA_CHE = csv_paper(c, login(c, BA["staff_code"]), B1, CHE, "B", 3, "Pune Chemistry Set")
-    PV_PA_CHE = csv_paper(c, login(c, PA["staff_code"]), B2, CHE, "M", 3, "Mumbai Chemistry Draft", approve=False)   # never approved
+    hpa = login(c, PA["staff_code"])
+    PV_PA_CHE = csv_paper(c, hpa, B2, CHE, "M", 3, "Mumbai Chemistry Draft", approve=False)   # never approved
+    PV_PA_NCHE = csv_paper(c, hpa, B1, CHE, "N", 3, "North Chemistry Set")                     # approved: a second Pune Chemistry paper
     PV_TUTOR = csv_paper(c, login(c, TU["staff_code"]), B3, BIO, "R", 2, "Ravi Biology Set")
     check("set-up: platform Admin, 2 providers (one a tutor without batches), Branch Admin, 2 Physics teachers, 5 students, 4 papers", True)
 
@@ -345,31 +319,58 @@ FWD = ("import asyncio\nasync def pipe(r, w):\n    try:\n        while data := a
 subprocess.run(["docker", "exec", "-d", "gs-pw", "python3", "-c", FWD], check=True)
 time.sleep(2)
 
-# photos: the browser script uploads them from this folder (Playwright sends the files to the remote browser)
-PHOTOS = WORK / "photos"
-PHOTOS.mkdir(exist_ok=True)
-PAGE1 = ["Physics - Weekly Paper", "", "1. What is the SI unit of force?", "A) Newton", "B) Joule", "C) Watt", "D) Pascal", "",
-         "2. Which quantity is a vector?", "A) Mass", "B) Speed", "C) Velocity", "D) Energy"]
-PAGE2 = ["3. What is the unit of electric charge?", "A) Volt", "B) Coulomb", "C) Ohm", "D) Ampere", "",
-         "4. Light travels fastest in which medium?", "A) Glass", "B) Water", "C) Vacuum", "D) Diamond"]
+# Tara's paper: the browser script uploads these files from this folder (Playwright sends the files to the remote browser)
+FILES = WORK / "files"
+FILES.mkdir(exist_ok=True)
 EXPECTED = [{"question": "What is the SI unit of force?", "options": ["Newton", "Joule", "Watt", "Pascal"], "correct": "A"},
             {"question": "Which quantity is a vector?", "options": ["Mass", "Speed", "Velocity", "Energy"], "correct": "C"},
             {"question": "What is the unit of electric charge?", "options": ["Volt", "Coulomb", "Ohm", "Ampere"], "correct": "B"},
             {"question": "Light travels fastest in which medium?", "options": ["Glass", "Water", "Vacuum", "Diamond"], "correct": "C"}]
-BROKEN = ["Chemistry - torn page", "", "1. What is the pH of pure water?", "A) 5", "B) 7", "C) 9", "D) 11", "",
-          "2. Which gas is used in balloons?", "A) Helium", "B) Oxygen"]           # options C/D torn off, no answer key
-photos = {"page2-sideways.jpg": phone_photo(PAGE2, seed=2, sideways=True, blur=1.6), "page1.jpg": phone_photo(PAGE1, seed=1),
-          "key.jpg": phone_photo(["Answer Key", "1. A", "2. C", "3. B", "4. C"], seed=3, size=44),
-          "torn.jpg": phone_photo(BROKEN, seed=7), "blank.jpg": blank_photo(8)}
-for n, data in photos.items():
-    (PHOTOS / n).write_bytes(data)
-check("phone-style photos prepared (4000x3000 JPEG, perspective, shadow, blur, one page sideways)",
-      all(len(d) > 1_000_000 for n, d in photos.items() if n != "blank.jpg"), {n: len(d) for n, d in photos.items()})
+
+
+def force_diagram() -> bytes:
+    """A block with an arrow labelled F: question 1's picture (shown to students exactly as drawn, never read)."""
+    import io
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (320, 140), "white")
+    d = ImageDraw.Draw(img)
+    d.rectangle((40, 50, 120, 110), outline="black", width=3)
+    d.line((120, 80, 250, 80), fill="black", width=3)
+    d.polygon([(250, 70), (270, 80), (250, 90)], fill="black")
+    d.text((255, 50), "F", fill="black")
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def tara_workbook(picture: bytes) -> bytes:
+    """The question template without answers (they come from the separate key); the picture is inserted into question 1's image cell."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as XLImage
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["question", "question_image", "option_a", "option_b", "option_c", "option_d", "positive_marks", "negative_marks"])
+    for e in EXPECTED:
+        ws.append([e["question"], None, *e["options"], 4, 1])
+    ws.add_image(XLImage(io.BytesIO(picture)), "B2")
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+FORCE = force_diagram()
+(FILES / "tara-physics.xlsx").write_bytes(tara_workbook(FORCE))
+(FILES / "tara-key.csv").write_text("".join(f"{i},{e['correct']}\n" for i, e in enumerate(EXPECTED, start=1)))
+(FILES / "page-photo.png").write_bytes(FORCE)                 # a picture offered as a whole paper: refused, never read
+check("Tara's Excel paper (4 questions, a picture in question 1's image cell) and separate answer key prepared",
+      (FILES / "tara-physics.xlsx").stat().st_size > 0)
 
 params = {"ui": "http://localhost:5174", "sui": "http://localhost:5175", "ws": f"ws://127.0.0.1:{PW_PORT}/", "mail_log": str(WORK / "mail.log"),
-          "password": PW, "shots": str(Path(os.environ.get("UI_SHOTS", WORK / "shots"))), "photos_host": str(PHOTOS), "expected": EXPECTED,
+          "password": PW, "shots": str(Path(os.environ.get("UI_SHOTS", WORK / "shots"))), "files_host": str(FILES), "expected": EXPECTED,
           "sa": "STF000001", "admin": ADM["staff_code"], "pa": PA["staff_code"], "ba": BA["staff_code"], "ta": TA["staff_code"],
-          "tb": TB["staff_code"], "tutor": TU["staff_code"], "s1": S1, "s3": S3, "s1_name": "Asha", "tutor_students": [S1, S5]}
+          "tb": TB["staff_code"], "tutor": TU["staff_code"], "s1": S1, "s3": S3, "s1_name": "Asha", "tutor_students": [S1, S5],
+          "pune_chemistry_students": len([S1, S2, S4])}          # every Pune student (NEET A + NEET B) takes Chemistry
 (WORK / "ui_params.json").write_text(json.dumps(params))
 print("\nbrowser journeys, staff (Chromium)")
 browser = subprocess.run([PW_PYTHON, str(ROOT / "tests" / "e2e" / "global_schedule_ui_browser.py"), str(WORK / "ui_params.json"), "staff"])
@@ -398,26 +399,35 @@ subs = sql("""select s.name as subj, coalesce(st.full_name, ''), sub.status, sub
               join subjects s on s.subject_id = sub.subject_id left join staff st on st.staff_id = sub.submitted_by where sub.occurrence_id = :o
               order by sub.submitted_at""", o=O1)
 active = {(r[0], r[1]): r for r in subs if r[2] == "ACTIVE"}
-check("first date: Tara (photo paper, NEET A), Tom (NEET B), the Branch Admin (Chemistry, all of Pune), the Provider Admin (Chemistry, Mumbai, "
-      "unapproved) and the tutor (Biology, 2 students) each have one ACTIVE submission",
-      {("Physics", "Tara Physics"), ("Physics", "Tom Physics"), ("Chemistry", "Bharat Branch"), ("Chemistry", "Priya Admin"), ("Biology", "Ravi Tutor")}
-      == set(active), [(r[0], r[1], r[2]) for r in subs])
-check("the refused overlapping submission (Provider Admin, Chemistry for all of North) was not stored",
-      not any(r[1] == "Priya Admin" and r[4].get("whole_branch_ids") and len(r[4]["whole_branch_ids"]) == 2 for r in subs), subs)
+check("first date: Tara (Excel paper, NEET A), Tom (NEET B), the Branch Admin (Chemistry, all of Pune), the Provider Admin (two Chemistry "
+      "papers) and the tutor (Biology, 2 students) have ACTIVE submissions",
+      sorted((r[0], r[1]) for r in subs if r[2] == "ACTIVE") == sorted([("Physics", "Tara Physics"), ("Physics", "Tom Physics"),
+                                                                       ("Chemistry", "Bharat Branch"), ("Chemistry", "Priya Admin"),
+                                                                       ("Chemistry", "Priya Admin"), ("Biology", "Ravi Tutor")]),
+      [(r[0], r[1], r[2]) for r in subs])
+priya = {str(r[3]): r for r in subs if r[1] == "Priya Admin"}
+check("the Provider Admin's North Chemistry for all of Pune (overlapping the Branch Admin's Pune paper: a different paper, allowed since "
+      "per-student paper choice) is stored ONCE - the duplicate of the same paper was refused - and her Mumbai draft once, for Mumbai",
+      sorted(priya) == sorted([PV_PA_NCHE, PV_PA_CHE]) and len([r for r in subs if r[1] == "Priya Admin"]) == 2
+      and (priya[PV_PA_NCHE][4] or {}).get("whole_branch_ids") == [B1] and (priya[PV_PA_CHE][4] or {}).get("whole_branch_ids") == [B2],
+      [(r[1], str(r[3]), r[4]) for r in subs])
 tara_pv = str(active[("Physics", "Tara Physics")][3])
-photo = sql("""select d.status, d.accepted_paper_version_id, jsonb_array_length(d.corrections), v.status, p.title from paper_photo_drafts d
-               join paper_versions v on v.paper_version_id = d.accepted_paper_version_id join papers p on p.paper_id = v.paper_id
-               where d.created_by = :t and d.status = 'ACCEPTED'""", t=TA["staff_id"])
-check("Tara's photo paper: draft ACCEPTED -> paper version approved and PUBLISHED, corrections logged, and it is the paper she submitted",
-      len(photo) == 1 and photo[0][3] == "PUBLISHED" and photo[0][2] > 0 and str(photo[0][1]) == tara_pv, photo)
+tara = sql("""select v.status, p.title, u.status, sf.content_type from paper_versions v join papers p on p.paper_id = v.paper_id
+              join paper_uploads u on u.paper_version_id = v.paper_version_id join stored_files sf on sf.file_id = u.file_id
+              where v.paper_version_id = :v""", v=tara_pv)
+check("Tara's paper: uploaded as an .xlsx with a separate key, VALIDATED -> approved and PUBLISHED, and it is the paper she submitted",
+      tara == [("PUBLISHED", "Tara Physics paper", "VALIDATED", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")], tara)
+pic = sql("""select a.image_data, q.option_a_image_id from paper_version_questions pq join question_versions q on q.question_version_id = pq.question_version_id
+             join question_image_assets a on a.asset_id = q.stem_image_id where pq.paper_version_id = :v order by pq.position""", v=tara_pv)
+check("question 1 carries its picture, byte-identical to the one inserted in the Excel cell; no other question or option has one",
+      len(pic) == 1 and bytes(pic[0][0]) == FORCE and pic[0][1] is None, len(pic))
+check("nothing read the picture: no recognition job exists", sql("select count(*) from picture_recognition_jobs")[0][0] == 0)
 qs = sql("select q.stem, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option from paper_version_questions pq join question_versions q "
          "on q.question_version_id = pq.question_version_id where pq.paper_version_id = :v order by pq.position", v=tara_pv)
-check("the imported photo paper has exactly the printed questions, options and the answers from the separate key",
+check("the imported paper has exactly the file's questions and options and the answers from the separate key",
       [(r[0], [r[1], r[2], r[3], r[4]], r[5]) for r in qs] == [(e["question"], e["options"], e["correct"]) for e in EXPECTED], qs)
-torn = sql("select status, accepted_paper_version_id from paper_photo_drafts where title = 'Torn chemistry page'")
-check("the torn-page photo paper was refused as a whole: nothing imported, draft discarded by its owner",
-      torn and torn[0][0] == "DISCARDED" and torn[0][1] is None
-      and sql("select count(*) from papers where title = 'Torn chemistry page'")[0][0] == 0, torn)
+check("the picture offered as a whole paper was refused: no paper and no upload record for it",
+      sql("select count(*) from papers where title = 'Photo of a paper'")[0][0] == 0)
 
 # ------------------------------------------------------------------ the clock reaches the first date's paper deadline
 print("\nfirst date: the deadline passes, the worker generates the exams")
@@ -448,18 +458,31 @@ def exams_by_student():
 
 
 got = exams_by_student()
-want = {S1: {(P, tuple(sorted([tara_pv, PV_BA_CHE, PV_TUTOR])))}, S2: {(P, tuple(sorted([tara_pv, PV_BA_CHE])))},
-        S4: {(P, tuple(sorted([PV_TOM, PV_BA_CHE])))}, S5: {(P2, (PV_TUTOR,))}}
-check("each student gets ONE exam with exactly their own teachers' papers: NEET A = Tara + Pune Chemistry, NEET B = Tom + Pune Chemistry, "
-      "Asha (North + the tutor) = Tara Physics + Pune Chemistry + Ravi Biology, Esha = Ravi Biology",
-      {s: {(p, tuple(v)) for p, v, *_ in xs} for s, xs in got.items()} == want and all(len(xs) == 1 for xs in got.values()), got)
+date_exams = {xs[0][2] for xs in got.values()}
+SUB = {str(v): str(k) for k, v in sql("select submission_id, paper_version_id from global_paper_submissions where occurrence_id = :o "
+                                      "and status = 'ACTIVE'", o=O1)}            # paper version -> its submission (the Student services' paper id)
+USABLE = sorted([tara_pv, PV_TOM, PV_BA_CHE, PV_PA_NCHE, PV_TUTOR])                # approved + published by the deadline; never the draft
+check("ONE exam for the whole date (commit cd39e29): every eligible student - Chitra too - is assigned the same exam, once",
+      len(date_exams) == 1 and sorted(got) == sorted([S1, S2, S3, S4, S5]) and all(len(xs) == 1 for xs in got.values()), got)
+DATE_EXAM = next(iter(date_exams))
+check("its papers are exactly the date's usable submissions: Tara + Tom (Physics), Pune + North Chemistry, Ravi Biology - never the "
+      "unapproved Mumbai draft", sorted(got[S1][0][1]) == USABLE and PV_PA_CHE not in got[S1][0][1], got[S1])
+elig = {}
+for sid, subj, pv in sql("""select x.student_id, s.name, x.paper_version_id::text from global_test_student_subject_papers x
+                            join subjects s on s.subject_id = x.subject_id where x.occurrence_id = :o""", o=O1):
+    elig.setdefault(sid, {}).setdefault(subj, set()).add(pv)
+want_elig = {S1: {"Physics": {tara_pv}, "Chemistry": {PV_BA_CHE, PV_PA_NCHE}, "Biology": {PV_TUTOR}},    # NEET A + the tutor
+             S2: {"Physics": {tara_pv}, "Chemistry": {PV_BA_CHE, PV_PA_NCHE}},                            # NEET A
+             S4: {"Physics": {PV_TOM}, "Chemistry": {PV_BA_CHE, PV_PA_NCHE}},                             # NEET B
+             S5: {"Biology": {PV_TUTOR}}}                                                                  # the tutor's student only
+check("each student may sit exactly their own institutes' papers (global_test_student_subject_papers): their teacher's Physics, BOTH "
+      "Pune Chemistry papers for every Pune student (a choice), Ravi Biology for the tutor's two; Chitra none",
+      elig == want_elig and S3 not in elig, elig)
 prov_of = dict(sql("""select vp.paper_version_id::text, sub.provider_id::text from exam_version_papers vp
                       join global_paper_submissions sub on sub.submission_id = vp.source_submission_id
-                      join exam_versions v on v.exam_version_id = vp.exam_version_id join exams e on e.exam_id = v.exam_id
-                      where e.exam_id = :e""", e=got[S1][0][2]))
-check("Asha's exam keeps each paper's provenance: Physics and Chemistry from North, Biology from the tutor",
-      prov_of == {tara_pv: P, PV_BA_CHE: P, PV_TUTOR: P2}, prov_of)
-check("Chitra (Mumbai) gets no paper: no Physics paper for her and the Mumbai Chemistry paper was never approved", S3 not in got, got.get(S3))
+                      join exam_versions v on v.exam_version_id = vp.exam_version_id where v.exam_id = :e""", e=DATE_EXAM))
+check("the date's exam keeps each paper's provenance: Physics and Chemistry from North, Biology from the tutor",
+      prov_of == {tara_pv: P, PV_TOM: P, PV_BA_CHE: P, PV_PA_NCHE: P, PV_TUTOR: P2}, prov_of)
 ORDER = [n for (n,) in sql("select s.name from global_test_subjects g join subjects s on s.subject_id = g.subject_id where g.test_id = :t order by g.position", t=GT)]
 
 
@@ -472,14 +495,15 @@ chitra = dict(layout(S3))
 check("every eligible student has ONE row for the date and one row per configured subject, in the configured order",
       sorted(sid for (sid,) in sql("select student_id from global_test_students where occurrence_id = :o", o=O1)) == sorted([S1, S2, S3, S4, S5])
       and all([n for n, _ in layout(x)] == ORDER for x in (S1, S2, S3, S4, S5)), (ORDER, {x: layout(x) for x in (S1, S2, S3, S4, S5)}))
-check("Asha has a paper for every subject; Chitra none, each with its reason: Physics not covered (Pune's papers are for NEET A/B), "
-      "Chemistry not approved in time",
-      dict(layout(S1)) == {n: "PAPER" for n in ORDER} and chitra.get("Physics") == "NOT_COVERED" and chitra.get("Chemistry") == "NOT_APPROVED"
-      and "PAPER" not in chitra.values(), (layout(S1), chitra))
-chitra_exam = sql("""select e.exam_id, v.total_questions, e.status from global_test_students g join exams e on e.exam_id = g.exam_id
-                     join exam_versions v on v.exam_id = e.exam_id where g.occurrence_id = :o and g.student_id = :s""", o=O1, s=S3)
-check("Chitra still gets ONE Global Test card (an exam without questions) that explains each subject",
-      len(chitra_exam) == 1 and chitra_exam[0][1] == 0 and chitra_exam[0][2] == "PUBLISHED", chitra_exam)
+check("Asha: Physics and Biology one paper each (PAPER), Chemistry two (SELECTABLE: she chooses); Chitra none, each with its reason: "
+      "Physics not covered (Pune's papers are for NEET A/B), Chemistry not approved in time",
+      dict(layout(S1)) == {"Physics": "PAPER", "Chemistry": "SELECTABLE", "Biology": "PAPER"}
+      and chitra.get("Physics") == "NOT_COVERED" and chitra.get("Chemistry") == "NOT_APPROVED"
+      and not {"PAPER", "SELECTABLE"} & set(chitra.values()), (layout(S1), chitra))
+chitra_exam = sql("""select g.exam_id::text, e.status from global_test_students g join exams e on e.exam_id = g.exam_id
+                     where g.occurrence_id = :o and g.student_id = :s""", o=O1, s=S3)
+check("Chitra still gets ONE Global Test card: the date's exam, with no paper she may sit (each subject explains why)",
+      chitra_exam == [(str(DATE_EXAM), "PUBLISHED")] and S3 not in elig, chitra_exam)
 names = {n for (n,) in sql("select distinct e.name from exams e join exam_plans pl on pl.plan_id = e.plan_id where pl.global_occurrence_id = :o", o=O1)}
 check("every exam of the date carries the Global Test's own name, without provider, branch or date", names == {"National Mock"}, names)
 notes = [json.loads(p) if isinstance(p, str) else p for (p,) in sql("select payload from exam_notification_outbox where payload->>'kind' = 'GLOBAL_TEST_MISSING_PAPERS'")]
@@ -494,7 +518,8 @@ check("generated exams are PUBLISHED with the date's window and the test's durat
       exam_window and all(r[3] == "PUBLISHED" and r[2] == 30 and (r[0], r[1]) == (r[4], r[5]) for r in exam_window), exam_window)
 
 # mapping changes after generation never alter the generated exams
-before = exams_by_student()
+before = (exams_by_student(), sorted(sql("select occurrence_id::text, student_id, subject_id::text, submission_id::text "
+                                         "from global_test_student_subject_papers where occurrence_id = :o", o=O1)))
 with TestClient(gateway, base_url="http://localhost") as c:
     hb = login(c, BA["staff_code"])
     sub_ba = sql("select submission_id from global_paper_submissions where occurrence_id = :o and paper_version_id = :v", o=O1, v=PV_BA_CHE)[0][0]
@@ -504,16 +529,18 @@ execute("update teacher_subject_assignments set status = 'INACTIVE' where staff_
 execute("delete from enrollment_batches where batch_id = :b and enrollment_id in (select enrollment_id from enrollments where student_id = :s)", b=A, s=S2)
 with factory() as db:
     global_generation.run_due(db, now=datetime.now(UTC))
-check("teaching and batch changes after generation leave every generated exam and assignment unchanged", exams_by_student() == before)
+check("teaching and batch changes after generation leave the date's exam, every assignment and every student's frozen paper "
+      "eligibility unchanged", (exams_by_student(), sorted(sql("select occurrence_id::text, student_id, subject_id::text, "
+      "submission_id::text from global_test_student_subject_papers where occurrence_id = :o", o=O1))) == before)
 
 with factory() as db:
     delivered = outbox.deliver_due(db)
     notify.deliver_pending(db)
-check("published exams delivered to the Student test service", delivered.get("failed", 0) == 0 and delivered.get("sent", 0) >= 3, delivered)
+check("the date's ONE exam delivered to the Student test service", delivered.get("failed", 0) == 0 and delivered.get("sent", 0) == 1, delivered)
 check("students get a password through the real Student auth service", set_student_password("asha@family.example.com")
       and set_student_password("chitra@family.example.com"))
-[(_p, _v, asha_exam, asha_ev)] = got[S1]
-# provider isolation of the unified exam: each provider sees only the subjects it supplied; the anchor grants nothing more
+[(_p, _v, asha_exam, asha_ev)] = got[S1]                         # the date's exam (every student holds this same one)
+# provider isolation of the date's exam: each provider sees only the subjects its papers fill (services/unified.py); the anchor grants nothing
 with TestClient(gateway, base_url="http://localhost") as c:
     hn = login(c, PA["staff_code"])
     north = c.get(f"{API}/exams/{asha_exam}", headers=hn).json()
@@ -525,26 +552,53 @@ with TestClient(gateway, base_url="http://localhost") as c:
     hp = login(c, "STF000001")
     full = c.get(f"{API}/exams/{asha_exam}", headers=hp).json()
     full_layout = c.get(f"{API}/global-occurrences/{O1}/student-subjects", headers=hp).json()
-check("North's admin sees only Physics + Chemistry of Asha's exam, the tutor only Biology, the platform all three; North cannot cancel it",
-      {x["subject_id"] for x in north["papers"]} == {PHY, CHE} and [x["subject_id"] for x in tutor_view["papers"]] == [BIO]
-      and len(full["papers"]) == 3 and cancel.status_code == 403, (north.get("papers"), tutor_view.get("papers"), cancel.status_code))
+pvs = lambda view: sorted(x["paper_version_id"] for x in view.get("papers", []))
+check("North's admin sees only the date exam's Physics + Chemistry papers (its own four), the tutor only Ravi Biology, the platform all "
+      "five usable papers; North cannot cancel the exam",
+      {x["subject_id"] for x in north["papers"]} == {PHY, CHE} and pvs(north) == sorted([tara_pv, PV_TOM, PV_BA_CHE, PV_PA_NCHE])
+      and [x["subject_id"] for x in tutor_view["papers"]] == [BIO] and pvs(tutor_view) == [PV_TUTOR]
+      and pvs(full) == USABLE and cancel.status_code == 403, (pvs(north), pvs(tutor_view), pvs(full), cancel.status_code))
 cells = lambda body, sid: [(x["subject"], x["status"], x["provider_name"]) for st in body["students"] if st["student_id"] == sid for x in st["subjects"]]
 check("the platform's layout shows every student and subject; North's shows only its students and its own part (never the tutor's Biology)",
       {st["student_id"] for st in full_layout["students"]} == {S1, S2, S3, S4, S5} and [x[0] for x in cells(full_layout, S1)] == ORDER
       and {x[0] for x in cells(north_layout, S1)} == {"Physics", "Chemistry"} and S5 not in {st["student_id"] for st in north_layout["students"]},
       (cells(full_layout, S1), cells(north_layout, S1)))
-# the order Asha must see: subjects in the configured order, inside each an order of her own (sha256 of student, test, question)
-qs = sql("select question_id::text, subject, question_text from questions where test_id = :t", t=asha_ev)
-expected_order = [text_ for _q, _s, text_ in sorted(qs, key=lambda r: (ORDER.index(r[1]), hashlib.sha256(f"{S1}:{asha_ev}:{r[0]}".encode()).hexdigest()))]
+# the Student test service holds ONE test for the date: every slot's questions (tagged with their submission) and the shared sections
+qcount = {str(pv): n for pv, n in sql("select paper_version_id, question_count from paper_versions where paper_version_id::text in "
+                                     "(:a, :b, :c, :d, :e)", a=USABLE[0], b=USABLE[1], c=USABLE[2], d=USABLE[3], e=USABLE[4])}
+per_paper = {str(p): n for p, n in sql("select paper_id, count(*) from questions where test_id = :t group by paper_id", t=asha_ev)}
+check("the delivered test holds every usable paper's questions, each tagged with its submission (the Student services' paper id)",
+      per_paper == {SUB[pv]: qcount[pv] for pv in USABLE}, (per_paper, {SUB[pv]: qcount[pv] for pv in USABLE}))
 sections = sql("select sections from tests where test_id = :t", t=asha_ev)[0][0]
-check("her delivered test lists every configured subject in order with its question count",
-      [(x["subject"], x["status"], x["question_count"]) for x in sections] == [(n, "PAPER", c) for n, c in zip(ORDER, [{"Physics": 4, "Chemistry": 3, "Biology": 2}[n] for n in ORDER])],
-      sections)
+check("its sections are the shared configuration: every configured subject in order, listing exactly that subject's papers",
+      [(x["subject"], sorted(str(p["paper_id"]) for p in x["papers"])) for x in sections]
+      == [(n, sorted(SUB[pv] for pv in USABLE if pv in {v for s in want_elig.values() for v in s.get(n, set())})) for n in ORDER], sections)
+student_elig = {}
+for sid, subj, status, pid in sql("select student_id, subject, status, paper_id from student_paper_eligibility where test_id = :t", t=asha_ev):
+    student_elig.setdefault(sid, {})[subj] = (status, student_elig.get(sid, {}).get(subj, (None, set()))[1] | ({str(pid)} if pid else set()))
+inst_status = {sid: dict(layout(sid)) for sid in (S1, S2, S3, S4, S5)}
+check("each student's frozen eligibility reached the Student test service unchanged: the same status per subject and the same papers",
+      student_elig == {sid: {n: (inst_status[sid][n], {SUB[pv] for pv in elig.get(sid, {}).get(n, set())}) for n in ORDER}
+                       for sid in (S1, S2, S3, S4, S5)}, student_elig)
+# Asha's choice (a scenario decision): Pune Chemistry. The papers she will sit are then her PAPER subjects plus that choice.
+CHOSEN = {"Chemistry": PV_BA_CHE}
+asha_papers = {SUB[pv] for subj, pvs_ in want_elig[S1].items() for pv in pvs_ if len(pvs_) == 1 or CHOSEN.get(subj) == pv}
+# the order Asha must see: only her papers' questions; subjects in the configured order, inside each an order of her own
+# (sha256 of student, test, question - app/services/question_order.py)
+qs = sql("select question_id::text, subject, question_text, paper_id::text from questions where test_id = :t", t=asha_ev)
+expected_order = [text_ for _q, _s, text_, _p in sorted((r for r in qs if r[3] in asha_papers),
+                                                         key=lambda r: (ORDER.index(r[1]), hashlib.sha256(f"{S1}:{asha_ev}:{r[0]}".encode()).hexdigest()))]
+title_of = dict(sql("select v.paper_version_id::text, p.title from paper_versions v join papers p on p.paper_id = v.paper_id"))
 # the answers Asha gives: every Physics question right; Chemistry: question 1 right, question 2 wrong, question 3 left blank;
 # Biology: question 1 right, question 2 left blank
 answers = {e["question"]: e["options"]["ABCD".index(e["correct"])] for e in EXPECTED}
 answers.update({"Pune Chemistry Set question 1?": "A1", "Pune Chemistry Set question 2?": "A2", "Ravi Biology Set question 1?": "A1"})
-params.update({"asha_test": asha_ev, "answers": answers, "subject_order": ORDER, "expected_order": expected_order})
+params.update({"asha_test": asha_ev, "answers": answers, "subject_order": ORDER, "expected_order": expected_order,
+               # what Test Details must offer her: a choice only where she has two or more eligible papers, with their titles
+               "selectable": {subj: sorted(title_of[pv] for pv in pvs_) for subj, pvs_ in want_elig[S1].items() if len(pvs_) > 1},
+               "chosen": {subj: title_of[pv] for subj, pv in CHOSEN.items()},
+               # Chitra's reasons, in the product's own words (inst_exam.services.global_layout.MESSAGES)
+               "chitra_messages": {n: global_layout.MESSAGES[st].format(subject=n) for n, st in layout(S3)}})
 (WORK / "ui_params.json").write_text(json.dumps(params))
 
 print("\nbrowser journeys, student (Chromium, Student portal)")
@@ -574,14 +628,14 @@ check("her Results list has ONE National Mock result, labelled as the Global Tes
       and mine[0]["obtained_marks"] == 23, mine)
 # provider-specific results through the REAL Student result service (its per-subject SQL on this PostgreSQL), never a fake client
 print("\nresults of the unified exam, per provider (real Student result service)")
-esha_exam = got[S5][0][2]
 with TestClient(gateway, base_url="http://localhost") as c:                    # one session per staff member, one sign-in each
     h = login(c, PA["staff_code"])
     north_r = c.get(f"{API}/exams/{asha_exam}/results", headers=h)
     north_a = c.get(f"{API}/exams/{asha_exam}/assignments", headers=h)
-    north_esha = c.get(f"{API}/exams/{esha_exam}/results", headers=h)
 with TestClient(gateway, base_url="http://localhost") as c:
-    tutor_r = c.get(f"{API}/exams/{asha_exam}/results", headers=login(c, TU["staff_code"]))
+    ht = login(c, TU["staff_code"])
+    tutor_r = c.get(f"{API}/exams/{asha_exam}/results", headers=ht)
+    tutor_a = c.get(f"{API}/exams/{asha_exam}/assignments", headers=ht)
 nr, tr = north_r.json(), tutor_r.json()
 
 
@@ -589,10 +643,20 @@ def subjects_of(r):
     return {x["subject"]: (x["obtained_marks"], x["total_marks"]) for row in r.get("results", []) for x in row.get("subjects", [])}
 
 
-check("North's admin sees only Physics + Chemistry of Asha's result: 16/16 + 3/12 = 19 of 28 (her Physics all right; Chemistry +4 -1)",
+# the subject view's header total is that of every paper the caller supplied to the date's exam (inst_exam/routes/exams.py, _papers_total
+# over the caller's papers) - for North all four of its papers, not one student's; each student row keeps that student's own papers
+from inst_exam.routes.exams import _papers_total
+from institute_common.models.exams import ExamVersion, ExamVersionPaper
+
+with factory() as db:
+    _ev = db.get(ExamVersion, UUID(asha_ev))
+    north_total = _papers_total(_ev, [x for x in db.query(ExamVersionPaper).filter_by(exam_version_id=_ev.exam_version_id)
+                                      if str(x.paper_version_id) in {tara_pv, PV_TOM, PV_BA_CHE, PV_PA_NCHE}])
+check(f"North's admin sees only Physics + Chemistry of Asha's result: 16/16 + 3/12 = 19 of 28 (her Physics all right; Chemistry +4 -1); "
+      f"the header total is North's four papers ({north_total})",
       north_r.status_code == 200 and nr["subject_view"] is True and nr["visible_subjects"] == ["Chemistry", "Physics"]
       and subjects_of(nr) == {"Physics": (16, 16), "Chemistry": (3, 12)} and [(x["student_id"], x["obtained_marks"], x["total_marks"]) for x in nr["results"]] == [(S1, 19, 28)]
-      and nr["total_marks"] == "28.00", nr)
+      and nr["total_marks"] == str(north_total), (north_total, nr))
 check("the tutor sees only Biology: 4 of 8 (question 1 right, question 2 left blank)",
       tutor_r.status_code == 200 and tr["subject_view"] is True and subjects_of(tr) == {"Biology": (4, 8)}
       and [(x["student_id"], x["obtained_marks"]) for x in tr["results"]] == [(S1, 4)], tr)
@@ -613,9 +677,18 @@ def overall_of(r):                                   # any row or summary carryi
 leak = sorted(keys_of(nr) & ANSWER_KEYS) + sorted(keys_of(tr) & ANSWER_KEYS) + overall_of(nr) + overall_of(tr) + \
        sorted(set(subjects_of(nr)) - {"Physics", "Chemistry"}) + sorted(set(subjects_of(tr)) - {"Biology"})
 check("neither provider sees the other's subject, any answer, or the overall score (23)", not leak, leak)
-check("North sees only its own students of the exam (Asha) and nothing of Esha's tutor-only exam",
-      north_a.status_code == 200 and [x["student_id"] for x in north_a.json()["items"]] == [S1] and north_esha.status_code == 403,
-      (north_a.text[:300], north_esha.status_code))
+# provider scope of the date's exam (services/unified.py): the assigned students ENROLLED with that provider
+enrolled_with = lambda prov: {sid for (sid,) in sql("select distinct student_id from enrollments where provider_id = :p and status = 'ACTIVE'", p=prov)}
+assigned = set(got)
+check("each provider lists only the exam's students enrolled with it: North its four (never Esha), the tutor its two (Asha, Esha)",
+      north_a.status_code == 200 and sorted(x["student_id"] for x in north_a.json()["items"]) == sorted(assigned & enrolled_with(P))
+      and S5 not in {x["student_id"] for x in north_a.json()["items"]}
+      and tutor_a.status_code == 200 and sorted(x["student_id"] for x in tutor_a.json()["items"]) == sorted(assigned & enrolled_with(P2)),
+      (north_a.text[:300], tutor_a.text[:300], sorted(assigned & enrolled_with(P)), sorted(assigned & enrolled_with(P2))))
+snap = {s_: str(p_) for s_, p_ in sql("""select sp.subject, sp.paper_id from attempt_selected_papers sp join test_attempts a on a.attempt_id = sp.attempt_id
+                                       where a.student_id = :s and a.test_id::text = :t""", s=S1, t=asha_ev)}
+check("her attempt was started with exactly the papers she may sit and chose: Tara Physics, Pune Chemistry (her choice), Ravi Biology",
+      set(snap.values()) == asha_papers and snap.get("Chemistry") == SUB[PV_BA_CHE], snap)
 
 with TestClient(gateway, base_url="http://localhost") as c:            # the platform admin's last sign-in (5 per account per 15 minutes)
     h = login(c, "STF000001")

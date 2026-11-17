@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { useAction, useApi } from "../hooks/useApi";
+import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, SelectField, Spinner, StatusBadge } from "./ui";
 
@@ -13,8 +13,8 @@ type Teacher = { staff_id: string; staff_code: string; full_name: string };
  * the same subject is shared (no duplicates) and teachers and batches can only use subjects the provider offers. */
 export function ProviderSubjects({ providerId }: { providerId: string }) {
   const { can } = useAuth();
-  const catalogue = useApi<Page<Subject>>("/api/v1/subjects?page_size=100");
-  const offered = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
+  const catalogue = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const offered = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const act = useAction();
   const isOffered = (id: string) => offered.data?.some((s) => s.subject_id === id);
   // Subjects the provider already offers stay listed even if the catalogue later deactivated them.
@@ -41,9 +41,9 @@ export function ProviderSubjects({ providerId }: { providerId: string }) {
 export function TeachingAssignments({ providerId, branchId }: { providerId: string; branchId: string }) {
   const { can } = useAuth();
   const list = useApi<Page<Teaching>>(`/api/v1/teaching?branch_id=${branchId}&page_size=100`);
-  const subjects = useApi<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
+  const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const teachers = useApi<Page<Teacher>>(`/api/v1/staff?role=TEACHER&provider_id=${providerId}&status=ACTIVE&page_size=100`);
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`);
+  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`);
   const [f, setF] = useState({ staff_id: "", subject_id: "", batch_id: "" });
   const [ending, setEnding] = useState<Teaching | null>(null);
   const act = useAction();

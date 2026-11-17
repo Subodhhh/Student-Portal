@@ -43,6 +43,13 @@ with engine.begin() as c:   # the Student ID counter, as the authentication migr
     c.execute(text("insert into student_id_allocator (name, last_value) select 'STU', 0 where not exists (select 1 from student_id_allocator)"))
 EOF
 )
+# The authentication chain cannot run from an empty database (its UUID root conflicts with the VARCHAR(20) IDs live databases use), so
+# the block above builds the live shape by hand - exactly what revision 0002_student_id_allocator leaves (students, reset tokens, the
+# seeded allocator). Record that, then let Alembic apply every later revision for real (0003_students_date_of_birth, ...).
+(cd "$ROOT/student-backend/student-authentication-service" && PYTHONPATH=. DATABASE_URL="$SA/$DB" REDIS_URL=redis://127.0.0.1:$RPORT CORS_ORIGINS=http://x \
+  SESSION_COOKIE_SECURE=false FRONTEND_RESET_URL=http://x/reset-password "$PY" -m alembic stamp 0002_student_id_allocator >/dev/null \
+  && PYTHONPATH=. DATABASE_URL="$SA/$DB" REDIS_URL=redis://127.0.0.1:$RPORT CORS_ORIGINS=http://x \
+  SESSION_COOKIE_SECURE=false FRONTEND_RESET_URL=http://x/reset-password "$PY" -m alembic upgrade head >/dev/null)
 for s in identity organization academics enrollment paper exam operations; do
   (cd "$ROOT/institute-backend/institute-$s-service" && PYTHONPATH=".:$ROOT/institute-backend/institute-common" DATABASE_URL="$SA/$DB" CORS_ORIGINS=http://x alembic upgrade head >/dev/null)
 done
@@ -54,6 +61,7 @@ for svc in "${!PORTS[@]}"; do
   (cd "$ROOT/student-backend/$svc" && DATABASE_URL="$SA/$DB" REDIS_URL="redis://127.0.0.1:$RPORT" CORS_ORIGINS=http://localhost \
      SESSION_COOKIE_SECURE=false APP_ENV=dev EMAIL_BACKEND=console FRONTEND_RESET_URL=http://localhost/reset-password \
      INSTITUTE_SERVICE_API_KEYS="$KEY" NOTIFICATION_CREATE_API_KEYS="$KEY" \
+     STUDENT_TEST_SERVICE_URL="http://127.0.0.1:${PORTS[student-test-service]}" STUDENT_TEST_SERVICE_API_KEY="$KEY" \
      exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORTS[$svc]}" >"$WORK/$svc.log" 2>&1) &
   PIDS+=($!)
 done
@@ -63,4 +71,7 @@ done
 echo "student services up: ${!PORTS[*]}"
 
 # driver: pipeline_disposable.py (default) or another driver in tests/e2e, e.g. create_test_disposable.py
-PIPELINE_DB="$SA/$DB" PIPELINE_KEY="$KEY" PIPELINE_AUTH_LOG="$WORK/student-authentication-service.log" "$PY" "$ROOT/tests/e2e/${1:-pipeline_disposable.py}"
+# run_driver.py: the driver runs as the program but is not the importable __main__ module, so the paper service's isolated extraction
+# (a forkserver, which re-imports __main__) never re-runs a driver's set-up
+PIPELINE_DB="$SA/$DB" PIPELINE_KEY="$KEY" PIPELINE_AUTH_LOG="$WORK/student-authentication-service.log" PIPELINE_RPORT="$RPORT" \
+  "$PY" "$ROOT/tests/e2e/run_driver.py" "$ROOT/tests/e2e/${1:-pipeline_disposable.py}"

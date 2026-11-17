@@ -16,8 +16,7 @@ const common = { "/api/v1/notifications/unread-count": { unread_count: 0 }, "/ap
 
 const saved: string[] = [];
 const fetched: URL[] = [];
-const FILES: Record<string, string> = { "/api/v1/paper-versions/pv1/pdf": "Daily-paper-v1.pdf", "/api/v1/paper-versions/pv1/answer-key": "Daily-paper-v1-answer-key.pdf",
-  "/api/v1/papers/pdf": "question-papers.zip", "/api/v1/papers/answer-keys": "answer-keys.zip" };
+const FILES: Record<string, string> = { "/api/v1/paper-versions/pv1/pdf": "Daily-paper-v1.pdf", "/api/v1/paper-versions/pv1/answer-key": "Daily-paper-v1-answer-key.pdf" };
 /** stubApi for the JSON calls; a download answers with a file (the server's name in Content-Disposition), or `refuse` with an API error. */
 function stubWithFiles(routes: Record<string, unknown>, refuse?: { status: number; detail: unknown }) {
   stubApi(routes);
@@ -68,37 +67,35 @@ describe("Paper PDF downloads", () => {
     expect(saved).toEqual([]);
   });
 
-  it("downloads question papers and answer keys as ZIPs with the list's filters, or from all branches for a Provider Admin", async () => {
+  it.each(["VALIDATED", "WITHDRAWN"])("offers no download for a %s version", async (status) => {
+    const draft = { ...detail, latest_version: { ...version, status } };
+    stubWithFiles({ ...common, "/api/v1/paper-versions/pv1": draft, "/api/v1/auth/me": me("PROVIDER_ADMIN", PERMS) });
+    renderApp("/papers/pv1");
+    expect(await screen.findByText("Questions (preview — visible to authorized staff only)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download Question Paper" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download Answer Key" })).toBeNull();
+  });
+
+  it("has no ZIP downloads on the Papers list", async () => {
     stubWithFiles({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", PERMS) });
     renderApp("/papers?tab=papers");
     expect(await screen.findByRole("link", { name: "Daily paper" })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Has a version that is"), { target: { value: "PUBLISHED" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Download Question Papers (ZIP)" }));
-    await waitFor(() => expect(saved).toEqual(["question-papers.zip"]));
-    fireEvent.click(screen.getByRole("button", { name: "Download Answer Keys (ZIP)" }));
-    await waitFor(() => expect(saved).toEqual(["question-papers.zip", "answer-keys.zip"]));
-    const branch = { scope: "PROVIDER", branch_id: "b1", status: "PUBLISHED" };                    // every page, the same filters
-    expect(fetched.map((u) => [u.pathname, Object.fromEntries(u.searchParams)])).toEqual([["/api/v1/papers/pdf", branch], ["/api/v1/papers/answer-keys", branch]]);
-    fireEvent.change(screen.getByLabelText("Download from"), { target: { value: "ALL" } });
-    fireEvent.click(screen.getByRole("button", { name: "Download Answer Keys (ZIP)" }));
-    await waitFor(() => expect(saved).toHaveLength(3));
-    expect(Object.fromEntries(fetched[2].searchParams)).toEqual({ scope: "PROVIDER", provider_id: "p1", status: "PUBLISHED" });
-  });
-
-  it("offers a Branch Admin only their branch's papers", async () => {
-    stubWithFiles({ ...common, "/api/v1/auth/me": me("BRANCH_ADMIN", PERMS) });
-    renderApp("/papers?tab=papers");
-    expect(await screen.findByRole("button", { name: "Download Question Papers (ZIP)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Download Answer Keys (ZIP)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ZIP/ })).toBeNull();
     expect(screen.queryByLabelText("Download from")).toBeNull();
   });
 
-  it("explains a bulk download the server bounds", async () => {
-    stubWithFiles({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", PERMS) },
-      { status: 422, detail: { code: "TOO_MANY_PAPERS", message: "40 papers match; download at most 30 at once (choose a branch or a subject)." } });
+  it("lists every accessible branch with All Branches, by provider rather than by branch", async () => {
+    const seen: string[] = [];
+    stubWithFiles({ ...common, "/api/v1/auth/me": me("PROVIDER_ADMIN", PERMS),
+      "/api/v1/providers/p1/branches": page([{ branch_id: "b1", provider_id: "p1", name: "Main", city: null, status: "ACTIVE" }, { branch_id: "b2", provider_id: "p1", name: "North", city: null, status: "ACTIVE" }]) });
+    const json = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => { if (new URL(input).pathname === "/api/v1/papers") seen.push(new URL(input).search); return json(input, init); }));
     renderApp("/papers?tab=papers");
-    expect(await screen.findByRole("link", { name: "Daily paper" })).toBeTruthy();          // the list has loaded: the button is enabled
-    fireEvent.click(screen.getByRole("button", { name: "Download Question Papers (ZIP)" }));
-    expect(await screen.findByText(/download at most 30 at once/)).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Daily paper" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "__all__" } });
+    expect(await screen.findByRole("columnheader", { name: "Branch" })).toBeTruthy();
+    expect(seen.at(-1)).toContain("provider_id=p1");
+    expect(seen.at(-1)).not.toContain("branch_id");
+    expect(await screen.findByRole("cell", { name: "Main" })).toBeTruthy();
   });
 });

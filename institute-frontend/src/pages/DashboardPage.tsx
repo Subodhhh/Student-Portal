@@ -46,9 +46,15 @@ const n = (value: unknown) =>
 const when = (s: string) => new Date(s).toLocaleString();
 const sum = (r?: Record<string, number>) => Object.values(r ?? {}).reduce((a, b) => a + b, 0);
 
+type AuditList = ReturnType<typeof useApi<Page<AuditRow>>>;
+
 export default function DashboardPage() {
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const { data, loading, error, reload } = useApi<Dash>("/api/v1/dashboard");
+  // The platform dashboard's audit lists do not depend on the dashboard figures: requested at the same time, not after them.
+  const audit = isGlobalRole(me?.primary_role) && can("audit.read");
+  const denied = useApi<Page<AuditRow>>(audit ? "/api/v1/audit-logs?outcome=DENIED&page_size=5" : null);
+  const recent = useApi<Page<AuditRow>>(audit ? "/api/v1/audit-logs?outcome=SUCCESS&page_size=8" : null);
 
   if (loading && !data) return <Spinner label="Loading dashboard" />;
   if (error || !data) {
@@ -61,18 +67,16 @@ export default function DashboardPage() {
     );
   }
   if (isGlobalRole(me?.primary_role) && "providers_by_status" in data) {
-    return <PlatformDashboard d={data as unknown as Platform & Dash} />;
+    return <PlatformDashboard d={data as unknown as Platform & Dash} denied={denied} recent={recent} />;
   }
   return <RoleDashboard data={data} />;
 }
 
 // ------------------------------------------------------------------ Super Admin / Admin
 
-function PlatformDashboard({ d }: { d: Platform & Dash }) {
+function PlatformDashboard({ d, denied, recent }: { d: Platform & Dash; denied: AuditList; recent: AuditList }) {
   const { me, can } = useAuth();
   const ops = d.operations ?? {};
-  const denied = useApi<Page<AuditRow>>(can("audit.read") ? "/api/v1/audit-logs?outcome=DENIED&page_size=5" : null);
-  const recent = useApi<Page<AuditRow>>(can("audit.read") ? "/api/v1/audit-logs?outcome=SUCCESS&page_size=8" : null);
   const activeProviders = d.providers_by_status.ACTIVE ?? 0;
   const inactiveProviders = d.providers_by_status.INACTIVE ?? 0;
   const published = d.papers_by_status?.PUBLISHED ?? 0;
