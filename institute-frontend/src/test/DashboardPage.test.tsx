@@ -1,12 +1,8 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-<<<<<<< HEAD:institute-frontend/src/test/DashboardPage.test.tsx
 import { renderApp } from "./renderApp";
 import { me, page, stubApi } from "./stubApi";
-=======
-import { renderApp } from "../test/renderApp";
 import { fail, me, page, stubApi } from "../test/stubApi";
->>>>>>> origin/Institute-Student-Portal:institute-frontend/src/pages/DashboardPage.test.tsx
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 3 }, "/api/v1/providers": page([]) };
 const PLATFORM = {

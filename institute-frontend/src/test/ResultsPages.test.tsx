@@ -1,14 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-<<<<<<< HEAD:institute-frontend/src/test/ResultsPages.test.tsx
 import { renderApp } from "./renderApp";
 import { CorrectionsCard } from "../pages/ResultsPages";
 import { me, page, stubApi } from "./stubApi";
-=======
-import { renderApp } from "../test/renderApp";
 import { CorrectionsCard } from "./ResultsPages";
 import { fail, me, page, stubApi } from "../test/stubApi";
->>>>>>> origin/Institute-Student-Portal:institute-frontend/src/pages/ResultsPages.test.tsx
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 0 }, "/api/v1/providers": page([{ provider_id: "p1", name: "Alpha", status: "ACTIVE", email: "a@x.io" }]),
   "/api/v1/providers/p1/branches": page([{ branch_id: "b1", provider_id: "p1", name: "Main", city: null, status: "ACTIVE" }]) };

@@ -3,12 +3,10 @@ import { useAuth, type Role } from "../auth/AuthContext";
 import { ROLE_LABEL } from "../auth/nav";
 import { activeAssignments, GRANTABLE, isGlobalRole, scopeOf, type Assignment, type Staff } from "../auth/roles";
 import { useScope } from "../auth/ScopeContext";
-<<<<<<< HEAD
+
 import { isValidEmail, isValidPhone } from "../auth/validation";
 import { useAction, useApi } from "../hooks/useApi";
-=======
 import { useAction, useApi, useReference } from "../hooks/useApi";
->>>>>>> origin/Institute-Student-Portal
 import { api, type Page } from "../services/api";
 import { AuditTable } from "./audit";
 import { 
