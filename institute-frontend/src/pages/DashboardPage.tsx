@@ -5,15 +5,25 @@ import { CATEGORIES, isGlobalRole } from "../auth/roles";
 import { Alert, Button, Card, DataTable, EmptyState, PageHeader, Spinner, StatCard, StatusBadge } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import type { Page } from "../services/api";
-import { StudentCount } from "../components/StudentCount";
+import { StudentCount } from "../components/StudentCount"; // Kept for RoleDashboard
 
 type Dash = Record<string, unknown> & {
   role: string;
   upcoming_exams: number;
   unread_notifications: number;
+  // Optional fields for role-specific dashboards
+  branches?: number;
+  teachers?: number;
+  students?: number;
+  batches?: number;
+  pending_transfers?: number;
+  open_tickets?: number;
+  unpaid_invoices?: number;
+  my_papers?: number;
+  teaching?: { subject: string; branch_id: string }[];
 };
 
-// Fields the backend adds for global roles (Super Admin / Admin). Every value is a count straight from the database.
+// Fields the backend adds for global roles (Super Admin / Admin).
 type Platform = {
   providers_by_status: Record<string, number>;
   branches_by_status: Record<string, number>;
@@ -41,8 +51,7 @@ type Platform = {
 type AuditRow = { audit_id: string; at: string; action: string; target_type: string | null; outcome: string; reason: string | null;
   actor: string | null; actor_name: string | null; provider_name: string | null };
 
-const n = (value: unknown) =>
-  typeof value === "number" ? value : 0;
+const n = (value: unknown) => typeof value === "number" ? value : 0;
 const when = (s: string) => new Date(s).toLocaleString();
 const sum = (r?: Record<string, number>) => Object.values(r ?? {}).reduce((a, b) => a + b, 0);
 
@@ -58,7 +67,6 @@ export default function DashboardPage() {
 
   if (loading && !data) return <Spinner label="Loading dashboard" />;
   if (error || !data) {
-    // Never fall back to zeros: an unavailable dashboard says so and offers a retry.
     return (
       <Alert kind="error">
         The dashboard could not be loaded{error ? `: ${error}` : "."} No figures are shown rather than possibly wrong ones.{" "}
@@ -82,10 +90,40 @@ function PlatformDashboard({ d, denied, recent }: { d: Platform & Dash; denied: 
   const published = d.papers_by_status?.PUBLISHED ?? 0;
   const attention = n(ops.failed_deliveries) + n(ops.failed_generation_jobs) + n(ops.failed_student_notifications) + n(ops.unfinished_corrections);
 
+  // Extracted the name for cleaner JSX
+  const firstName = me?.full_name.split(" ")[0];
+
   return (
     <>
-      <PageHeader subtitle={`Welcome, ${me?.full_name.split(" ")[0]}. Live platform overview.`} />
-      <div className="stack">
+      {/* UI FIX: Upgraded PageHeader subtitle to match AccountPage style */}
+      <PageHeader 
+        subtitle={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 500, color: "var(--c-text)" }}>
+              Welcome, {firstName}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ 
+              background: "var(--c-bg-muted, #f3f4f6)", 
+              color: "var(--c-text-muted)", 
+              padding: "2px 8px", 
+              borderRadius: "6px", 
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.5px"
+            }}>
+              Platform Admin
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ fontSize: "0.9rem", color: "var(--c-text-muted)" }}>
+              Live platform overview
+            </span>
+          </div>
+        } 
+      />
+      
+      {/* UI FIX: Added marginTop to separate header from content */}
+      <div className="stack" style={{ marginTop: "1.5rem" }}>
         {attention > 0 && (
           <Alert kind="warn">
             <strong>Needs attention:</strong>{" "}
@@ -120,8 +158,8 @@ function PlatformDashboard({ d, denied, recent }: { d: Platform & Dash; denied: 
           <div className="grid stats">
             <StatCard label="Active providers" value={activeProviders} to="/providers" hint={inactiveProviders ? `${inactiveProviders} inactive` : "None inactive"} />
             <StatCard label="Active branches" value={d.branches_by_status.ACTIVE ?? 0} to="/providers" hint={`${sum(d.branches_by_status)} in total`} />
-            <StatCard label="Enrolled students" value={can("enrollment.manage") ? <StudentCount count={d.students} url="/api/v1/students?status=ACTIVE" title="Enrolled students"
-              context="Every student with at least one active enrollment." /> : d.students} hint={<><Link to="/students">Open the directory</Link> · {d.active_enrollments} active enrollments</>} />
+            {/* FIXED: Use plain number for Platform Dashboard to avoid layout shifts */}
+            <StatCard label="Enrolled students" value={d.students} to="/students" hint={<>{d.active_enrollments} active enrollments</>} />
             <StatCard label="Active staff" value={d.staff} to="/staff" />
             <StatCard label="Platform subjects" value={d.subjects} to="/subjects" hint={`${d.subjects_offered} offered by providers`} />
             <StatCard label="Bank questions" value={d.questions} to="/papers" hint={`${published} published papers`} />
@@ -217,16 +255,50 @@ function StatusCounts({ counts, empty }: { counts?: Record<string, number>; empt
 function RoleDashboard({ data }: { data: Dash }) {
   const { me, can } = useAuth();
   const role = data.role as keyof typeof ROLE_LABEL;
+  const firstName = me?.full_name.split(" ")[0];
+
   return (
     <>
-      <PageHeader subtitle={`Welcome, ${me?.full_name.split(" ")[0]} · ${ROLE_LABEL[role]} · live data`} />
+      {/* UI FIX: Upgraded PageHeader subtitle to match AccountPage style */}
+      <PageHeader 
+        subtitle={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 500, color: "var(--c-text)" }}>
+              Welcome, {firstName}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ 
+              background: "var(--c-bg-muted, #f3f4f6)", 
+              color: "var(--c-text-muted)", 
+              padding: "2px 8px", 
+              borderRadius: "6px", 
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.5px"
+            }}>
+              {ROLE_LABEL[role]}
+            </span>
+            <span style={{ color: "var(--c-text-muted)", fontSize: "0.85rem" }}>•</span>
+            <span style={{ fontSize: "0.9rem", color: "var(--c-text-muted)", display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#10b981" }}></span>
+              Live data
+            </span>
+          </div>
+        } 
+      />
 
-      <div className="stack">
+      {/* UI FIX: Added marginTop to separate header from content */}
+      <div className="stack" style={{ marginTop: "1.5rem" }}>
         <div className="grid stats">
           {data.branches !== undefined && <StatCard label="Active branches" value={n(data.branches)} />}
           {data.teachers !== undefined && <StatCard label="Teachers" value={n(data.teachers)} />}
-          {data.students !== undefined && <StatCard label="Enrolled students" value={can("enrollment.manage") ? <StudentCount count={Number(data.students)} url="/api/v1/students?status=ACTIVE" title="Your enrolled students"
-            context="Students with an active enrollment in your institute or branches." /> : n(data.students)} hint={<Link to="/students">Open the directory</Link>} />}
+          {data.students !== undefined && (
+            <StatCard 
+              label="Enrolled students" 
+              value={can("enrollment.manage") ? <StudentCount count={Number(data.students)} url="/api/v1/students?status=ACTIVE" title="Your enrolled students" context="Students with an active enrollment in your institute or branches." /> : n(data.students)} 
+              hint={<Link to="/students">Open the directory</Link>} 
+            />
+          )}
           {data.batches !== undefined && <StatCard label="Active batches" value={n(data.batches)} to="/batches" />}
           <StatCard label="Upcoming exams" value={n(data.upcoming_exams)} to="/exams" />
           {data.pending_transfers !== undefined && (
@@ -243,11 +315,11 @@ function RoleDashboard({ data }: { data: Dash }) {
         {Array.isArray(data.teaching) && (
           <Card>
             <h2>My teaching assignments</h2>
-            {(data.teaching as { subject: string }[]).length === 0 ? (
+            {data.teaching.length === 0 ? (
               <p className="muted">No teaching assignments yet. Ask your branch admin.</p>
             ) : (
               <ul>
-                {(data.teaching as { subject: string; branch_id: string }[]).map((assignment, index) => (
+                {data.teaching.map((assignment, index) => (
                   <li key={index}>{assignment.subject}</li>
                 ))}
               </ul>

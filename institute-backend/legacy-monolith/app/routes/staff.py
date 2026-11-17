@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-
+from collections import defaultdict
 from app.core import audit, sessions
 from app.core.roles import Role
 from app.core.security import Principal, api_error, can_grant, get_principal
@@ -85,14 +85,24 @@ class TeachingOut(BaseModel):
     status: str
 
 
-def _out(db: Session, s: Staff) -> StaffOut:
-    rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == s.staff_id)).all()
+# def _out(db: Session, s: Staff) -> StaffOut:
+#     rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == s.staff_id)).all()
+#     return StaffOut(
+#         staff_id=s.staff_id, staff_code=s.staff_code, full_name=s.full_name, email=s.email, phone=s.phone,
+#         status=s.status, email_verified=s.email_verified_at is not None,
+#         assignments=[AssignmentOut.model_validate(r) for r in rows], created_at=s.created_at,
+#     )
+def _out(db: Session, s: Staff, assignments: list[StaffRoleAssignment] | None = None) -> StaffOut:
+    if assignments is None:
+        rows = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id == s.staff_id)).all()
+    else:
+        rows = assignments
+        
     return StaffOut(
         staff_id=s.staff_id, staff_code=s.staff_code, full_name=s.full_name, email=s.email, phone=s.phone,
         status=s.status, email_verified=s.email_verified_at is not None,
         assignments=[AssignmentOut.model_validate(r) for r in rows], created_at=s.created_at,
     )
-
 
 def _target_roles(db: Session, staff_id: UUID) -> set[Role]:
     return {Role(r) for r in db.scalars(select(StaffRoleAssignment.role).where(
@@ -207,6 +217,34 @@ def create_staff(body: StaffIn, p: Principal = Depends(get_principal), db: Sessi
     return _out(db, staff)
 
 
+# @router.get("/staff", response_model=Page[StaffOut])
+# def list_staff(q: str | None = Query(default=None, max_length=100), role: Role | None = None, status: str | None = Query(default=None, pattern="^(ACTIVE|INACTIVE)$"),
+#                page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+#     if not p.has_perm("staff.read"):
+#         p.require(db, "staff.read")
+#     stmt = select(Staff)
+#     if not p.is_global:
+#         provs = {a.provider_id for a in p.assignments if Role(a.role) == Role.PROVIDER_ADMIN}
+#         brs = {a.branch_id for a in p.assignments if Role(a.role) == Role.BRANCH_ADMIN}
+#         in_scope = select(StaffRoleAssignment.staff_id).where(or_(
+#             StaffRoleAssignment.provider_id.in_(provs) if provs else False,
+#             StaffRoleAssignment.branch_id.in_(brs) if brs else False))
+#         taught = select(TeacherSubjectAssignment.staff_id).where(
+#             TeacherSubjectAssignment.branch_id.in_(brs) if brs else False)
+#         stmt = stmt.where(or_(Staff.staff_id.in_(in_scope), Staff.staff_id.in_(taught)))
+#     if q:
+#         like = f"%{escape_like(q)}%"
+#         stmt = stmt.where(or_(Staff.full_name.ilike(like, escape="\\"), Staff.email.ilike(like, escape="\\"),
+#                               Staff.staff_code.ilike(like, escape="\\")))
+#     if status:
+#         stmt = stmt.where(Staff.status == status)
+#     if role:
+#         stmt = stmt.where(Staff.staff_id.in_(select(StaffRoleAssignment.staff_id).where(
+#             StaffRoleAssignment.role == role.value, StaffRoleAssignment.status == "ACTIVE")))
+#     res = paginate(db, stmt.order_by(Staff.staff_code), page, page_size)
+#     res["items"] = [_out(db, s) for s in res["items"]]
+#     return res
+
 @router.get("/staff", response_model=Page[StaffOut])
 def list_staff(q: str | None = Query(default=None, max_length=100), role: Role | None = None, status: str | None = Query(default=None, pattern="^(ACTIVE|INACTIVE)$"),
                page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
@@ -231,8 +269,25 @@ def list_staff(q: str | None = Query(default=None, max_length=100), role: Role |
     if role:
         stmt = stmt.where(Staff.staff_id.in_(select(StaffRoleAssignment.staff_id).where(
             StaffRoleAssignment.role == role.value, StaffRoleAssignment.status == "ACTIVE")))
+            
     res = paginate(db, stmt.order_by(Staff.staff_code), page, page_size)
-    res["items"] = [_out(db, s) for s in res["items"]]
+    
+    staff_items = res["items"]
+    if not staff_items:
+        return res
+        
+    # FETCH ALL ASSIGNMENTS IN ONE QUERY
+    staff_ids = [s.staff_id for s in staff_items]
+    all_assignments = db.scalars(select(StaffRoleAssignment).where(StaffRoleAssignment.staff_id.in_(staff_ids))).all()
+    
+    # GROUP THEM IN MEMORY
+    from collections import defaultdict
+    assignments_by_staff = defaultdict(list)
+    for a in all_assignments:
+        assignments_by_staff[a.staff_id].append(a)
+        
+    # BUILD THE OUTPUT WITHOUT HITTING THE DB AGAIN
+    res["items"] = [_out(db, s, assignments_by_staff.get(s.staff_id, [])) for s in staff_items]
     return res
 
 

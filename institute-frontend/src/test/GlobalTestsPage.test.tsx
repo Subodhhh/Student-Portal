@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { fail, me, page, stubApi, type Call } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { fail, me, page, stubApi, type Call } from "./stubApi";
 
 const TEST = { test_id: "gt1", name: "National Mock #3", description: null, exam_type: null, target_class: null, duration_minutes: 60, status: "PUBLISHED",
   derived_from_test_id: null, created_at: "2026-10-10T00:00:00Z", published_at: "2026-10-11T00:00:00Z", publisher: "Platform", question_count: 20, total_marks: "80.00",

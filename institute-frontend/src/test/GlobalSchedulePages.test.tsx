@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { fail, me, page, stubApi, type Call } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { fail, me, page, stubApi, type Call } from "./stubApi";
 
 const SUBJECTS = page([{ subject_id: "phy", name: "Physics", status: "ACTIVE" }, { subject_id: "chem", name: "Chemistry", status: "ACTIVE" }]);
 const test_ = (over: Record<string, unknown> = {}) => ({ test_id: "gt1", name: "National Mock", description: null, exam_type: "NEET", target_class: null, duration_minutes: 60,

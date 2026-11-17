@@ -33,6 +33,25 @@ services:
       retries: 5
     networks:
       - student-portal-network
+  postgres:
+    image: postgres:16-alpine
+    container_name: student-portal-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=your_super_secret_master_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - student-portal-network
 
   # ---- Student Portal -----------------------------------------------------------------------------------------------------
   student-authentication-service:
@@ -434,6 +453,7 @@ services:
       - student-portal-network
 
 volumes:
+  postgres_data:
   institute-files:
 
 networks:

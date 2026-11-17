@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { me, page, stubApi } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { me, page, stubApi } from "./stubApi";
 
 const row = (over: Record<string, unknown> = {}) => ({ plan_id: "pl1", test_type: "DAILY", series_id: null, global_test_id: null, exam_id: "e1",
   exam_version_id: "v1", name: "Physics Daily", state: "PUBLISHED", plan_status: "ACTIVE", exam_status: "PUBLISHED", delivery_status: "SENT", error: null,

@@ -40,7 +40,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-engine = create_engine(settings.database_url)
+engine = create_engine(
+    settings.database_url,
+    pool_size=10,          # Keep 10 connections open
+    max_overflow=20,       # Allow 20 temp connections
+    pool_pre_ping=True,    # Verify connection is alive
+    pool_recycle=1800
+)
 
 
 @event.listens_for(engine, "checkin")

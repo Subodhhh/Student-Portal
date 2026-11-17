@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { fail, me, page, stubApi, type Call } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { fail, me, page, stubApi, type Call } from "./stubApi";
 
 const SCOPE = { provider_id: "p1", provider_name: "Alpha Academy", branches: [
   { branch_id: "b1", name: "Pune", whole_branch_allowed: true, batches: [{ batch_id: "ba", name: "NEET A" }], subjects: [{ subject_id: "phy", name: "Physics" }] }] };

@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../auth/AuthContext";
 import { ScopeProvider } from "../auth/ScopeContext";
-import CompositePage from "./CompositePage";
+import CompositePage from "../pages/CompositePage";
 
 const ME = { staff_id: "s1", staff_code: "STF000001", full_name: "Pat Provider", email: "p@x.io", primary_role: "PROVIDER_ADMIN", assignments: [], permissions: ["examplan.manage", "paper.publish"], csrf_token: "c" };
 const PROVIDER = { provider_id: "p1", name: "Alpha Institute", status: "ACTIVE", email: "a@x.io" };

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/renderApp";
-import { me, page, stubApi } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { me, page, stubApi } from "./stubApi";
 
 const SA = me("SUPER_ADMIN", ["subject.manage", "provider.read", "batch.manage", "teaching.assign"]);
 const PHY = { subject_id: "s1", code: "PHYSICS", name: "Physics", status: "ACTIVE" };

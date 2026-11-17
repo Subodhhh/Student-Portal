@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassTargetSelect } from "../components/classLevels";
-import { renderApp } from "../test/renderApp";
-import { me, page, stubApi } from "../test/stubApi";
+import { renderApp } from "./renderApp";
+import { me, page, stubApi } from "./stubApi";
 
 const PHY = { subject_id: "phy", name: "Physics" };
 const A = { batch_id: "A", name: "NEET 11", status: "ACTIVE", default_class_level: "11TH", default_academic_year: "2026-2027", default_other_description: null };
