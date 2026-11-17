@@ -17,4 +17,4 @@ defusedxml==0.7.1
 # PDF generation dependencies; Pillow is pinned here for consistent versions across Institute services and CI.
 reportlab==4.2.5
 chardet==7.7.0
-Pillow==11.0.0
+Pillow==13.0.0
