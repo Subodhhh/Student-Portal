@@ -232,7 +232,7 @@ def _orbital_spans(text: str, words: list[tuple[str, int]], offset: int) -> tupl
             nxt = words[k][0].lower().strip(".,;:!?") if k < len(words) else ""
             alone = len(words) == len(run)
             if len(run) > 1 or run[0][1][1] or nxt in _ORB_WORDS or alone:
-                (w0, s0), (wl, sl) = run[0][0], run[-1][0]
+                (_, s0), (wl, sl) = run[0][0], run[-1][0]
                 spans.append(ChemSpan(offset + s0, offset + sl + len(wl), text[s0:sl + len(wl)], r"\,".join(o[0] for _, o in run)))
                 used.update(s for (_, s), _ in run)
         else:

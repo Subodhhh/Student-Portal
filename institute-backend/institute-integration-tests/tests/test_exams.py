@@ -50,7 +50,7 @@ def ctx(client, world, make_staff, login, db_factory):
     return c
 
 
-def make_paper(db_factory, provider, branch, subject, title, status, n=3, marks="4", neg="1", paper_id=None, version_no=1):
+def make_paper(db_factory, provider, branch, subject, title, status, n=3, marks="4", neg="1", paper_id=None, version_no=1, **question):
     from institute_common.models.papers import Paper, PaperVersion, PaperVersionQuestion, Question, QuestionVersion
     from uuid import uuid4
     import hashlib
@@ -68,8 +68,10 @@ def make_paper(db_factory, provider, branch, subject, title, status, n=3, marks=
             q = Question(provider_id=provider, branch_id=branch, subject_id=subject, owner_staff_id=uuid4())
             db.add(q)
             db.flush()
-            qv = QuestionVersion(question_id=q.question_id, version_no=1, stem=f"{title} Q{i}", option_a="a", option_b="b", option_c="c",
-                                 option_d="d", correct_option="A", marks_positive=Decimal(marks), marks_negative=Decimal(neg), created_by=uuid4())
+            # question_versions is append-only: any field a test needs (e.g. picture ids) is set here, at creation
+            qv = QuestionVersion(**{"question_id": q.question_id, "version_no": 1, "stem": f"{title} Q{i}", "option_a": "a", "option_b": "b",
+                                    "option_c": "c", "option_d": "d", "correct_option": "A", "marks_positive": Decimal(marks),
+                                    "marks_negative": Decimal(neg), "created_by": uuid4(), **question})
             db.add(qv)
             db.flush()
             db.add(PaperVersionQuestion(paper_version_id=pv.paper_version_id, position=i, question_version_id=qv.question_version_id))
@@ -457,10 +459,8 @@ class PicturePublisher(FakePublisher):
 
 def test_an_exam_with_pictures_names_them_and_uploads_missing_ones_first(client, world, ctx, pa, login, db_factory):
     import hashlib
-    from institute_common.models.papers import QuestionImageAsset, QuestionVersion
+    from institute_common.models.papers import QuestionImageAsset
     h = login(pa)
-    plan = create_plan(client, h, world, ctx)
-    client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", json={}, headers=h)
     pictures = {name: b"\x89PNG\r\n\x1a\n" + name.encode() for name in ("stem", "opt")}
     sums = {name: hashlib.sha256(data).hexdigest() for name, data in pictures.items()}
     with db_factory() as db:
@@ -471,9 +471,14 @@ def test_an_exam_with_pictures_names_them_and_uploads_missing_ones_first(client,
             db.add(a)
             db.flush()
             assets[name] = a.asset_id
-        for qv in db.query(QuestionVersion).all():          # every question: a picture and a picture option A
-            qv.stem_image_id, qv.option_a_image_id, qv.option_a = assets["stem"], assets["opt"], ""
         db.commit()
+    # A new published version of the Physics paper whose questions carry a picture and a picture option A from creation
+    # (question versions are never edited); generation takes the latest published version.
+    make_paper(db_factory, world["p1"], world["p1b1"], ctx["phy"], "Physics Mock", "PUBLISHED", paper_id=ctx["phy_paper"], version_no=2,
+               stem_image_id=assets["stem"], option_a_image_id=assets["opt"], option_a="")
+    plan = create_plan(client, h, world, ctx)
+    assert client.post(f"{API}/exam-plans/{plan['plan_id']}/generate", json={}, headers=h).status_code == 200
+    with db_factory() as db:
         pub = PicturePublisher(held={sums["stem"]})
         assert outbox.deliver_due(db, pub)["sent"] == 1
     q = pub.sent[0]["questions"][0]

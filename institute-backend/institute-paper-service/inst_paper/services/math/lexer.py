@@ -453,7 +453,7 @@ def _is_whole_formula(toks: list[Tok]) -> bool:
     if not any(t.kind == "NUM" for t in toks) and letters and all(str(t.value).isupper() for t in letters):
         return False
     return any(t.kind in ("SLASH", "ADD", "MUL", "SUP", "SUB", "ROOT") for t in toks) or any(
-        a.kind == "NUM" and b.kind in ("VAR", "POINTS", "GREEK") and not b.space for a, b in zip(toks, toks[1:]))
+        a.kind == "NUM" and b.kind in ("VAR", "POINTS", "GREEK") and not b.space for a, b in zip(toks, toks[1:], strict=False))
 
 
 def _is_whole_quantity(toks: list[Tok]) -> bool:
