@@ -1,0 +1,3 @@
+# Computer 2 only needs these two: the generator is standard library plus the PostgreSQL driver. tzdata: Windows has no zone database.
+psycopg[binary]==3.2.10
+tzdata

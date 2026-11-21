@@ -1,0 +1,93 @@
+{
+  "_comment": "Branch guard targets (no secrets: IDs only). Expected IDs are pinned with `lt.sh guard pin <target> --confirm <id>` after the user confirms what `lt.sh guard identify` reports. Deny lists hold the DEVELOPMENT branches, which load tests must never touch.",
+  "deny": {
+    "branch_ids": [
+      "br-morning-paper-b8tphpl3",
+      "br-old-moon-b8rqkho1"
+    ],
+    "endpoint_ids": [
+      "ep-dark-heart-b8aehym2",
+      "ep-snowy-unit-b875nn0h"
+    ]
+  },
+  "targets": {
+    "neon-student": {
+      "kind": "neon",
+      "env_file": "neon/student.env",
+      "project_id": "red-cloud-37130434",
+      "branch_name": "load_test_student",
+      "branch_id": "br-small-block-b86dsmnr",
+      "endpoint_id": "ep-curly-queen-b8qkhy83",
+      "database": "Institute_Student_Platform_dev"
+    },
+    "neon-institute": {
+      "kind": "neon",
+      "env_file": "neon/institute.env",
+      "project_id": "red-cloud-37130434",
+      "branch_name": "load_test_institute",
+      "branch_id": "br-shy-hill-b8v2hdtl",
+      "endpoint_id": "ep-holy-sky-b8lu3mkq",
+      "database": "Institute_Student_Platform_dev"
+    },
+    "local-student": {
+      "kind": "local",
+      "env_file": "local/student.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_student",
+      "identity": "7704214760763064363:16389"
+    },
+    "local-institute": {
+      "kind": "local",
+      "env_file": "local/institute.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_institute",
+      "identity": "7704214760763064363:16388"
+    },
+    "stage2-student": {
+      "kind": "local",
+      "env_file": "stage2/student.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_stage2_student",
+      "identity": "7704214760763064363:25523"
+    },
+    "stage2-institute": {
+      "kind": "local",
+      "env_file": "stage2/institute.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_stage2_institute",
+      "identity": "7704214760763064363:25524"
+    },
+    "lantest-student": {
+      "kind": "local",
+      "env_file": "lantest/student.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_lantest_student",
+      "identity": null
+    },
+    "lantest-institute": {
+      "kind": "local",
+      "env_file": "lantest/institute.env",
+      "connect_host": "127.0.0.1:15432",
+      "database": "lt_lantest_institute",
+      "identity": null
+    }
+  },
+  "pairs": {
+    "neon": [
+      "neon-student",
+      "neon-institute"
+    ],
+    "local": [
+      "local-student",
+      "local-institute"
+    ],
+    "stage2": [
+      "stage2-student",
+      "stage2-institute"
+    ],
+    "lantest": [
+      "lantest-student",
+      "lantest-institute"
+    ]
+  }
+}

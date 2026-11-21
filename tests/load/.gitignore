@@ -1,0 +1,5 @@
+# Real env files (credentials, keys) are already ignored by the root rules (*.env, .venv/); kept explicit here.
+config/**/*.env
+!config/**/*.env.example
+.venv/
+results/

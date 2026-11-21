@@ -1,0 +1,409 @@
+# Isolated load-test stack: an OVERRIDE of the root docker-compose.yml (which is never edited).
+# Always run through tests/load/lt.sh, which pins the project name, the interpolation file and the target:
+#   docker compose --project-directory . -p student-portal-loadtest --env-file tests/load/config/compose.env \
+#                  -f docker-compose.yml -f tests/load/compose.loadtest.yml ...
+# Isolation from the dev stack (project "student-portal"):
+#   * project name student-portal-loadtest -> its own default network, the "institute-files" volume becomes
+#     student-portal-loadtest_institute-files, and every container is renamed lt-*;
+#   * the dev edge network (fixed name/subnet, public tunnel) is detached from every service;
+#   * images are tagged loadtest/<service>:${LT_TAG}, so building never overwrites the dev :latest images;
+#   * host ports 18xxx bound to 127.0.0.1 only; restart "no" (nothing restarts by itself after a reboot);
+#   * env files come from tests/load/config/${LT_TARGET}/ (neon | local), never from deploy/;
+#   * service keys come from tests/load/config/compose.env (its own keys), never from the root .env.
+# Every service belongs to a profile, so nothing starts unless lt.sh asks for that operating mode.
+name: student-portal-loadtest
+
+# Anchors carry the !override tag themselves (YAML forbids a tag on an alias): the base file's deploy/ env files are REPLACED.
+x-lt-student-env: &lt_student_env !override
+  - {path: "${LT_CONFIG_DIR:-./tests/load/config}/${LT_TARGET:?LT_TARGET must be neon or local}/student.env", required: true}
+x-lt-institute-env: &lt_institute_env !override
+  - {path: "${LT_CONFIG_DIR:-./tests/load/config}/${LT_TARGET:?LT_TARGET must be neon or local}/institute.env", required: true}
+# Background writers. `environment:` takes precedence over every env file, so an env file can never switch one on. All are OFF;
+# only the reference sync is interpolated, from LT_REFERENCE_SYNC_INTERVAL_SECONDS, which lt.sh always sets itself (0 for `up app`,
+# 15 for `up app-stage1`). The exam worker has no switch: it lives in profile `worker`, which no lt.sh mode starts.
+x-lt-institute-jobs: &lt_institute_jobs
+  REFERENCE_SYNC_INTERVAL_SECONDS: "${LT_REFERENCE_SYNC_INTERVAL_SECONDS:-0}"
+  AUDIT_FORWARD_INTERVAL_SECONDS: "0"
+x-lt-student-jobs: &lt_student_jobs
+  ATTEMPT_EXPIRY_SWEEP_SECONDS: "0"
+  AUTO_EVALUATION_INTERVAL_SECONDS: "0"
+
+services:
+  redis:
+    container_name: lt-redis
+    restart: "no"
+    profiles: [app]
+    ports: !override ["127.0.0.1:16379:6379"]
+    mem_limit: 128m
+    networks: !override
+      student-portal-network:
+        aliases: [student-auth-redis]   # the base file addresses Redis by the dev container name; resolved only on this project's network
+
+  # ---- Student services ----------------------------------------------------------------------------------------------------
+  student-authentication-service:
+    image: loadtest/student-authentication-service:${LT_TAG:-local}
+    container_name: lt-student-authentication-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18002:8000"]
+    networks: !override [student-portal-network]
+    mem_limit: 256m        # Argon2 needs 64 MiB per concurrent login
+    cpus: 1.0
+
+  student-profile-service:
+    image: loadtest/student-profile-service:${LT_TAG:-local}
+    container_name: lt-student-profile-service
+    restart: "no"
+    profiles: [optional]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18003:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 160m
+    cpus: 0.5
+
+  student-enrollment-service:
+    image: loadtest/student-enrollment-service:${LT_TAG:-local}
+    container_name: lt-student-enrollment-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18004:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 160m
+    cpus: 0.5
+
+  student-test-service:
+    image: loadtest/student-test-service:${LT_TAG:-local}
+    container_name: lt-student-test-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18005:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 192m
+    cpus: 0.75
+
+  student-attempt-service:
+    image: loadtest/student-attempt-service:${LT_TAG:-local}
+    container_name: lt-student-attempt-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18006:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 192m
+    cpus: 1.0
+
+  student-result-service:
+    image: loadtest/student-result-service:${LT_TAG:-local}
+    container_name: lt-student-result-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18007:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 160m
+    cpus: 0.5
+
+  student-ranking-service:
+    image: loadtest/student-ranking-service:${LT_TAG:-local}
+    container_name: lt-student-ranking-service
+    restart: "no"
+    profiles: [optional]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18008:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 160m
+    cpus: 0.5
+
+  student-notification-service:
+    image: loadtest/student-notification-service:${LT_TAG:-local}
+    container_name: lt-student-notification-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_student_env
+    environment: *lt_student_jobs
+    ports: !override ["127.0.0.1:18009:8001"]
+    networks: !override [student-portal-network]
+    mem_limit: 160m
+    cpus: 0.5
+
+  # The frontends bake http://localhost:80xx (the DEV ports) into their bundles: never started by the load stack.
+  student-portal-frontend:
+    image: loadtest/student-portal-frontend:${LT_TAG:-local}
+    container_name: lt-student-portal-frontend
+    restart: "no"
+    profiles: [never]
+    ports: !override ["127.0.0.1:18080:80"]
+
+  # ---- Institute services --------------------------------------------------------------------------------------------------
+  institute-identity-service:
+    image: loadtest/institute-identity-service:${LT_TAG:-local}
+    container_name: lt-institute-identity-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 256m        # Argon2 staff logins
+    cpus: 1.0
+
+  institute-organization-service:
+    image: loadtest/institute-organization-service:${LT_TAG:-local}
+    container_name: lt-institute-organization-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 192m
+    cpus: 0.5
+
+  institute-academics-service:
+    image: loadtest/institute-academics-service:${LT_TAG:-local}
+    container_name: lt-institute-academics-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 192m
+    cpus: 0.5
+
+  institute-enrollment-service:
+    image: loadtest/institute-enrollment-service:${LT_TAG:-local}
+    container_name: lt-institute-enrollment-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 256m        # the reference sync holds a full snapshot in memory
+    cpus: 0.75
+
+  institute-paper-service:
+    image: loadtest/institute-paper-service:${LT_TAG:-local}
+    container_name: lt-institute-paper-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 256m
+    cpus: 0.75
+
+  institute-exam-service:
+    image: loadtest/institute-exam-service:${LT_TAG:-local}
+    container_name: lt-institute-exam-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 256m
+    cpus: 0.75
+
+  # Generates due exam plans, delivers outboxes, syncs attempts, sends notifications, forwards audit: it would act on rows inherited
+  # from the parent branches. Opt-in only (profile `worker`); no lt.sh mode starts it, Stage 1 does not need it.
+  institute-exam-worker:
+    image: loadtest/institute-exam-service:${LT_TAG:-local}
+    container_name: lt-institute-exam-worker
+    restart: "no"
+    profiles: [worker]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 256m
+    cpus: 0.75
+
+  institute-operations-service:
+    image: loadtest/institute-operations-service:${LT_TAG:-local}
+    container_name: lt-institute-operations-service
+    restart: "no"
+    profiles: [app]
+    env_file: *lt_institute_env
+    environment: *lt_institute_jobs
+    mem_limit: 160m
+    cpus: 0.5
+
+  institute-gateway:
+    image: loadtest/institute-gateway:${LT_TAG:-local}
+    container_name: lt-institute-gateway
+    restart: "no"
+    profiles: [app]
+    ports: !override ["127.0.0.1:18010:80"]
+    networks: !override [student-portal-network]
+    mem_limit: 64m
+    cpus: 0.5
+
+  institute-portal-frontend:
+    image: loadtest/institute-portal-frontend:${LT_TAG:-local}
+    container_name: lt-institute-portal-frontend
+    restart: "no"
+    profiles: [never]
+    ports: !override ["127.0.0.1:18081:80"]
+
+  # Legacy monolith: never part of the load stack (renamed anyway so a stray --profile legacy cannot collide with dev).
+  institute-backend:
+    image: loadtest/institute-backend:${LT_TAG:-local}
+    container_name: lt-institute-backend
+    profiles: [never]
+    env_file: !reset []      # its legacy .env is not part of the load-test environment
+    ports: !override ["127.0.0.1:18012:8001"]
+  institute-worker:
+    image: loadtest/institute-backend:${LT_TAG:-local}
+    container_name: lt-institute-worker
+    profiles: [never]
+    env_file: !reset []
+
+  # ---- Local PostgreSQL (Stages 2-3): ONE cluster, two databases with separate owner roles (initdb/10-roles-and-databases.sh) ----
+  lt-postgres:
+    image: postgres:18
+    container_name: lt-postgres
+    restart: "no"
+    profiles: [db]
+    env_file:
+      - {path: "${LT_CONFIG_DIR:-./tests/load/config}/local/postgres.env", required: true}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=128MB
+    ports: ["127.0.0.1:15432:5432"]
+    volumes:
+      - lt-pgdata:/var/lib/postgresql
+      - ./tests/load/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 768m
+    cpus: 2.0
+    networks: [student-portal-network]
+
+  # ---- Monitoring (free / open source) --------------------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: lt-prometheus
+    restart: "no"
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=14d
+      - --storage.tsdb.retention.size=1GB
+      - --web.enable-remote-write-receiver        # k6 (Computers 1-3) pushes its samples here
+      - --enable-feature=native-histograms        # mergeable p50/p95/p99 across generators
+    ports: ["127.0.0.1:19090:9090"]
+    volumes:
+      - ./tests/load/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - lt-prometheus:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"     # the host-side Docker stats sampler (127.0.0.1:19101 on WSL)
+    mem_limit: 384m
+    cpus: 0.5
+    networks: [student-portal-network]
+
+  grafana:
+    image: grafana/grafana-oss:12.1.1
+    container_name: lt-grafana
+    restart: "no"
+    profiles: [monitoring]
+    env_file:
+      - {path: "${LT_CONFIG_DIR:-./tests/load/config}/monitoring.env", required: true}
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    ports: ["127.0.0.1:13000:3000"]
+    volumes:
+      - ./tests/load/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - lt-grafana:/var/lib/grafana
+    mem_limit: 256m                      # 137 MiB used at idle in the 2026-11-03 test (71 % of the former 192 MiB)
+    cpus: 0.5
+    networks: [student-portal-network]
+
+  # DISABLED (profile never): on Docker Desktop cAdvisor reports no per-container series ("failed to identify the read-write
+  # layer"); container CPU/RAM come from the host-side sampler (monitoring/docker_stats_exporter.py, `lt.sh sampler start`).
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    container_name: lt-cadvisor
+    restart: "no"
+    profiles: [never]
+    privileged: true                     # cAdvisor reads cgroups of every container (Docker Desktop VM); local only
+    command: ["--docker_only=true", "--housekeeping_interval=10s", "--store_container_labels=false",
+              "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    mem_limit: 160m
+    cpus: 0.5
+    networks: [student-portal-network]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: lt-redis-exporter
+    restart: "no"
+    profiles: [monitoring]
+    environment:
+      REDIS_ADDR: redis://student-auth-redis:6379
+    mem_limit: 48m
+    cpus: 0.25
+    networks: [student-portal-network]
+
+  postgres-exporter:                     # local PostgreSQL only (Neon is watched through its console and pg_* views)
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: lt-postgres-exporter
+    restart: "no"
+    profiles: [monitoring-db]
+    env_file:
+      - {path: "${LT_CONFIG_DIR:-./tests/load/config}/local/postgres.env", required: true}   # uses DATA_SOURCE_USER / DATA_SOURCE_PASS only
+    environment:
+      DATA_SOURCE_URI: lt-postgres:5432/postgres?sslmode=disable
+    command: ["--collector.stat_statements", "--collector.stat_activity_autovacuum", "--collector.database"]
+    mem_limit: 64m
+    cpus: 0.25
+    networks: [student-portal-network]
+
+  # ---- k6 on Computer 1 (co-located runs only; Computers 2-3 run k6 natively and remote-write to Prometheus) ----------------
+  k6:
+    image: grafana/k6:1.1.0
+    container_name: lt-k6
+    profiles: [k6]
+    environment:
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: "true"
+    volumes:
+      - ./tests/load/k6:/scripts:ro
+      - ./tests/load/results:/results
+    mem_limit: 768m
+    cpus: 2.0
+    networks: [student-portal-network]
+
+volumes:
+  lt-pgdata:
+  lt-prometheus:
+  lt-grafana:
+
+networks:
+  student-portal-edge: !reset null

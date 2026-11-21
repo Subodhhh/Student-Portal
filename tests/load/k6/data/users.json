@@ -1,0 +1,4002 @@
+[
+{
+"id": "STU120261",
+"complete_attempts": 26
+},
+{
+"id": "STU131276",
+"complete_attempts": 30
+},
+{
+"id": "STU135946",
+"complete_attempts": 28
+},
+{
+"id": "STU148311",
+"complete_attempts": 18
+},
+{
+"id": "STU101984",
+"complete_attempts": 12
+},
+{
+"id": "STU122152",
+"complete_attempts": 18
+},
+{
+"id": "STU137555",
+"complete_attempts": 46
+},
+{
+"id": "STU100645",
+"complete_attempts": 26
+},
+{
+"id": "STU107105",
+"complete_attempts": 12
+},
+{
+"id": "STU144262",
+"complete_attempts": 17
+},
+{
+"id": "STU136381",
+"complete_attempts": 28
+},
+{
+"id": "STU102759",
+"complete_attempts": 17
+},
+{
+"id": "STU143374",
+"complete_attempts": 18
+},
+{
+"id": "STU115567",
+"complete_attempts": 18
+},
+{
+"id": "STU145578",
+"complete_attempts": 18
+},
+{
+"id": "STU123249",
+"complete_attempts": 18
+},
+{
+"id": "STU111213",
+"complete_attempts": 15
+},
+{
+"id": "STU127749",
+"complete_attempts": 26
+},
+{
+"id": "STU128262",
+"complete_attempts": 30
+},
+{
+"id": "STU120634",
+"complete_attempts": 43
+},
+{
+"id": "STU110792",
+"complete_attempts": 17
+},
+{
+"id": "STU130940",
+"complete_attempts": 15
+},
+{
+"id": "STU148796",
+"complete_attempts": 16
+},
+{
+"id": "STU148228",
+"complete_attempts": 17
+},
+{
+"id": "STU147785",
+"complete_attempts": 31
+},
+{
+"id": "STU137394",
+"complete_attempts": 48
+},
+{
+"id": "STU143739",
+"complete_attempts": 15
+},
+{
+"id": "STU130321",
+"complete_attempts": 19
+},
+{
+"id": "STU117653",
+"complete_attempts": 19
+},
+{
+"id": "STU140317",
+"complete_attempts": 20
+},
+{
+"id": "STU120458",
+"complete_attempts": 19
+},
+{
+"id": "STU114911",
+"complete_attempts": 9
+},
+{
+"id": "STU121392",
+"complete_attempts": 12
+},
+{
+"id": "STU103516",
+"complete_attempts": 33
+},
+{
+"id": "STU130554",
+"complete_attempts": 10
+},
+{
+"id": "STU147661",
+"complete_attempts": 16
+},
+{
+"id": "STU101173",
+"complete_attempts": 14
+},
+{
+"id": "STU149535",
+"complete_attempts": 9
+},
+{
+"id": "STU134048",
+"complete_attempts": 17
+},
+{
+"id": "STU147832",
+"complete_attempts": 8
+},
+{
+"id": "STU136936",
+"complete_attempts": 13
+},
+{
+"id": "STU142342",
+"complete_attempts": 10
+},
+{
+"id": "STU118858",
+"complete_attempts": 19
+},
+{
+"id": "STU124005",
+"complete_attempts": 14
+},
+{
+"id": "STU101223",
+"complete_attempts": 14
+},
+{
+"id": "STU144496",
+"complete_attempts": 34
+},
+{
+"id": "STU121613",
+"complete_attempts": 15
+},
+{
+"id": "STU130035",
+"complete_attempts": 9
+},
+{
+"id": "STU142346",
+"complete_attempts": 30
+},
+{
+"id": "STU103881",
+"complete_attempts": 27
+},
+{
+"id": "STU110149",
+"complete_attempts": 60
+},
+{
+"id": "STU149167",
+"complete_attempts": 17
+},
+{
+"id": "STU110445",
+"complete_attempts": 10
+},
+{
+"id": "STU133203",
+"complete_attempts": 15
+},
+{
+"id": "STU142014",
+"complete_attempts": 6
+},
+{
+"id": "STU113625",
+"complete_attempts": 17
+},
+{
+"id": "STU100482",
+"complete_attempts": 9
+},
+{
+"id": "STU125005",
+"complete_attempts": 32
+},
+{
+"id": "STU135998",
+"complete_attempts": 18
+},
+{
+"id": "STU106103",
+"complete_attempts": 15
+},
+{
+"id": "STU116160",
+"complete_attempts": 14
+},
+{
+"id": "STU107659",
+"complete_attempts": 11
+},
+{
+"id": "STU135628",
+"complete_attempts": 16
+},
+{
+"id": "STU130172",
+"complete_attempts": 16
+},
+{
+"id": "STU140052",
+"complete_attempts": 14
+},
+{
+"id": "STU123372",
+"complete_attempts": 17
+},
+{
+"id": "STU143150",
+"complete_attempts": 33
+},
+{
+"id": "STU121629",
+"complete_attempts": 31
+},
+{
+"id": "STU116102",
+"complete_attempts": 16
+},
+{
+"id": "STU109886",
+"complete_attempts": 8
+},
+{
+"id": "STU128390",
+"complete_attempts": 13
+},
+{
+"id": "STU121437",
+"complete_attempts": 17
+},
+{
+"id": "STU136919",
+"complete_attempts": 11
+},
+{
+"id": "STU108814",
+"complete_attempts": 15
+},
+{
+"id": "STU112115",
+"complete_attempts": 15
+},
+{
+"id": "STU137437",
+"complete_attempts": 47
+},
+{
+"id": "STU109087",
+"complete_attempts": 18
+},
+{
+"id": "STU124631",
+"complete_attempts": 16
+},
+{
+"id": "STU110407",
+"complete_attempts": 14
+},
+{
+"id": "STU139515",
+"complete_attempts": 41
+},
+{
+"id": "STU119550",
+"complete_attempts": 16
+},
+{
+"id": "STU130202",
+"complete_attempts": 14
+},
+{
+"id": "STU122958",
+"complete_attempts": 11
+},
+{
+"id": "STU129337",
+"complete_attempts": 27
+},
+{
+"id": "STU119753",
+"complete_attempts": 14
+},
+{
+"id": "STU130498",
+"complete_attempts": 8
+},
+{
+"id": "STU145209",
+"complete_attempts": 15
+},
+{
+"id": "STU103089",
+"complete_attempts": 16
+},
+{
+"id": "STU108413",
+"complete_attempts": 13
+},
+{
+"id": "STU116200",
+"complete_attempts": 10
+},
+{
+"id": "STU100141",
+"complete_attempts": 15
+},
+{
+"id": "STU129335",
+"complete_attempts": 50
+},
+{
+"id": "STU101880",
+"complete_attempts": 29
+},
+{
+"id": "STU147094",
+"complete_attempts": 13
+},
+{
+"id": "STU116815",
+"complete_attempts": 32
+},
+{
+"id": "STU111595",
+"complete_attempts": 14
+},
+{
+"id": "STU138262",
+"complete_attempts": 15
+},
+{
+"id": "STU128171",
+"complete_attempts": 14
+},
+{
+"id": "STU129699",
+"complete_attempts": 15
+},
+{
+"id": "STU115962",
+"complete_attempts": 32
+},
+{
+"id": "STU101016",
+"complete_attempts": 15
+},
+{
+"id": "STU113217",
+"complete_attempts": 34
+},
+{
+"id": "STU125549",
+"complete_attempts": 15
+},
+{
+"id": "STU100508",
+"complete_attempts": 9
+},
+{
+"id": "STU105878",
+"complete_attempts": 33
+},
+{
+"id": "STU126453",
+"complete_attempts": 44
+},
+{
+"id": "STU143451",
+"complete_attempts": 18
+},
+{
+"id": "STU144985",
+"complete_attempts": 30
+},
+{
+"id": "STU125510",
+"complete_attempts": 10
+},
+{
+"id": "STU145715",
+"complete_attempts": 12
+},
+{
+"id": "STU114220",
+"complete_attempts": 14
+},
+{
+"id": "STU109297",
+"complete_attempts": 13
+},
+{
+"id": "STU143399",
+"complete_attempts": 13
+},
+{
+"id": "STU138502",
+"complete_attempts": 18
+},
+{
+"id": "STU126559",
+"complete_attempts": 16
+},
+{
+"id": "STU116759",
+"complete_attempts": 18
+},
+{
+"id": "STU128188",
+"complete_attempts": 16
+},
+{
+"id": "STU140567",
+"complete_attempts": 16
+},
+{
+"id": "STU106393",
+"complete_attempts": 29
+},
+{
+"id": "STU102500",
+"complete_attempts": 17
+},
+{
+"id": "STU128412",
+"complete_attempts": 17
+},
+{
+"id": "STU119384",
+"complete_attempts": 26
+},
+{
+"id": "STU134722",
+"complete_attempts": 15
+},
+{
+"id": "STU118932",
+"complete_attempts": 26
+},
+{
+"id": "STU125430",
+"complete_attempts": 15
+},
+{
+"id": "STU144543",
+"complete_attempts": 46
+},
+{
+"id": "STU133835",
+"complete_attempts": 13
+},
+{
+"id": "STU119028",
+"complete_attempts": 51
+},
+{
+"id": "STU122450",
+"complete_attempts": 15
+},
+{
+"id": "STU100883",
+"complete_attempts": 17
+},
+{
+"id": "STU100664",
+"complete_attempts": 14
+},
+{
+"id": "STU130829",
+"complete_attempts": 30
+},
+{
+"id": "STU130868",
+"complete_attempts": 12
+},
+{
+"id": "STU131164",
+"complete_attempts": 12
+},
+{
+"id": "STU101976",
+"complete_attempts": 10
+},
+{
+"id": "STU118495",
+"complete_attempts": 37
+},
+{
+"id": "STU119146",
+"complete_attempts": 29
+},
+{
+"id": "STU109331",
+"complete_attempts": 16
+},
+{
+"id": "STU118807",
+"complete_attempts": 29
+},
+{
+"id": "STU132817",
+"complete_attempts": 28
+},
+{
+"id": "STU124917",
+"complete_attempts": 16
+},
+{
+"id": "STU143769",
+"complete_attempts": 15
+},
+{
+"id": "STU115127",
+"complete_attempts": 59
+},
+{
+"id": "STU119857",
+"complete_attempts": 16
+},
+{
+"id": "STU107021",
+"complete_attempts": 12
+},
+{
+"id": "STU146461",
+"complete_attempts": 12
+},
+{
+"id": "STU116727",
+"complete_attempts": 17
+},
+{
+"id": "STU134752",
+"complete_attempts": 16
+},
+{
+"id": "STU142625",
+"complete_attempts": 24
+},
+{
+"id": "STU140023",
+"complete_attempts": 19
+},
+{
+"id": "STU109048",
+"complete_attempts": 32
+},
+{
+"id": "STU132730",
+"complete_attempts": 31
+},
+{
+"id": "STU123306",
+"complete_attempts": 17
+},
+{
+"id": "STU138845",
+"complete_attempts": 26
+},
+{
+"id": "STU118840",
+"complete_attempts": 15
+},
+{
+"id": "STU106481",
+"complete_attempts": 25
+},
+{
+"id": "STU119546",
+"complete_attempts": 10
+},
+{
+"id": "STU115094",
+"complete_attempts": 14
+},
+{
+"id": "STU123961",
+"complete_attempts": 41
+},
+{
+"id": "STU105756",
+"complete_attempts": 34
+},
+{
+"id": "STU148183",
+"complete_attempts": 16
+},
+{
+"id": "STU100750",
+"complete_attempts": 34
+},
+{
+"id": "STU114675",
+"complete_attempts": 29
+},
+{
+"id": "STU102723",
+"complete_attempts": 17
+},
+{
+"id": "STU117887",
+"complete_attempts": 27
+},
+{
+"id": "STU124444",
+"complete_attempts": 17
+},
+{
+"id": "STU130724",
+"complete_attempts": 8
+},
+{
+"id": "STU128084",
+"complete_attempts": 35
+},
+{
+"id": "STU137521",
+"complete_attempts": 32
+},
+{
+"id": "STU101027",
+"complete_attempts": 16
+},
+{
+"id": "STU133470",
+"complete_attempts": 32
+},
+{
+"id": "STU116855",
+"complete_attempts": 14
+},
+{
+"id": "STU102671",
+"complete_attempts": 15
+},
+{
+"id": "STU148895",
+"complete_attempts": 17
+},
+{
+"id": "STU117169",
+"complete_attempts": 16
+},
+{
+"id": "STU101689",
+"complete_attempts": 15
+},
+{
+"id": "STU114615",
+"complete_attempts": 28
+},
+{
+"id": "STU136092",
+"complete_attempts": 15
+},
+{
+"id": "STU125454",
+"complete_attempts": 12
+},
+{
+"id": "STU143722",
+"complete_attempts": 16
+},
+{
+"id": "STU105386",
+"complete_attempts": 23
+},
+{
+"id": "STU105503",
+"complete_attempts": 17
+},
+{
+"id": "STU116129",
+"complete_attempts": 11
+},
+{
+"id": "STU124151",
+"complete_attempts": 26
+},
+{
+"id": "STU117263",
+"complete_attempts": 13
+},
+{
+"id": "STU145074",
+"complete_attempts": 21
+},
+{
+"id": "STU104574",
+"complete_attempts": 24
+},
+{
+"id": "STU132936",
+"complete_attempts": 16
+},
+{
+"id": "STU138464",
+"complete_attempts": 9
+},
+{
+"id": "STU100029",
+"complete_attempts": 14
+},
+{
+"id": "STU106949",
+"complete_attempts": 17
+},
+{
+"id": "STU121912",
+"complete_attempts": 16
+},
+{
+"id": "STU146137",
+"complete_attempts": 16
+},
+{
+"id": "STU124211",
+"complete_attempts": 8
+},
+{
+"id": "STU128303",
+"complete_attempts": 14
+},
+{
+"id": "STU145006",
+"complete_attempts": 24
+},
+{
+"id": "STU104320",
+"complete_attempts": 62
+},
+{
+"id": "STU146905",
+"complete_attempts": 15
+},
+{
+"id": "STU130033",
+"complete_attempts": 15
+},
+{
+"id": "STU136235",
+"complete_attempts": 17
+},
+{
+"id": "STU124053",
+"complete_attempts": 16
+},
+{
+"id": "STU135779",
+"complete_attempts": 11
+},
+{
+"id": "STU142521",
+"complete_attempts": 17
+},
+{
+"id": "STU138582",
+"complete_attempts": 58
+},
+{
+"id": "STU145540",
+"complete_attempts": 6
+},
+{
+"id": "STU103327",
+"complete_attempts": 29
+},
+{
+"id": "STU125294",
+"complete_attempts": 32
+},
+{
+"id": "STU120183",
+"complete_attempts": 10
+},
+{
+"id": "STU123136",
+"complete_attempts": 14
+},
+{
+"id": "STU100456",
+"complete_attempts": 23
+},
+{
+"id": "STU105095",
+"complete_attempts": 9
+},
+{
+"id": "STU119572",
+"complete_attempts": 32
+},
+{
+"id": "STU105335",
+"complete_attempts": 31
+},
+{
+"id": "STU110208",
+"complete_attempts": 16
+},
+{
+"id": "STU116523",
+"complete_attempts": 17
+},
+{
+"id": "STU110804",
+"complete_attempts": 23
+},
+{
+"id": "STU139749",
+"complete_attempts": 58
+},
+{
+"id": "STU141906",
+"complete_attempts": 28
+},
+{
+"id": "STU105395",
+"complete_attempts": 31
+},
+{
+"id": "STU123680",
+"complete_attempts": 10
+},
+{
+"id": "STU100365",
+"complete_attempts": 16
+},
+{
+"id": "STU146882",
+"complete_attempts": 42
+},
+{
+"id": "STU125885",
+"complete_attempts": 15
+},
+{
+"id": "STU109202",
+"complete_attempts": 9
+},
+{
+"id": "STU114948",
+"complete_attempts": 16
+},
+{
+"id": "STU103238",
+"complete_attempts": 14
+},
+{
+"id": "STU118663",
+"complete_attempts": 24
+},
+{
+"id": "STU133694",
+"complete_attempts": 22
+},
+{
+"id": "STU144319",
+"complete_attempts": 17
+},
+{
+"id": "STU112368",
+"complete_attempts": 15
+},
+{
+"id": "STU127248",
+"complete_attempts": 46
+},
+{
+"id": "STU144695",
+"complete_attempts": 24
+},
+{
+"id": "STU149436",
+"complete_attempts": 18
+},
+{
+"id": "STU123068",
+"complete_attempts": 16
+},
+{
+"id": "STU125164",
+"complete_attempts": 14
+},
+{
+"id": "STU121501",
+"complete_attempts": 13
+},
+{
+"id": "STU109553",
+"complete_attempts": 25
+},
+{
+"id": "STU108672",
+"complete_attempts": 13
+},
+{
+"id": "STU106925",
+"complete_attempts": 26
+},
+{
+"id": "STU146549",
+"complete_attempts": 16
+},
+{
+"id": "STU141043",
+"complete_attempts": 27
+},
+{
+"id": "STU124050",
+"complete_attempts": 34
+},
+{
+"id": "STU125074",
+"complete_attempts": 15
+},
+{
+"id": "STU135531",
+"complete_attempts": 42
+},
+{
+"id": "STU127344",
+"complete_attempts": 15
+},
+{
+"id": "STU138472",
+"complete_attempts": 13
+},
+{
+"id": "STU115708",
+"complete_attempts": 12
+},
+{
+"id": "STU149063",
+"complete_attempts": 19
+},
+{
+"id": "STU113507",
+"complete_attempts": 9
+},
+{
+"id": "STU112367",
+"complete_attempts": 17
+},
+{
+"id": "STU113597",
+"complete_attempts": 15
+},
+{
+"id": "STU126240",
+"complete_attempts": 14
+},
+{
+"id": "STU115601",
+"complete_attempts": 19
+},
+{
+"id": "STU101676",
+"complete_attempts": 9
+},
+{
+"id": "STU136848",
+"complete_attempts": 42
+},
+{
+"id": "STU111999",
+"complete_attempts": 31
+},
+{
+"id": "STU126316",
+"complete_attempts": 27
+},
+{
+"id": "STU138710",
+"complete_attempts": 34
+},
+{
+"id": "STU124428",
+"complete_attempts": 16
+},
+{
+"id": "STU125656",
+"complete_attempts": 16
+},
+{
+"id": "STU103226",
+"complete_attempts": 28
+},
+{
+"id": "STU117056",
+"complete_attempts": 17
+},
+{
+"id": "STU103478",
+"complete_attempts": 35
+},
+{
+"id": "STU130925",
+"complete_attempts": 17
+},
+{
+"id": "STU120738",
+"complete_attempts": 28
+},
+{
+"id": "STU130963",
+"complete_attempts": 14
+},
+{
+"id": "STU100562",
+"complete_attempts": 17
+},
+{
+"id": "STU143930",
+"complete_attempts": 24
+},
+{
+"id": "STU102160",
+"complete_attempts": 32
+},
+{
+"id": "STU106703",
+"complete_attempts": 30
+},
+{
+"id": "STU112892",
+"complete_attempts": 16
+},
+{
+"id": "STU146305",
+"complete_attempts": 33
+},
+{
+"id": "STU149753",
+"complete_attempts": 33
+},
+{
+"id": "STU107325",
+"complete_attempts": 16
+},
+{
+"id": "STU141126",
+"complete_attempts": 14
+},
+{
+"id": "STU108799",
+"complete_attempts": 15
+},
+{
+"id": "STU126229",
+"complete_attempts": 14
+},
+{
+"id": "STU143179",
+"complete_attempts": 18
+},
+{
+"id": "STU136683",
+"complete_attempts": 12
+},
+{
+"id": "STU120969",
+"complete_attempts": 34
+},
+{
+"id": "STU109727",
+"complete_attempts": 28
+},
+{
+"id": "STU100895",
+"complete_attempts": 14
+},
+{
+"id": "STU142955",
+"complete_attempts": 33
+},
+{
+"id": "STU113914",
+"complete_attempts": 17
+},
+{
+"id": "STU118850",
+"complete_attempts": 18
+},
+{
+"id": "STU134690",
+"complete_attempts": 15
+},
+{
+"id": "STU131493",
+"complete_attempts": 12
+},
+{
+"id": "STU136113",
+"complete_attempts": 25
+},
+{
+"id": "STU121129",
+"complete_attempts": 30
+},
+{
+"id": "STU126642",
+"complete_attempts": 14
+},
+{
+"id": "STU109482",
+"complete_attempts": 26
+},
+{
+"id": "STU112629",
+"complete_attempts": 33
+},
+{
+"id": "STU128700",
+"complete_attempts": 10
+},
+{
+"id": "STU120229",
+"complete_attempts": 15
+},
+{
+"id": "STU104531",
+"complete_attempts": 31
+},
+{
+"id": "STU142610",
+"complete_attempts": 14
+},
+{
+"id": "STU121716",
+"complete_attempts": 17
+},
+{
+"id": "STU106125",
+"complete_attempts": 12
+},
+{
+"id": "STU124354",
+"complete_attempts": 17
+},
+{
+"id": "STU126073",
+"complete_attempts": 18
+},
+{
+"id": "STU136032",
+"complete_attempts": 20
+},
+{
+"id": "STU135361",
+"complete_attempts": 7
+},
+{
+"id": "STU109276",
+"complete_attempts": 8
+},
+{
+"id": "STU112410",
+"complete_attempts": 44
+},
+{
+"id": "STU148539",
+"complete_attempts": 18
+},
+{
+"id": "STU125335",
+"complete_attempts": 30
+},
+{
+"id": "STU125936",
+"complete_attempts": 16
+},
+{
+"id": "STU119339",
+"complete_attempts": 17
+},
+{
+"id": "STU101790",
+"complete_attempts": 16
+},
+{
+"id": "STU137776",
+"complete_attempts": 16
+},
+{
+"id": "STU133078",
+"complete_attempts": 14
+},
+{
+"id": "STU135396",
+"complete_attempts": 9
+},
+{
+"id": "STU126255",
+"complete_attempts": 31
+},
+{
+"id": "STU134874",
+"complete_attempts": 18
+},
+{
+"id": "STU123668",
+"complete_attempts": 17
+},
+{
+"id": "STU129858",
+"complete_attempts": 16
+},
+{
+"id": "STU106049",
+"complete_attempts": 15
+},
+{
+"id": "STU111007",
+"complete_attempts": 15
+},
+{
+"id": "STU144678",
+"complete_attempts": 12
+},
+{
+"id": "STU106991",
+"complete_attempts": 13
+},
+{
+"id": "STU109484",
+"complete_attempts": 16
+},
+{
+"id": "STU137375",
+"complete_attempts": 15
+},
+{
+"id": "STU119644",
+"complete_attempts": 24
+},
+{
+"id": "STU111030",
+"complete_attempts": 16
+},
+{
+"id": "STU107581",
+"complete_attempts": 10
+},
+{
+"id": "STU107112",
+"complete_attempts": 13
+},
+{
+"id": "STU100865",
+"complete_attempts": 23
+},
+{
+"id": "STU128263",
+"complete_attempts": 16
+},
+{
+"id": "STU102538",
+"complete_attempts": 26
+},
+{
+"id": "STU131216",
+"complete_attempts": 17
+},
+{
+"id": "STU105289",
+"complete_attempts": 13
+},
+{
+"id": "STU130595",
+"complete_attempts": 28
+},
+{
+"id": "STU146256",
+"complete_attempts": 15
+},
+{
+"id": "STU114756",
+"complete_attempts": 44
+},
+{
+"id": "STU118802",
+"complete_attempts": 17
+},
+{
+"id": "STU122718",
+"complete_attempts": 13
+},
+{
+"id": "STU105334",
+"complete_attempts": 17
+},
+{
+"id": "STU141003",
+"complete_attempts": 55
+},
+{
+"id": "STU135372",
+"complete_attempts": 15
+},
+{
+"id": "STU123115",
+"complete_attempts": 49
+},
+{
+"id": "STU120347",
+"complete_attempts": 9
+},
+{
+"id": "STU139931",
+"complete_attempts": 16
+},
+{
+"id": "STU140301",
+"complete_attempts": 32
+},
+{
+"id": "STU139177",
+"complete_attempts": 10
+},
+{
+"id": "STU140165",
+"complete_attempts": 34
+},
+{
+"id": "STU112696",
+"complete_attempts": 17
+},
+{
+"id": "STU138834",
+"complete_attempts": 14
+},
+{
+"id": "STU118462",
+"complete_attempts": 15
+},
+{
+"id": "STU145289",
+"complete_attempts": 14
+},
+{
+"id": "STU143568",
+"complete_attempts": 16
+},
+{
+"id": "STU108375",
+"complete_attempts": 16
+},
+{
+"id": "STU130530",
+"complete_attempts": 16
+},
+{
+"id": "STU112527",
+"complete_attempts": 28
+},
+{
+"id": "STU138437",
+"complete_attempts": 15
+},
+{
+"id": "STU103640",
+"complete_attempts": 15
+},
+{
+"id": "STU126576",
+"complete_attempts": 31
+},
+{
+"id": "STU135336",
+"complete_attempts": 30
+},
+{
+"id": "STU145799",
+"complete_attempts": 17
+},
+{
+"id": "STU142177",
+"complete_attempts": 30
+},
+{
+"id": "STU109669",
+"complete_attempts": 33
+},
+{
+"id": "STU102268",
+"complete_attempts": 15
+},
+{
+"id": "STU138385",
+"complete_attempts": 14
+},
+{
+"id": "STU144887",
+"complete_attempts": 45
+},
+{
+"id": "STU121758",
+"complete_attempts": 37
+},
+{
+"id": "STU142094",
+"complete_attempts": 7
+},
+{
+"id": "STU108787",
+"complete_attempts": 17
+},
+{
+"id": "STU123253",
+"complete_attempts": 30
+},
+{
+"id": "STU111580",
+"complete_attempts": 31
+},
+{
+"id": "STU119009",
+"complete_attempts": 9
+},
+{
+"id": "STU149269",
+"complete_attempts": 17
+},
+{
+"id": "STU100170",
+"complete_attempts": 14
+},
+{
+"id": "STU120615",
+"complete_attempts": 67
+},
+{
+"id": "STU136580",
+"complete_attempts": 21
+},
+{
+"id": "STU147104",
+"complete_attempts": 15
+},
+{
+"id": "STU102381",
+"complete_attempts": 14
+},
+{
+"id": "STU109206",
+"complete_attempts": 14
+},
+{
+"id": "STU125710",
+"complete_attempts": 28
+},
+{
+"id": "STU138530",
+"complete_attempts": 16
+},
+{
+"id": "STU125068",
+"complete_attempts": 14
+},
+{
+"id": "STU103266",
+"complete_attempts": 43
+},
+{
+"id": "STU124617",
+"complete_attempts": 32
+},
+{
+"id": "STU143245",
+"complete_attempts": 32
+},
+{
+"id": "STU115930",
+"complete_attempts": 28
+},
+{
+"id": "STU135052",
+"complete_attempts": 13
+},
+{
+"id": "STU111626",
+"complete_attempts": 28
+},
+{
+"id": "STU110568",
+"complete_attempts": 8
+},
+{
+"id": "STU125812",
+"complete_attempts": 15
+},
+{
+"id": "STU113043",
+"complete_attempts": 25
+},
+{
+"id": "STU132939",
+"complete_attempts": 13
+},
+{
+"id": "STU137146",
+"complete_attempts": 8
+},
+{
+"id": "STU128998",
+"complete_attempts": 10
+},
+{
+"id": "STU105850",
+"complete_attempts": 34
+},
+{
+"id": "STU107066",
+"complete_attempts": 48
+},
+{
+"id": "STU141860",
+"complete_attempts": 16
+},
+{
+"id": "STU123100",
+"complete_attempts": 17
+},
+{
+"id": "STU100998",
+"complete_attempts": 16
+},
+{
+"id": "STU102141",
+"complete_attempts": 8
+},
+{
+"id": "STU123547",
+"complete_attempts": 31
+},
+{
+"id": "STU140208",
+"complete_attempts": 17
+},
+{
+"id": "STU117272",
+"complete_attempts": 16
+},
+{
+"id": "STU129298",
+"complete_attempts": 16
+},
+{
+"id": "STU138299",
+"complete_attempts": 10
+},
+{
+"id": "STU135143",
+"complete_attempts": 19
+},
+{
+"id": "STU148902",
+"complete_attempts": 17
+},
+{
+"id": "STU108193",
+"complete_attempts": 15
+},
+{
+"id": "STU142465",
+"complete_attempts": 34
+},
+{
+"id": "STU116575",
+"complete_attempts": 43
+},
+{
+"id": "STU114161",
+"complete_attempts": 27
+},
+{
+"id": "STU126043",
+"complete_attempts": 29
+},
+{
+"id": "STU128848",
+"complete_attempts": 17
+},
+{
+"id": "STU134746",
+"complete_attempts": 8
+},
+{
+"id": "STU112973",
+"complete_attempts": 34
+},
+{
+"id": "STU125566",
+"complete_attempts": 30
+},
+{
+"id": "STU133019",
+"complete_attempts": 28
+},
+{
+"id": "STU129638",
+"complete_attempts": 39
+},
+{
+"id": "STU106862",
+"complete_attempts": 16
+},
+{
+"id": "STU111662",
+"complete_attempts": 11
+},
+{
+"id": "STU118459",
+"complete_attempts": 15
+},
+{
+"id": "STU103353",
+"complete_attempts": 18
+},
+{
+"id": "STU147021",
+"complete_attempts": 17
+},
+{
+"id": "STU132463",
+"complete_attempts": 16
+},
+{
+"id": "STU101349",
+"complete_attempts": 14
+},
+{
+"id": "STU143509",
+"complete_attempts": 29
+},
+{
+"id": "STU134881",
+"complete_attempts": 45
+},
+{
+"id": "STU118938",
+"complete_attempts": 16
+},
+{
+"id": "STU109853",
+"complete_attempts": 15
+},
+{
+"id": "STU107052",
+"complete_attempts": 32
+},
+{
+"id": "STU108508",
+"complete_attempts": 33
+},
+{
+"id": "STU100418",
+"complete_attempts": 15
+},
+{
+"id": "STU138147",
+"complete_attempts": 29
+},
+{
+"id": "STU109376",
+"complete_attempts": 14
+},
+{
+"id": "STU119569",
+"complete_attempts": 16
+},
+{
+"id": "STU120742",
+"complete_attempts": 15
+},
+{
+"id": "STU126752",
+"complete_attempts": 28
+},
+{
+"id": "STU146325",
+"complete_attempts": 20
+},
+{
+"id": "STU140363",
+"complete_attempts": 16
+},
+{
+"id": "STU148708",
+"complete_attempts": 16
+},
+{
+"id": "STU120854",
+"complete_attempts": 16
+},
+{
+"id": "STU115392",
+"complete_attempts": 16
+},
+{
+"id": "STU111169",
+"complete_attempts": 14
+},
+{
+"id": "STU113485",
+"complete_attempts": 30
+},
+{
+"id": "STU105257",
+"complete_attempts": 16
+},
+{
+"id": "STU140918",
+"complete_attempts": 22
+},
+{
+"id": "STU114511",
+"complete_attempts": 36
+},
+{
+"id": "STU124445",
+"complete_attempts": 31
+},
+{
+"id": "STU118619",
+"complete_attempts": 32
+},
+{
+"id": "STU117204",
+"complete_attempts": 31
+},
+{
+"id": "STU108515",
+"complete_attempts": 13
+},
+{
+"id": "STU105644",
+"complete_attempts": 9
+},
+{
+"id": "STU147969",
+"complete_attempts": 13
+},
+{
+"id": "STU110096",
+"complete_attempts": 13
+},
+{
+"id": "STU131491",
+"complete_attempts": 30
+},
+{
+"id": "STU146911",
+"complete_attempts": 23
+},
+{
+"id": "STU105500",
+"complete_attempts": 29
+},
+{
+"id": "STU139983",
+"complete_attempts": 16
+},
+{
+"id": "STU136586",
+"complete_attempts": 14
+},
+{
+"id": "STU149545",
+"complete_attempts": 8
+},
+{
+"id": "STU140032",
+"complete_attempts": 14
+},
+{
+"id": "STU127053",
+"complete_attempts": 17
+},
+{
+"id": "STU146852",
+"complete_attempts": 36
+},
+{
+"id": "STU116345",
+"complete_attempts": 14
+},
+{
+"id": "STU112417",
+"complete_attempts": 19
+},
+{
+"id": "STU123996",
+"complete_attempts": 9
+},
+{
+"id": "STU144645",
+"complete_attempts": 15
+},
+{
+"id": "STU102351",
+"complete_attempts": 14
+},
+{
+"id": "STU103391",
+"complete_attempts": 24
+},
+{
+"id": "STU144849",
+"complete_attempts": 26
+},
+{
+"id": "STU132438",
+"complete_attempts": 22
+},
+{
+"id": "STU146881",
+"complete_attempts": 15
+},
+{
+"id": "STU101459",
+"complete_attempts": 12
+},
+{
+"id": "STU110347",
+"complete_attempts": 31
+},
+{
+"id": "STU103360",
+"complete_attempts": 34
+},
+{
+"id": "STU124681",
+"complete_attempts": 32
+},
+{
+"id": "STU128634",
+"complete_attempts": 10
+},
+{
+"id": "STU115884",
+"complete_attempts": 18
+},
+{
+"id": "STU108172",
+"complete_attempts": 32
+},
+{
+"id": "STU112369",
+"complete_attempts": 15
+},
+{
+"id": "STU122645",
+"complete_attempts": 32
+},
+{
+"id": "STU148678",
+"complete_attempts": 24
+},
+{
+"id": "STU107835",
+"complete_attempts": 17
+},
+{
+"id": "STU135310",
+"complete_attempts": 16
+},
+{
+"id": "STU142743",
+"complete_attempts": 16
+},
+{
+"id": "STU114910",
+"complete_attempts": 16
+},
+{
+"id": "STU112669",
+"complete_attempts": 59
+},
+{
+"id": "STU102654",
+"complete_attempts": 14
+},
+{
+"id": "STU127569",
+"complete_attempts": 16
+},
+{
+"id": "STU140586",
+"complete_attempts": 16
+},
+{
+"id": "STU101084",
+"complete_attempts": 18
+},
+{
+"id": "STU138101",
+"complete_attempts": 39
+},
+{
+"id": "STU107624",
+"complete_attempts": 16
+},
+{
+"id": "STU130556",
+"complete_attempts": 13
+},
+{
+"id": "STU132640",
+"complete_attempts": 14
+},
+{
+"id": "STU135444",
+"complete_attempts": 26
+},
+{
+"id": "STU130348",
+"complete_attempts": 8
+},
+{
+"id": "STU134680",
+"complete_attempts": 14
+},
+{
+"id": "STU117966",
+"complete_attempts": 18
+},
+{
+"id": "STU113011",
+"complete_attempts": 45
+},
+{
+"id": "STU145402",
+"complete_attempts": 16
+},
+{
+"id": "STU108022",
+"complete_attempts": 12
+},
+{
+"id": "STU141296",
+"complete_attempts": 17
+},
+{
+"id": "STU127721",
+"complete_attempts": 14
+},
+{
+"id": "STU112127",
+"complete_attempts": 14
+},
+{
+"id": "STU131120",
+"complete_attempts": 29
+},
+{
+"id": "STU133498",
+"complete_attempts": 13
+},
+{
+"id": "STU147970",
+"complete_attempts": 23
+},
+{
+"id": "STU141096",
+"complete_attempts": 18
+},
+{
+"id": "STU138929",
+"complete_attempts": 16
+},
+{
+"id": "STU105719",
+"complete_attempts": 11
+},
+{
+"id": "STU119455",
+"complete_attempts": 45
+},
+{
+"id": "STU138664",
+"complete_attempts": 15
+},
+{
+"id": "STU140327",
+"complete_attempts": 10
+},
+{
+"id": "STU134713",
+"complete_attempts": 17
+},
+{
+"id": "STU121006",
+"complete_attempts": 18
+},
+{
+"id": "STU124632",
+"complete_attempts": 16
+},
+{
+"id": "STU119445",
+"complete_attempts": 15
+},
+{
+"id": "STU114050",
+"complete_attempts": 15
+},
+{
+"id": "STU116421",
+"complete_attempts": 15
+},
+{
+"id": "STU116717",
+"complete_attempts": 16
+},
+{
+"id": "STU130840",
+"complete_attempts": 14
+},
+{
+"id": "STU112462",
+"complete_attempts": 13
+},
+{
+"id": "STU143066",
+"complete_attempts": 17
+},
+{
+"id": "STU114427",
+"complete_attempts": 33
+},
+{
+"id": "STU145005",
+"complete_attempts": 16
+},
+{
+"id": "STU147833",
+"complete_attempts": 43
+},
+{
+"id": "STU126970",
+"complete_attempts": 29
+},
+{
+"id": "STU139945",
+"complete_attempts": 15
+},
+{
+"id": "STU137747",
+"complete_attempts": 20
+},
+{
+"id": "STU119134",
+"complete_attempts": 23
+},
+{
+"id": "STU128366",
+"complete_attempts": 16
+},
+{
+"id": "STU105615",
+"complete_attempts": 18
+},
+{
+"id": "STU109024",
+"complete_attempts": 47
+},
+{
+"id": "STU107221",
+"complete_attempts": 13
+},
+{
+"id": "STU129710",
+"complete_attempts": 7
+},
+{
+"id": "STU111071",
+"complete_attempts": 16
+},
+{
+"id": "STU109100",
+"complete_attempts": 30
+},
+{
+"id": "STU110630",
+"complete_attempts": 15
+},
+{
+"id": "STU139033",
+"complete_attempts": 16
+},
+{
+"id": "STU148517",
+"complete_attempts": 46
+},
+{
+"id": "STU138191",
+"complete_attempts": 17
+},
+{
+"id": "STU131244",
+"complete_attempts": 30
+},
+{
+"id": "STU113706",
+"complete_attempts": 19
+},
+{
+"id": "STU106681",
+"complete_attempts": 14
+},
+{
+"id": "STU118598",
+"complete_attempts": 26
+},
+{
+"id": "STU119833",
+"complete_attempts": 15
+},
+{
+"id": "STU116213",
+"complete_attempts": 12
+},
+{
+"id": "STU145143",
+"complete_attempts": 17
+},
+{
+"id": "STU114307",
+"complete_attempts": 13
+},
+{
+"id": "STU127073",
+"complete_attempts": 17
+},
+{
+"id": "STU135101",
+"complete_attempts": 18
+},
+{
+"id": "STU125110",
+"complete_attempts": 36
+},
+{
+"id": "STU127995",
+"complete_attempts": 19
+},
+{
+"id": "STU143057",
+"complete_attempts": 8
+},
+{
+"id": "STU145469",
+"complete_attempts": 16
+},
+{
+"id": "STU101101",
+"complete_attempts": 14
+},
+{
+"id": "STU147885",
+"complete_attempts": 31
+},
+{
+"id": "STU141245",
+"complete_attempts": 17
+},
+{
+"id": "STU145913",
+"complete_attempts": 7
+},
+{
+"id": "STU115549",
+"complete_attempts": 34
+},
+{
+"id": "STU129728",
+"complete_attempts": 17
+},
+{
+"id": "STU149652",
+"complete_attempts": 48
+},
+{
+"id": "STU130113",
+"complete_attempts": 7
+},
+{
+"id": "STU128112",
+"complete_attempts": 49
+},
+{
+"id": "STU108276",
+"complete_attempts": 14
+},
+{
+"id": "STU138285",
+"complete_attempts": 17
+},
+{
+"id": "STU127831",
+"complete_attempts": 11
+},
+{
+"id": "STU121746",
+"complete_attempts": 16
+},
+{
+"id": "STU138809",
+"complete_attempts": 18
+},
+{
+"id": "STU135370",
+"complete_attempts": 47
+},
+{
+"id": "STU115977",
+"complete_attempts": 15
+},
+{
+"id": "STU115633",
+"complete_attempts": 29
+},
+{
+"id": "STU144857",
+"complete_attempts": 17
+},
+{
+"id": "STU126268",
+"complete_attempts": 17
+},
+{
+"id": "STU142635",
+"complete_attempts": 46
+},
+{
+"id": "STU131546",
+"complete_attempts": 15
+},
+{
+"id": "STU114949",
+"complete_attempts": 14
+},
+{
+"id": "STU143067",
+"complete_attempts": 38
+},
+{
+"id": "STU148106",
+"complete_attempts": 19
+},
+{
+"id": "STU131974",
+"complete_attempts": 11
+},
+{
+"id": "STU107432",
+"complete_attempts": 16
+},
+{
+"id": "STU149646",
+"complete_attempts": 31
+},
+{
+"id": "STU126025",
+"complete_attempts": 19
+},
+{
+"id": "STU115189",
+"complete_attempts": 10
+},
+{
+"id": "STU105438",
+"complete_attempts": 29
+},
+{
+"id": "STU105805",
+"complete_attempts": 32
+},
+{
+"id": "STU119821",
+"complete_attempts": 12
+},
+{
+"id": "STU100778",
+"complete_attempts": 13
+},
+{
+"id": "STU133101",
+"complete_attempts": 15
+},
+{
+"id": "STU117206",
+"complete_attempts": 29
+},
+{
+"id": "STU135404",
+"complete_attempts": 15
+},
+{
+"id": "STU107978",
+"complete_attempts": 27
+},
+{
+"id": "STU147008",
+"complete_attempts": 31
+},
+{
+"id": "STU137066",
+"complete_attempts": 12
+},
+{
+"id": "STU106035",
+"complete_attempts": 18
+},
+{
+"id": "STU115358",
+"complete_attempts": 16
+},
+{
+"id": "STU104630",
+"complete_attempts": 8
+},
+{
+"id": "STU112999",
+"complete_attempts": 15
+},
+{
+"id": "STU103059",
+"complete_attempts": 15
+},
+{
+"id": "STU148624",
+"complete_attempts": 31
+},
+{
+"id": "STU119364",
+"complete_attempts": 35
+},
+{
+"id": "STU144803",
+"complete_attempts": 30
+},
+{
+"id": "STU110168",
+"complete_attempts": 16
+},
+{
+"id": "STU102552",
+"complete_attempts": 32
+},
+{
+"id": "STU118502",
+"complete_attempts": 30
+},
+{
+"id": "STU133264",
+"complete_attempts": 17
+},
+{
+"id": "STU148764",
+"complete_attempts": 24
+},
+{
+"id": "STU113935",
+"complete_attempts": 32
+},
+{
+"id": "STU105841",
+"complete_attempts": 28
+},
+{
+"id": "STU145518",
+"complete_attempts": 16
+},
+{
+"id": "STU103409",
+"complete_attempts": 15
+},
+{
+"id": "STU125061",
+"complete_attempts": 29
+},
+{
+"id": "STU112432",
+"complete_attempts": 14
+},
+{
+"id": "STU104830",
+"complete_attempts": 34
+},
+{
+"id": "STU104029",
+"complete_attempts": 14
+},
+{
+"id": "STU143439",
+"complete_attempts": 14
+},
+{
+"id": "STU121083",
+"complete_attempts": 29
+},
+{
+"id": "STU139294",
+"complete_attempts": 13
+},
+{
+"id": "STU115071",
+"complete_attempts": 31
+},
+{
+"id": "STU103955",
+"complete_attempts": 14
+},
+{
+"id": "STU129191",
+"complete_attempts": 24
+},
+{
+"id": "STU121918",
+"complete_attempts": 29
+},
+{
+"id": "STU145273",
+"complete_attempts": 15
+},
+{
+"id": "STU129202",
+"complete_attempts": 15
+},
+{
+"id": "STU115400",
+"complete_attempts": 13
+},
+{
+"id": "STU115298",
+"complete_attempts": 16
+},
+{
+"id": "STU143899",
+"complete_attempts": 15
+},
+{
+"id": "STU119025",
+"complete_attempts": 30
+},
+{
+"id": "STU145717",
+"complete_attempts": 7
+},
+{
+"id": "STU118995",
+"complete_attempts": 33
+},
+{
+"id": "STU135517",
+"complete_attempts": 14
+},
+{
+"id": "STU124470",
+"complete_attempts": 18
+},
+{
+"id": "STU105178",
+"complete_attempts": 31
+},
+{
+"id": "STU121425",
+"complete_attempts": 10
+},
+{
+"id": "STU115434",
+"complete_attempts": 14
+},
+{
+"id": "STU118609",
+"complete_attempts": 14
+},
+{
+"id": "STU117391",
+"complete_attempts": 65
+},
+{
+"id": "STU142911",
+"complete_attempts": 14
+},
+{
+"id": "STU127141",
+"complete_attempts": 16
+},
+{
+"id": "STU144826",
+"complete_attempts": 16
+},
+{
+"id": "STU140928",
+"complete_attempts": 31
+},
+{
+"id": "STU110209",
+"complete_attempts": 19
+},
+{
+"id": "STU115275",
+"complete_attempts": 31
+},
+{
+"id": "STU115715",
+"complete_attempts": 15
+},
+{
+"id": "STU121162",
+"complete_attempts": 30
+},
+{
+"id": "STU106636",
+"complete_attempts": 28
+},
+{
+"id": "STU123183",
+"complete_attempts": 13
+},
+{
+"id": "STU129598",
+"complete_attempts": 37
+},
+{
+"id": "STU100674",
+"complete_attempts": 19
+},
+{
+"id": "STU110713",
+"complete_attempts": 47
+},
+{
+"id": "STU146332",
+"complete_attempts": 30
+},
+{
+"id": "STU128035",
+"complete_attempts": 17
+},
+{
+"id": "STU101427",
+"complete_attempts": 15
+},
+{
+"id": "STU121337",
+"complete_attempts": 24
+},
+{
+"id": "STU123310",
+"complete_attempts": 14
+},
+{
+"id": "STU148871",
+"complete_attempts": 16
+},
+{
+"id": "STU147878",
+"complete_attempts": 14
+},
+{
+"id": "STU100008",
+"complete_attempts": 46
+},
+{
+"id": "STU126342",
+"complete_attempts": 18
+},
+{
+"id": "STU111184",
+"complete_attempts": 12
+},
+{
+"id": "STU101557",
+"complete_attempts": 14
+},
+{
+"id": "STU145511",
+"complete_attempts": 15
+},
+{
+"id": "STU115425",
+"complete_attempts": 16
+},
+{
+"id": "STU127077",
+"complete_attempts": 11
+},
+{
+"id": "STU115618",
+"complete_attempts": 10
+},
+{
+"id": "STU104249",
+"complete_attempts": 31
+},
+{
+"id": "STU122748",
+"complete_attempts": 25
+},
+{
+"id": "STU139730",
+"complete_attempts": 27
+},
+{
+"id": "STU127747",
+"complete_attempts": 31
+},
+{
+"id": "STU111010",
+"complete_attempts": 15
+},
+{
+"id": "STU109607",
+"complete_attempts": 33
+},
+{
+"id": "STU141048",
+"complete_attempts": 25
+},
+{
+"id": "STU128247",
+"complete_attempts": 41
+},
+{
+"id": "STU109811",
+"complete_attempts": 15
+},
+{
+"id": "STU108500",
+"complete_attempts": 47
+},
+{
+"id": "STU138699",
+"complete_attempts": 39
+},
+{
+"id": "STU128332",
+"complete_attempts": 22
+},
+{
+"id": "STU149665",
+"complete_attempts": 11
+},
+{
+"id": "STU114710",
+"complete_attempts": 17
+},
+{
+"id": "STU134712",
+"complete_attempts": 8
+},
+{
+"id": "STU132111",
+"complete_attempts": 15
+},
+{
+"id": "STU129150",
+"complete_attempts": 15
+},
+{
+"id": "STU133491",
+"complete_attempts": 15
+},
+{
+"id": "STU122587",
+"complete_attempts": 32
+},
+{
+"id": "STU105824",
+"complete_attempts": 18
+},
+{
+"id": "STU128344",
+"complete_attempts": 10
+},
+{
+"id": "STU147296",
+"complete_attempts": 56
+},
+{
+"id": "STU125192",
+"complete_attempts": 15
+},
+{
+"id": "STU142895",
+"complete_attempts": 31
+},
+{
+"id": "STU123942",
+"complete_attempts": 16
+},
+{
+"id": "STU137211",
+"complete_attempts": 12
+},
+{
+"id": "STU115669",
+"complete_attempts": 16
+},
+{
+"id": "STU144358",
+"complete_attempts": 17
+},
+{
+"id": "STU120410",
+"complete_attempts": 31
+},
+{
+"id": "STU100060",
+"complete_attempts": 16
+},
+{
+"id": "STU125887",
+"complete_attempts": 32
+},
+{
+"id": "STU138923",
+"complete_attempts": 13
+},
+{
+"id": "STU120460",
+"complete_attempts": 39
+},
+{
+"id": "STU122701",
+"complete_attempts": 30
+},
+{
+"id": "STU104766",
+"complete_attempts": 13
+},
+{
+"id": "STU126801",
+"complete_attempts": 25
+},
+{
+"id": "STU136685",
+"complete_attempts": 16
+},
+{
+"id": "STU115861",
+"complete_attempts": 22
+},
+{
+"id": "STU137515",
+"complete_attempts": 15
+},
+{
+"id": "STU141008",
+"complete_attempts": 31
+},
+{
+"id": "STU100523",
+"complete_attempts": 15
+},
+{
+"id": "STU123618",
+"complete_attempts": 7
+},
+{
+"id": "STU117986",
+"complete_attempts": 31
+},
+{
+"id": "STU113222",
+"complete_attempts": 33
+},
+{
+"id": "STU118806",
+"complete_attempts": 16
+},
+{
+"id": "STU146237",
+"complete_attempts": 19
+},
+{
+"id": "STU149481",
+"complete_attempts": 17
+},
+{
+"id": "STU135120",
+"complete_attempts": 25
+},
+{
+"id": "STU124999",
+"complete_attempts": 14
+},
+{
+"id": "STU147227",
+"complete_attempts": 32
+},
+{
+"id": "STU125331",
+"complete_attempts": 15
+},
+{
+"id": "STU141244",
+"complete_attempts": 30
+},
+{
+"id": "STU129417",
+"complete_attempts": 13
+},
+{
+"id": "STU110607",
+"complete_attempts": 17
+},
+{
+"id": "STU148919",
+"complete_attempts": 13
+},
+{
+"id": "STU136971",
+"complete_attempts": 48
+},
+{
+"id": "STU105213",
+"complete_attempts": 7
+},
+{
+"id": "STU124987",
+"complete_attempts": 27
+},
+{
+"id": "STU118300",
+"complete_attempts": 24
+},
+{
+"id": "STU104803",
+"complete_attempts": 32
+},
+{
+"id": "STU123625",
+"complete_attempts": 16
+},
+{
+"id": "STU136998",
+"complete_attempts": 16
+},
+{
+"id": "STU115246",
+"complete_attempts": 13
+},
+{
+"id": "STU131228",
+"complete_attempts": 14
+},
+{
+"id": "STU125772",
+"complete_attempts": 18
+},
+{
+"id": "STU100191",
+"complete_attempts": 18
+},
+{
+"id": "STU104331",
+"complete_attempts": 10
+},
+{
+"id": "STU122262",
+"complete_attempts": 36
+},
+{
+"id": "STU102071",
+"complete_attempts": 33
+},
+{
+"id": "STU137243",
+"complete_attempts": 17
+},
+{
+"id": "STU146558",
+"complete_attempts": 28
+},
+{
+"id": "STU104719",
+"complete_attempts": 30
+},
+{
+"id": "STU104229",
+"complete_attempts": 13
+},
+{
+"id": "STU134594",
+"complete_attempts": 15
+},
+{
+"id": "STU128319",
+"complete_attempts": 18
+},
+{
+"id": "STU140456",
+"complete_attempts": 41
+},
+{
+"id": "STU119456",
+"complete_attempts": 31
+},
+{
+"id": "STU134841",
+"complete_attempts": 15
+},
+{
+"id": "STU140408",
+"complete_attempts": 15
+},
+{
+"id": "STU134826",
+"complete_attempts": 29
+},
+{
+"id": "STU149458",
+"complete_attempts": 8
+},
+{
+"id": "STU121609",
+"complete_attempts": 7
+},
+{
+"id": "STU107576",
+"complete_attempts": 14
+},
+{
+"id": "STU132425",
+"complete_attempts": 12
+},
+{
+"id": "STU135721",
+"complete_attempts": 16
+},
+{
+"id": "STU147669",
+"complete_attempts": 15
+},
+{
+"id": "STU136403",
+"complete_attempts": 17
+},
+{
+"id": "STU114578",
+"complete_attempts": 14
+},
+{
+"id": "STU104360",
+"complete_attempts": 34
+},
+{
+"id": "STU128614",
+"complete_attempts": 7
+},
+{
+"id": "STU127614",
+"complete_attempts": 15
+},
+{
+"id": "STU149543",
+"complete_attempts": 15
+},
+{
+"id": "STU135991",
+"complete_attempts": 47
+},
+{
+"id": "STU111506",
+"complete_attempts": 16
+},
+{
+"id": "STU105253",
+"complete_attempts": 16
+},
+{
+"id": "STU105091",
+"complete_attempts": 46
+},
+{
+"id": "STU100017",
+"complete_attempts": 15
+},
+{
+"id": "STU128292",
+"complete_attempts": 16
+},
+{
+"id": "STU149412",
+"complete_attempts": 13
+},
+{
+"id": "STU111547",
+"complete_attempts": 16
+},
+{
+"id": "STU146428",
+"complete_attempts": 24
+},
+{
+"id": "STU142927",
+"complete_attempts": 9
+},
+{
+"id": "STU136508",
+"complete_attempts": 14
+},
+{
+"id": "STU109902",
+"complete_attempts": 31
+},
+{
+"id": "STU123003",
+"complete_attempts": 15
+},
+{
+"id": "STU105671",
+"complete_attempts": 17
+},
+{
+"id": "STU104638",
+"complete_attempts": 10
+},
+{
+"id": "STU139774",
+"complete_attempts": 15
+},
+{
+"id": "STU131325",
+"complete_attempts": 15
+},
+{
+"id": "STU119964",
+"complete_attempts": 15
+},
+{
+"id": "STU106226",
+"complete_attempts": 35
+},
+{
+"id": "STU133251",
+"complete_attempts": 8
+},
+{
+"id": "STU111880",
+"complete_attempts": 31
+},
+{
+"id": "STU108777",
+"complete_attempts": 16
+},
+{
+"id": "STU148296",
+"complete_attempts": 12
+},
+{
+"id": "STU126957",
+"complete_attempts": 23
+},
+{
+"id": "STU138447",
+"complete_attempts": 15
+},
+{
+"id": "STU140738",
+"complete_attempts": 30
+},
+{
+"id": "STU143053",
+"complete_attempts": 14
+},
+{
+"id": "STU119906",
+"complete_attempts": 17
+},
+{
+"id": "STU112843",
+"complete_attempts": 26
+},
+{
+"id": "STU134859",
+"complete_attempts": 34
+},
+{
+"id": "STU117723",
+"complete_attempts": 13
+},
+{
+"id": "STU136211",
+"complete_attempts": 15
+},
+{
+"id": "STU115831",
+"complete_attempts": 46
+},
+{
+"id": "STU102619",
+"complete_attempts": 33
+},
+{
+"id": "STU106846",
+"complete_attempts": 13
+},
+{
+"id": "STU112635",
+"complete_attempts": 24
+},
+{
+"id": "STU103341",
+"complete_attempts": 17
+},
+{
+"id": "STU144743",
+"complete_attempts": 16
+},
+{
+"id": "STU147212",
+"complete_attempts": 27
+},
+{
+"id": "STU115933",
+"complete_attempts": 34
+},
+{
+"id": "STU104402",
+"complete_attempts": 6
+},
+{
+"id": "STU122180",
+"complete_attempts": 17
+},
+{
+"id": "STU141959",
+"complete_attempts": 64
+},
+{
+"id": "STU107016",
+"complete_attempts": 10
+},
+{
+"id": "STU122537",
+"complete_attempts": 15
+},
+{
+"id": "STU113737",
+"complete_attempts": 14
+},
+{
+"id": "STU144051",
+"complete_attempts": 49
+},
+{
+"id": "STU108502",
+"complete_attempts": 9
+},
+{
+"id": "STU142997",
+"complete_attempts": 13
+},
+{
+"id": "STU118441",
+"complete_attempts": 34
+},
+{
+"id": "STU112996",
+"complete_attempts": 14
+},
+{
+"id": "STU102945",
+"complete_attempts": 17
+},
+{
+"id": "STU119309",
+"complete_attempts": 14
+},
+{
+"id": "STU137306",
+"complete_attempts": 29
+},
+{
+"id": "STU149386",
+"complete_attempts": 11
+},
+{
+"id": "STU120558",
+"complete_attempts": 18
+},
+{
+"id": "STU125952",
+"complete_attempts": 14
+},
+{
+"id": "STU106889",
+"complete_attempts": 17
+},
+{
+"id": "STU101225",
+"complete_attempts": 32
+},
+{
+"id": "STU146519",
+"complete_attempts": 17
+},
+{
+"id": "STU116059",
+"complete_attempts": 14
+},
+{
+"id": "STU110602",
+"complete_attempts": 16
+},
+{
+"id": "STU119938",
+"complete_attempts": 47
+},
+{
+"id": "STU101599",
+"complete_attempts": 26
+},
+{
+"id": "STU136286",
+"complete_attempts": 17
+},
+{
+"id": "STU124203",
+"complete_attempts": 15
+},
+{
+"id": "STU137209",
+"complete_attempts": 15
+},
+{
+"id": "STU143189",
+"complete_attempts": 10
+},
+{
+"id": "STU106860",
+"complete_attempts": 26
+},
+{
+"id": "STU132537",
+"complete_attempts": 15
+},
+{
+"id": "STU122829",
+"complete_attempts": 9
+},
+{
+"id": "STU127596",
+"complete_attempts": 24
+},
+{
+"id": "STU144163",
+"complete_attempts": 12
+},
+{
+"id": "STU101025",
+"complete_attempts": 18
+},
+{
+"id": "STU108895",
+"complete_attempts": 17
+},
+{
+"id": "STU103843",
+"complete_attempts": 14
+},
+{
+"id": "STU147871",
+"complete_attempts": 14
+},
+{
+"id": "STU136814",
+"complete_attempts": 36
+},
+{
+"id": "STU127790",
+"complete_attempts": 14
+},
+{
+"id": "STU101784",
+"complete_attempts": 28
+},
+{
+"id": "STU108971",
+"complete_attempts": 25
+},
+{
+"id": "STU134025",
+"complete_attempts": 18
+},
+{
+"id": "STU126724",
+"complete_attempts": 10
+},
+{
+"id": "STU107184",
+"complete_attempts": 16
+},
+{
+"id": "STU142878",
+"complete_attempts": 19
+},
+{
+"id": "STU104703",
+"complete_attempts": 16
+},
+{
+"id": "STU128963",
+"complete_attempts": 16
+},
+{
+"id": "STU127756",
+"complete_attempts": 33
+},
+{
+"id": "STU133323",
+"complete_attempts": 17
+},
+{
+"id": "STU133898",
+"complete_attempts": 15
+},
+{
+"id": "STU114590",
+"complete_attempts": 13
+},
+{
+"id": "STU115752",
+"complete_attempts": 20
+},
+{
+"id": "STU120495",
+"complete_attempts": 10
+},
+{
+"id": "STU128851",
+"complete_attempts": 31
+},
+{
+"id": "STU124537",
+"complete_attempts": 17
+},
+{
+"id": "STU143916",
+"complete_attempts": 17
+},
+{
+"id": "STU110426",
+"complete_attempts": 43
+},
+{
+"id": "STU141747",
+"complete_attempts": 14
+},
+{
+"id": "STU108795",
+"complete_attempts": 17
+},
+{
+"id": "STU111123",
+"complete_attempts": 12
+},
+{
+"id": "STU146820",
+"complete_attempts": 18
+},
+{
+"id": "STU102044",
+"complete_attempts": 27
+},
+{
+"id": "STU107945",
+"complete_attempts": 20
+},
+{
+"id": "STU101634",
+"complete_attempts": 33
+},
+{
+"id": "STU106308",
+"complete_attempts": 17
+},
+{
+"id": "STU109252",
+"complete_attempts": 12
+},
+{
+"id": "STU114835",
+"complete_attempts": 16
+},
+{
+"id": "STU111404",
+"complete_attempts": 6
+},
+{
+"id": "STU110985",
+"complete_attempts": 16
+},
+{
+"id": "STU141194",
+"complete_attempts": 14
+},
+{
+"id": "STU118357",
+"complete_attempts": 16
+},
+{
+"id": "STU122140",
+"complete_attempts": 12
+},
+{
+"id": "STU135301",
+"complete_attempts": 10
+},
+{
+"id": "STU125036",
+"complete_attempts": 13
+},
+{
+"id": "STU138679",
+"complete_attempts": 18
+},
+{
+"id": "STU135192",
+"complete_attempts": 8
+},
+{
+"id": "STU141275",
+"complete_attempts": 10
+},
+{
+"id": "STU138348",
+"complete_attempts": 32
+},
+{
+"id": "STU142006",
+"complete_attempts": 28
+},
+{
+"id": "STU104096",
+"complete_attempts": 49
+},
+{
+"id": "STU105563",
+"complete_attempts": 16
+},
+{
+"id": "STU111593",
+"complete_attempts": 17
+},
+{
+"id": "STU125693",
+"complete_attempts": 14
+},
+{
+"id": "STU127190",
+"complete_attempts": 15
+},
+{
+"id": "STU136532",
+"complete_attempts": 33
+},
+{
+"id": "STU115359",
+"complete_attempts": 17
+},
+{
+"id": "STU129025",
+"complete_attempts": 14
+},
+{
+"id": "STU130961",
+"complete_attempts": 18
+},
+{
+"id": "STU122182",
+"complete_attempts": 29
+},
+{
+"id": "STU130805",
+"complete_attempts": 31
+},
+{
+"id": "STU133539",
+"complete_attempts": 16
+},
+{
+"id": "STU129501",
+"complete_attempts": 8
+},
+{
+"id": "STU107086",
+"complete_attempts": 27
+},
+{
+"id": "STU110008",
+"complete_attempts": 13
+},
+{
+"id": "STU103943",
+"complete_attempts": 28
+},
+{
+"id": "STU119370",
+"complete_attempts": 48
+},
+{
+"id": "STU148711",
+"complete_attempts": 7
+},
+{
+"id": "STU115589",
+"complete_attempts": 31
+},
+{
+"id": "STU139174",
+"complete_attempts": 14
+},
+{
+"id": "STU100040",
+"complete_attempts": 16
+},
+{
+"id": "STU123027",
+"complete_attempts": 10
+},
+{
+"id": "STU148797",
+"complete_attempts": 25
+},
+{
+"id": "STU137763",
+"complete_attempts": 29
+},
+{
+"id": "STU130123",
+"complete_attempts": 6
+},
+{
+"id": "STU119376",
+"complete_attempts": 30
+},
+{
+"id": "STU123413",
+"complete_attempts": 26
+},
+{
+"id": "STU140418",
+"complete_attempts": 17
+},
+{
+"id": "STU105798",
+"complete_attempts": 16
+},
+{
+"id": "STU123509",
+"complete_attempts": 16
+},
+{
+"id": "STU103178",
+"complete_attempts": 15
+},
+{
+"id": "STU142740",
+"complete_attempts": 16
+},
+{
+"id": "STU107792",
+"complete_attempts": 14
+},
+{
+"id": "STU141346",
+"complete_attempts": 26
+},
+{
+"id": "STU149394",
+"complete_attempts": 17
+},
+{
+"id": "STU116948",
+"complete_attempts": 18
+},
+{
+"id": "STU145178",
+"complete_attempts": 9
+},
+{
+"id": "STU113687",
+"complete_attempts": 16
+},
+{
+"id": "STU140076",
+"complete_attempts": 25
+},
+{
+"id": "STU141752",
+"complete_attempts": 30
+},
+{
+"id": "STU145788",
+"complete_attempts": 15
+},
+{
+"id": "STU122121",
+"complete_attempts": 10
+},
+{
+"id": "STU130490",
+"complete_attempts": 15
+},
+{
+"id": "STU119418",
+"complete_attempts": 30
+},
+{
+"id": "STU130407",
+"complete_attempts": 17
+},
+{
+"id": "STU130574",
+"complete_attempts": 14
+},
+{
+"id": "STU113153",
+"complete_attempts": 30
+},
+{
+"id": "STU131589",
+"complete_attempts": 14
+},
+{
+"id": "STU129348",
+"complete_attempts": 17
+},
+{
+"id": "STU107638",
+"complete_attempts": 31
+},
+{
+"id": "STU142518",
+"complete_attempts": 17
+},
+{
+"id": "STU118082",
+"complete_attempts": 10
+},
+{
+"id": "STU106824",
+"complete_attempts": 15
+},
+{
+"id": "STU114504",
+"complete_attempts": 13
+},
+{
+"id": "STU141084",
+"complete_attempts": 27
+},
+{
+"id": "STU131251",
+"complete_attempts": 25
+},
+{
+"id": "STU117908",
+"complete_attempts": 14
+},
+{
+"id": "STU124381",
+"complete_attempts": 9
+},
+{
+"id": "STU134256",
+"complete_attempts": 18
+},
+{
+"id": "STU115086",
+"complete_attempts": 18
+},
+{
+"id": "STU121587",
+"complete_attempts": 17
+},
+{
+"id": "STU119169",
+"complete_attempts": 33
+},
+{
+"id": "STU115175",
+"complete_attempts": 15
+},
+{
+"id": "STU143771",
+"complete_attempts": 12
+},
+{
+"id": "STU103339",
+"complete_attempts": 14
+},
+{
+"id": "STU111445",
+"complete_attempts": 14
+},
+{
+"id": "STU129883",
+"complete_attempts": 10
+},
+{
+"id": "STU145415",
+"complete_attempts": 17
+},
+{
+"id": "STU126617",
+"complete_attempts": 21
+},
+{
+"id": "STU121591",
+"complete_attempts": 13
+},
+{
+"id": "STU108476",
+"complete_attempts": 22
+},
+{
+"id": "STU100762",
+"complete_attempts": 28
+},
+{
+"id": "STU111627",
+"complete_attempts": 37
+},
+{
+"id": "STU102964",
+"complete_attempts": 17
+},
+{
+"id": "STU134343",
+"complete_attempts": 9
+},
+{
+"id": "STU117232",
+"complete_attempts": 10
+},
+{
+"id": "STU149456",
+"complete_attempts": 17
+},
+{
+"id": "STU136439",
+"complete_attempts": 30
+},
+{
+"id": "STU119581",
+"complete_attempts": 22
+},
+{
+"id": "STU117130",
+"complete_attempts": 13
+},
+{
+"id": "STU135240",
+"complete_attempts": 30
+},
+{
+"id": "STU125480",
+"complete_attempts": 31
+},
+{
+"id": "STU140863",
+"complete_attempts": 16
+},
+{
+"id": "STU114293",
+"complete_attempts": 27
+},
+{
+"id": "STU133300",
+"complete_attempts": 17
+},
+{
+"id": "STU132008",
+"complete_attempts": 17
+},
+{
+"id": "STU105118",
+"complete_attempts": 27
+},
+{
+"id": "STU123355",
+"complete_attempts": 15
+},
+{
+"id": "STU129376",
+"complete_attempts": 17
+},
+{
+"id": "STU139080",
+"complete_attempts": 12
+},
+{
+"id": "STU119125",
+"complete_attempts": 17
+},
+{
+"id": "STU136754",
+"complete_attempts": 15
+},
+{
+"id": "STU123987",
+"complete_attempts": 28
+},
+{
+"id": "STU148452",
+"complete_attempts": 23
+},
+{
+"id": "STU135642",
+"complete_attempts": 42
+},
+{
+"id": "STU126637",
+"complete_attempts": 52
+},
+{
+"id": "STU106828",
+"complete_attempts": 13
+},
+{
+"id": "STU134563",
+"complete_attempts": 16
+},
+{
+"id": "STU136362",
+"complete_attempts": 16
+},
+{
+"id": "STU113733",
+"complete_attempts": 15
+},
+{
+"id": "STU149919",
+"complete_attempts": 16
+},
+{
+"id": "STU133031",
+"complete_attempts": 21
+},
+{
+"id": "STU127742",
+"complete_attempts": 12
+},
+{
+"id": "STU114107",
+"complete_attempts": 7
+},
+{
+"id": "STU130072",
+"complete_attempts": 12
+},
+{
+"id": "STU132604",
+"complete_attempts": 18
+},
+{
+"id": "STU117938",
+"complete_attempts": 17
+},
+{
+"id": "STU140284",
+"complete_attempts": 14
+},
+{
+"id": "STU136454",
+"complete_attempts": 12
+},
+{
+"id": "STU101104",
+"complete_attempts": 16
+},
+{
+"id": "STU128148",
+"complete_attempts": 33
+},
+{
+"id": "STU137477",
+"complete_attempts": 14
+},
+{
+"id": "STU112901",
+"complete_attempts": 14
+},
+{
+"id": "STU146727",
+"complete_attempts": 27
+},
+{
+"id": "STU105272",
+"complete_attempts": 15
+},
+{
+"id": "STU104087",
+"complete_attempts": 16
+},
+{
+"id": "STU105958",
+"complete_attempts": 32
+},
+{
+"id": "STU126265",
+"complete_attempts": 23
+},
+{
+"id": "STU128388",
+"complete_attempts": 19
+},
+{
+"id": "STU103620",
+"complete_attempts": 30
+},
+{
+"id": "STU138763",
+"complete_attempts": 15
+},
+{
+"id": "STU136950",
+"complete_attempts": 32
+},
+{
+"id": "STU142460",
+"complete_attempts": 16
+},
+{
+"id": "STU137489",
+"complete_attempts": 33
+},
+{
+"id": "STU115858",
+"complete_attempts": 10
+},
+{
+"id": "STU121532",
+"complete_attempts": 11
+}
+]

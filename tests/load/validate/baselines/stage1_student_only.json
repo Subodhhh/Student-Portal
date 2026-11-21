@@ -1,0 +1,197 @@
+{
+  "_comment": "Student-only projection rows that existed BEFORE any load-test write, on these exact load-test branches. The Stage 1 validator accepts exactly these rows, only while their synced fields are unchanged, and only on these branch IDs; any other Student-only row fails validation. Not personal data: IDs and synced field values only.",
+  "branch_ids": {
+    "neon-institute": "br-shy-hill-b8v2hdtl",
+    "neon-student": "br-small-block-b86dsmnr"
+  },
+  "captured_at": "2026-11-03T14:58:35+00:00",
+  "evidence": {
+    "batch_links": 0,
+    "canary_validation_examples_match": [
+      "043ba616-7d98-49a9-987b-ece1cc5a45df",
+      "07d85458-fc3c-42e8-baa3-8b16eca4f99b",
+      "1fd49b14-0437-420f-a15f-f39b1d32d019",
+      "22f116b7-c9c9-4da3-b10f-06e9a0bf5819",
+      "2b0308be-cffc-4a69-a7f6-7e1583515a82"
+    ],
+    "created_at_range_utc": [
+      "2026-11-03 06:45:51.962087",
+      "2026-11-03 06:50:33.811159"
+    ],
+    "first_loader_run_utc": "2026-11-03T14:31Z (canary; journal run finished 14:36:28 after 328 s)",
+    "institute_enrollments": 74,
+    "institute_only": 0,
+    "provider": "Physics Wallah (inherited)",
+    "query": "Student enrollments whose enrollment_id is absent from Institute enrollments (read-only sessions, branch guard OK)",
+    "reason": "the reference sync upserts Institute rows and never deletes Student-only rows; these 23 have no Institute counterpart",
+    "student_enrollments": 97,
+    "student_only": 23,
+    "synthetic_rows": 0,
+    "updated_at_equals_created_at": true
+  },
+  "student_only": {
+    "enrollments": {
+      "043ba616-7d98-49a9-987b-ece1cc5a45df": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:49:43.141902",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000753"
+      },
+      "07d85458-fc3c-42e8-baa3-8b16eca4f99b": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:50:23.134398",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000757"
+      },
+      "1fd49b14-0437-420f-a15f-f39b1d32d019": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:50:13.210454",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000756"
+      },
+      "22f116b7-c9c9-4da3-b10f-06e9a0bf5819": {
+        "branch_id": "ef2bc522-d4b1-4436-a578-001bfc7dee03",
+        "created_at": "2026-11-03 06:46:35.047266",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000735"
+      },
+      "2b0308be-cffc-4a69-a7f6-7e1583515a82": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:47:59.147289",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000743"
+      },
+      "3aa8bd04-29de-4574-83ce-443554d5050b": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:47:06.638982",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000738"
+      },
+      "493501e7-cb1b-459f-8c4e-de86e812ff1a": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:48:40.992172",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000747"
+      },
+      "57b2e60c-b9fd-46f2-982a-0fee2f1ee89e": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:46:55.723012",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000737"
+      },
+      "5b325b3a-fdf5-4ecb-acb7-2e46066f647a": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:45:51.962087",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000731"
+      },
+      "60187377-c8b3-431c-a314-5b8acb4e1741": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:48:31.313633",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000746"
+      },
+      "8cc50e69-d243-44b5-8cb0-a61f8bac3d82": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:46:13.48377",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000733"
+      },
+      "8f2f63da-bb9a-4061-8394-ca3a9a11523b": {
+        "branch_id": "ef2bc522-d4b1-4436-a578-001bfc7dee03",
+        "created_at": "2026-11-03 06:47:28.001921",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000740"
+      },
+      "96853fda-3c61-4420-ab0a-a162d41082d1": {
+        "branch_id": "7703e8e4-d034-430c-8de1-c9883ce89af3",
+        "created_at": "2026-11-03 06:49:53.210973",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000754"
+      },
+      "a83488e2-e7c6-438d-883d-664bdbb96983": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:48:51.41632",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000748"
+      },
+      "b23299dc-9843-41c0-93c2-71fee78e22d1": {
+        "branch_id": "7703e8e4-d034-430c-8de1-c9883ce89af3",
+        "created_at": "2026-11-03 06:47:17.078724",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000739"
+      },
+      "b4272f73-1e25-47c4-a5fa-fdd727993a06": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:49:32.405173",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000752"
+      },
+      "bc5de412-b0ce-4a97-82a2-edaabe566337": {
+        "branch_id": "dce85768-cf3a-4980-b905-248ee273908f",
+        "created_at": "2026-11-03 06:50:33.811159",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000758"
+      },
+      "ce166c61-70b7-455e-a531-cf38f27d1d56": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:49:22.332559",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000751"
+      },
+      "d1a5435c-f8e3-43fa-8a47-7509515ac775": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:47:38.038273",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000741"
+      },
+      "d5757ca7-e147-4f31-9be1-b3e7114cb842": {
+        "branch_id": "7703e8e4-d034-430c-8de1-c9883ce89af3",
+        "created_at": "2026-11-03 06:49:01.863435",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000749"
+      },
+      "d85b05d1-6f94-4769-873d-42c943de23d0": {
+        "branch_id": "0a59027a-7392-42d1-8d2b-b87ac4b9edcf",
+        "created_at": "2026-11-03 06:46:45.166309",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000736"
+      },
+      "deda8d3b-c0fb-48b5-97af-fffc7860afb9": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:47:48.422698",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000742"
+      },
+      "fdd10cd1-d7c2-46b9-99c2-e0e42c621b97": {
+        "branch_id": "cb81dd79-7f3e-4d2a-9dbd-ea769558dff5",
+        "created_at": "2026-11-03 06:46:03.962966",
+        "provider_id": "cec23177-503a-4c07-a5d9-341b8d3fa146",
+        "status": "ACTIVE",
+        "student_id": "STU000732"
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# Prometheus of the load-test stack. k6 (Computer 1 container, later Computers 2-3) pushes via remote write
+# (--web.enable-remote-write-receiver); everything else is scraped. The application services expose no /metrics endpoint
+# (adding one would be a code change): API latency comes from k6.
+# Container CPU/RAM: cAdvisor cannot identify containers on Docker Desktop, so it is disabled; the host-side Docker stats sampler
+# (monitoring/docker_stats_exporter.py, `lt.sh sampler start`) serves them on the WSL loopback, reached as host.docker.internal.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  external_labels:
+    stack: student-portal-loadtest
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{targets: ["localhost:9090"]}]
+  - job_name: docker-stats
+    static_configs: [{targets: ["host.docker.internal:19101"]}]
+  - job_name: redis
+    static_configs: [{targets: ["redis-exporter:9121"]}]
+  - job_name: postgres          # local PostgreSQL only (Stages 2-3); down while the target is Neon
+    static_configs: [{targets: ["postgres-exporter:9187"]}]
