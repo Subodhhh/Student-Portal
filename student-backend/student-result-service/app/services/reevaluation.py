@@ -3,13 +3,16 @@
 `score` applies exactly the rules of result_service.evaluate_attempt (+marks right, -negative marks wrong, unanswered 0,
 answers compared case/space-insensitively). Every change is written to the immutable result_history first-class record."""
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
+from app.marks import jsonable, to_decimal
 from app.models.result_history import ResultHistory
 from app.models.test_result import TestResult
 from app.repositories.result_repository import get_questions_with_answers
+from app.services.scoring import outcome, rows
 
 MAX_RESULTS = 20000
 SNAPSHOT_FIELDS = ("total_questions", "attempted_questions", "correct_answers", "incorrect_answers", "unanswered_questions",
@@ -18,24 +21,31 @@ SNAPSHOT_FIELDS = ("total_questions", "attempted_questions", "correct_answers", 
 
 def score(questions) -> dict:
     total_questions = len(questions)
-    attempted = correct = incorrect = total_marks = obtained = 0
+    attempted = correct = incorrect = 0
+    total_marks = obtained = Decimal(0)         # exact: marks have up to 2 decimals
     for q in questions:
-        marks = q["marks"] or 0
-        negative = q["negative_marks"] or 0
-        selected, right = q["selected_answer"], q["correct_answer"]
-        total_marks += marks
-        if not selected:  # same test as result_service.evaluate_attempt
+        total_marks += to_decimal(q["marks"] or 0)
+        status, awarded = outcome(q)          # the ONE scorer (app/services/scoring.py): MCQ unchanged, MSQ, NAT
+        if status == "UNANSWERED":
             continue
         attempted += 1
-        if selected.strip().upper() == right.strip().upper():
+        if status == "CORRECT":
             correct += 1
-            obtained += marks
         else:
             incorrect += 1
-            obtained -= negative
+        obtained += awarded
     return {"total_questions": total_questions, "attempted_questions": attempted, "correct_answers": correct,
             "incorrect_answers": incorrect, "unanswered_questions": total_questions - attempted, "total_marks": total_marks,
             "obtained_marks": obtained, "accuracy": round(correct / attempted * 100, 2) if attempted else 0.0}
+
+
+def replace_question_rows(db: Session, result_id, questions) -> None:
+    """The per-question marks of a result (D9), rewritten from the same scorer (first evaluation and re-evaluation alike)."""
+    from sqlalchemy import delete
+
+    from app.models.test_result_question import TestResultQuestion
+    db.execute(delete(TestResultQuestion).where(TestResultQuestion.result_id == result_id))
+    db.add_all([TestResultQuestion(result_id=result_id, **row) for row in rows(questions)])
 
 
 def snapshot(result: TestResult) -> dict:
@@ -44,14 +54,14 @@ def snapshot(result: TestResult) -> dict:
 
 def apply(db: Session, result: TestResult, new: dict, *, kind: str, correction_ref: str, reason: str, actor: str) -> ResultHistory:
     """Write the history row (with the full previous values) and the new effective values together."""
-    previous = snapshot(result)
+    previous = jsonable(snapshot(result))       # history and JSON columns hold JSON numbers: whole -> 4, fractional -> 0.25
     if "subject_adjustments" in new:            # Global Test attribution: kept with the history like the marks
         previous["subject_adjustments"] = result.subject_adjustments
     row = ResultHistory(result_id=result.result_id, test_id=result.test_id, student_id=result.student_id, kind=kind, correction_ref=correction_ref,
-                        previous=previous, new={**previous, **new}, reason=reason, actor=actor)
+                        previous=previous, new={**previous, **jsonable(new)}, reason=reason, actor=actor)
     db.add(row)
     for k, v in new.items():
-        setattr(result, k, v)
+        setattr(result, k, jsonable(v) if k == "subject_adjustments" else v)
     return row
 
 
@@ -87,6 +97,7 @@ def reevaluate_test(db: Session, test_id: uuid.UUID, *, correction_ref: str, rea
             out["unchanged"] += 1
             continue
         apply(db, r, new, kind="REEVALUATION", correction_ref=correction_ref, reason=reason, actor=actor)
+        replace_question_rows(db, r.result_id, questions)
         out["changed"].append(r.student_id)
     db.commit()
     return out

@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.marks import to_decimal
 from app.repositories.ranking_repository import (
     get_global_occurrence,
     get_occurrence_results,
@@ -39,14 +40,21 @@ def get_ranking(
     if not any(row["student_id"] == student_id for row in rows):
         raise _not_available()
 
+    # Standard competition ranking (1, 2, 2, 4): equal marks share a rank (decision R3); inside a shared rank students are listed by
+    # name, then id, so the order is stable and never depends on who was evaluated first.
+    rows = sorted(rows, key=lambda r: (-to_decimal(r["obtained_marks"]), r["student_name"] or "", r["student_id"]))
     leaderboard = []
 
     my_rank = None
     my_score = None
+    previous, current = None, 0
 
     for index, row in enumerate(rows, start=1):
+        marks = to_decimal(row["obtained_marks"])
+        if marks != previous:
+            current, previous = index, marks
         item = {
-            "rank": index,
+            "rank": current,
             "student_id": row["student_id"],
             "student_name": row["student_name"],
             "obtained_marks": row["obtained_marks"],
@@ -55,7 +63,7 @@ def get_ranking(
         leaderboard.append(item)
 
         if row["student_id"] == student_id:
-            my_rank = index
+            my_rank = current
             my_score = row["obtained_marks"]
 
     return {
@@ -72,7 +80,7 @@ def rank(entries: list[dict], student_id: str, *, raw_marks_order: bool) -> dict
     """Standard competition ranking by percentage of the delivered maximum (1, 1, 3): equal percentages share a rank, compared exactly
     (fractions, never rounded floats). raw_marks_order only orders entries inside a shared rank (overall ranking); it never splits it."""
     def pct(e):
-        return Fraction(e["obtained_marks"], e["max_marks"])
+        return Fraction(e["obtained_marks"]) / Fraction(e["max_marks"])        # exact: Fraction(Decimal) has no rounding
 
     entries = sorted(entries, key=lambda e: (-pct(e), -e["obtained_marks"] if raw_marks_order else 0, e["student_name"], e["student_id"]))
     leaderboard, previous, current = [], None, 0
@@ -109,8 +117,8 @@ def get_occurrence_ranking(db: Session, test_id: UUID, occurrence_id: UUID, sect
     subject_rankings = []
     for subject in subjects:
         # only students who were delivered questions for the subject: a missing subject is never 0%
-        entries = [{"student_id": s["student_id"], "student_name": names[s["student_id"]], "obtained_marks": int(s["obtained_marks"]),
-                    "max_marks": int(s["max_marks"])} for s in scores if s["subject"] == subject and s["max_marks"]]
+        entries = [{"student_id": s["student_id"], "student_name": names[s["student_id"]], "obtained_marks": to_decimal(s["obtained_marks"]),
+                    "max_marks": to_decimal(s["max_marks"])} for s in scores if s["subject"] == subject and s["max_marks"]]
         subject_rankings.append({"subject": subject, **rank(entries, student_id, raw_marks_order=False)})
 
     return {

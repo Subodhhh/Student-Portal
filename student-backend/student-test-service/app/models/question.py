@@ -1,16 +1,20 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
-    Index,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -117,13 +121,13 @@ class Question(Base):
         nullable=False,
     )
 
-    marks: Mapped[int] = mapped_column(
-        Integer,
+    marks: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2),
         nullable=False,
     )
 
-    negative_marks: Mapped[int] = mapped_column(
-        Integer,
+    negative_marks: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2),
         nullable=False,
     )
 
@@ -132,6 +136,11 @@ class Question(Base):
         nullable=True,
     )
 
+    # MSQ / NAT (app/question_types.py): `content` is shown to students (MSQ options, NAT number format); `answer_key` and `scheme`
+    # are NEVER served before review. NULL for MCQ, whose options and key are the columns above (correct_answer holds "" for MSQ/NAT).
+    content: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    answer_key: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    scheme: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # pictures (question_images.checksum) of the question and of each option; NULL: that field has no picture
     question_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
     option_a_image: Mapped[str | None] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=True)
@@ -151,3 +160,12 @@ class Question(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+class QuestionPicture(Base):
+    """A picture referenced inside a question's `content` (MSQ option pictures, roles option_a .. option_h): lets the picture endpoint
+    authorise it exactly like the picture columns of MCQ questions."""
+    __tablename__ = "question_pictures"
+
+    question_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("questions.question_id", ondelete="CASCADE"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(20), primary_key=True)
+    checksum: Mapped[str] = mapped_column(String(64), ForeignKey("question_images.checksum"), nullable=False, index=True)

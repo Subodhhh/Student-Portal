@@ -19,6 +19,7 @@ from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.core.taxonomy import Label
+from institute_common.core.marking import MarkingRulesIn, check_marking_choice, rules_problem
 from institute_common.core.class_levels import TargetClass, normalize_class
 from institute_common.models.exams import (
     Exam, ExamGenerationEvent, ExamGenerationJob, ExamOutbox, ExamPlan, ExamPlanBatch, ExamPlanStudent, ExamPlanSubject,
@@ -79,13 +80,16 @@ class AudienceIn(Strict):
 
 class MarkingIn(Strict):
     """PER_QUESTION (default): each question's own marks. UNIFORM: +marks_correct for a right answer and -marks_wrong for a wrong
-    one, for every question of the exam (whole numbers, as the Student services require). Unanswered questions always score 0."""
-    marking_mode: Literal["PER_QUESTION", "UNIFORM"] = "PER_QUESTION"
+    one, for every question of the exam (whole numbers). RULES: the creator's marks per question type and subject (decimals
+    allowed, see institute_common.core.marking). Unanswered questions always score 0."""
+    marking_mode: Literal["PER_QUESTION", "UNIFORM", "RULES"] = "PER_QUESTION"
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
+    marking_rules: MarkingRulesIn | None = None
 
     @model_validator(mode="after")
     def marking_rule(self):
+        check_marking_choice(self.marking_mode, self.marks_correct, self.marks_wrong, self.marking_rules)
         if self.marking_mode == "UNIFORM" and (self.marks_correct is None or self.marks_wrong is None):
             raise ValueError("uniform marking needs marks_correct and marks_wrong")
         if self.marking_mode == "PER_QUESTION" and (self.marks_correct is not None or self.marks_wrong is not None):
@@ -126,9 +130,10 @@ class PlanPatch(Strict):
     status: str | None = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
     exam_type: Label = None
     target_class: TargetClass = None
-    marking_mode: Literal["PER_QUESTION", "UNIFORM"] | None = None
+    marking_mode: Literal["PER_QUESTION", "UNIFORM", "RULES"] | None = None
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
+    marking_rules: MarkingRulesIn | None = None
 
 
 class GenerateIn(Strict):
@@ -154,6 +159,7 @@ class PlanOut(BaseModel):
     marking_mode: str = "PER_QUESTION"
     marks_correct: int | None = None
     marks_wrong: int | None = None
+    marking_rules: dict | None = None
     exam_type: str | None = None
     target_class: str | None = None
     global_test_id: UUID | None = None
@@ -259,7 +265,8 @@ def _plan_outs(db: Session, plans: list[ExamPlan]) -> list[PlanOut]:
     gt_names = dict(db.execute(select(GlobalTest.test_id, GlobalTest.name).where(GlobalTest.test_id.in_(gt_ids))).all()) if gt_ids else {}
     return [PlanOut(**{c: getattr(plan, c) for c in ("plan_id", "provider_id", "branch_id", "name", "description", "duration_minutes",
                                                       "start_at", "end_at", "generate_at", "auto_publish", "status", "audience_type",
-                                                      "marking_mode", "marks_correct", "marks_wrong", "exam_type", "target_class", "global_test_id")},
+                                                      "marking_mode", "marks_correct", "marks_wrong", "marking_rules", "exam_type", "target_class",
+                                                      "global_test_id")},
                     batch_ids=batches.get(plan.plan_id, []), student_ids=students.get(plan.plan_id, []),
                     global_test_name=gt_names.get(plan.global_test_id),
                     slots=[SlotIn(subject_id=s.subject_id, paper_id=s.paper_id, paper_version_id=s.paper_version_id) for s in slots.get(plan.plan_id, [])])
@@ -323,6 +330,18 @@ def _validate_slots(db: Session, provider_id: UUID, slots: list[SlotIn]) -> None
             raise api_error(422, "GLOBAL_TEST_PAPER", "This platform paper belongs to a Global Test: schedule that test instead of reusing its paper.")
 
 
+def _require_rules_fit(rules: MarkingRulesIn | dict | None, subject_ids) -> None:
+    """422 unless the RULES marking covers exactly the plan's subjects (shared check: institute_common.core.marking.rules_problem)."""
+    stored = rules.to_storage() if isinstance(rules, MarkingRulesIn) else rules
+    problem = rules_problem(stored, subject_ids)
+    if problem:
+        raise api_error(422, "INVALID_MARKING_RULES", problem)
+
+
+def _plan_subject_ids(db: Session, plan_id: UUID) -> list[UUID]:
+    return list(db.scalars(select(ExamPlanSubject.subject_id).where(ExamPlanSubject.plan_id == plan_id)))
+
+
 def _write_slots(db: Session, plan: ExamPlan, slots: list[SlotIn]) -> None:
     for pos, s in enumerate(slots, start=1):
         db.add(ExamPlanSubject(plan_id=plan.plan_id, position=pos, subject_id=s.subject_id, paper_id=s.paper_id,
@@ -337,8 +356,10 @@ def create_plan(branch_id: UUID, body: PlanIn, p: Principal = Depends(get_princi
     missing = validate_audience(db, br, body)
     if missing:
         raise api_error_detail(422, "STUDENTS_NOT_ENROLLED", "Some students are not actively enrolled with this provider.", student_ids=missing[:100])
+    _require_rules_fit(body.marking_rules, [s.subject_id for s in body.slots])
     plan = ExamPlan(provider_id=br.provider_id, branch_id=branch_id, created_by=p.staff_id,
-                    **body.model_dump(exclude={"batch_ids", "student_ids", "slots", "audience_type"}))
+                    marking_rules=body.marking_rules.to_storage() if body.marking_rules else None,
+                    **body.model_dump(exclude={"batch_ids", "student_ids", "slots", "audience_type", "marking_rules"}))
     db.add(plan)
     db.flush()
     write_audience(db, plan, body)
@@ -371,6 +392,7 @@ def check_plan(branch_id: UUID, body: PlanCheckIn, p: Principal = Depends(get_pr
     for sid in body.pending_subject_ids:
         if not db.scalar(select(ProviderSubject).where(ProviderSubject.provider_id == br.provider_id, ProviderSubject.subject_id == sid)):
             raise api_error(422, "SUBJECT_NOT_ENABLED", "A subject in the plan is not enabled for this provider.")
+    _require_rules_fit(body.marking_rules, subjects)
     missing = validate_audience(db, br, body)
     if missing:
         raise api_error_detail(422, "STUDENTS_NOT_ENROLLED", "Some students are not actively enrolled with this provider.", student_ids=missing[:100])
@@ -443,7 +465,9 @@ def update_plan(plan_id: UUID, body: PlanPatch, p: Principal = Depends(get_princ
     plan = _plan(db, plan_id)
     _require_plan(db, p, "examplan.manage", plan)
     changes = body.model_dump(exclude_unset=True)
-    if plan.global_test_id and {"duration_minutes", "marking_mode", "marks_correct", "marks_wrong"} & changes.keys():
+    if "marking_rules" in changes:      # stored with exact decimal strings, never the Python Decimals of the request model
+        changes["marking_rules"] = body.marking_rules.to_storage() if body.marking_rules else None
+    if plan.global_test_id and {"duration_minutes", "marking_mode", "marks_correct", "marks_wrong", "marking_rules"} & changes.keys():
         raise api_error(409, "GLOBAL_TEST_LOCKED", "A Global Test keeps its own duration and marking scheme.")
     if changes.get("status") == "ACTIVE" and plan.global_test_id:
         gt = db.get(GlobalTest, plan.global_test_id)
@@ -457,8 +481,20 @@ def update_plan(plan_id: UUID, body: PlanPatch, p: Principal = Depends(get_princ
     if plan.marking_mode == "UNIFORM" and (not plan.marks_correct or plan.marks_wrong is None):
         db.rollback()
         raise api_error(422, "INVALID_MARKING", "Uniform marking needs marks for a correct and a wrong answer.")
-    if plan.marking_mode == "PER_QUESTION":
+    if plan.marking_mode == "RULES" and plan.marking_rules is None:
+        db.rollback()
+        raise api_error(422, "INVALID_MARKING", "Rules-based marking needs marking rules.")
+    if plan.marking_mode != "RULES" and changes.get("marking_rules"):
+        db.rollback()
+        raise api_error(422, "INVALID_MARKING", "Marking rules apply only to rules-based marking.")
+    if plan.marking_mode != "UNIFORM":
         plan.marks_correct = plan.marks_wrong = None
+    if plan.marking_mode != "RULES":
+        plan.marking_rules = None
+    problem = rules_problem(plan.marking_rules, _plan_subject_ids(db, plan_id))
+    if problem:
+        db.rollback()
+        raise api_error(422, "INVALID_MARKING_RULES", problem)
     db.commit()
     audit.record(db, "examplan.update", "SUCCESS", actor=p.staff_id, target_type="exam_plan", target_id=plan_id,
                  provider_id=plan.provider_id, branch_id=plan.branch_id, ip=p.ip)
@@ -474,6 +510,7 @@ def replace_slots(plan_id: UUID, slots: list[SlotIn], p: Principal = Depends(get
     if not slots or len(slots) > 20:
         raise api_error(422, "INVALID_SLOTS", "A plan needs between 1 and 20 subject slots.")
     _validate_slots(db, plan.provider_id, slots)
+    _require_rules_fit(plan.marking_rules, [s.subject_id for s in slots])     # new subjects need marks too
     for old in db.scalars(select(ExamPlanSubject).where(ExamPlanSubject.plan_id == plan_id)):
         db.delete(old)
     db.flush()
@@ -955,14 +992,35 @@ def _subject_rows(db: Session, subject_results: list[dict], scope: unified.Subje
 def competition_ranked(rows: list[dict]) -> list[dict]:
     """Global Test ranking, the same rule as the student ranking service: obtained / that student's own maximum compared as exact
     fractions, equal ratios share a rank (1, 1, 3), ordered inside a rank by raw marks; a zero maximum is not ranked (listed last)."""
-    ranked = sorted((r for r in rows if r["total_marks"]), key=lambda r: (-Fraction(r["obtained_marks"], r["total_marks"]), -r["obtained_marks"]))
+    # a row without its own maximum (a single-provider exam: every student has the same one) is ranked by its marks
+    ratio = lambda r: Fraction(r["obtained_marks"], r["total_marks"]) if "total_marks" in r else Fraction(r["obtained_marks"])  # noqa: E731
+    rankable = [r for r in rows if r.get("total_marks", 1)]
+    ranked = sorted(rankable, key=lambda r: (-ratio(r), -r["obtained_marks"]))
     out, previous, current = [], None, 0
     for i, r in enumerate(ranked, start=1):
-        ratio = Fraction(r["obtained_marks"], r["total_marks"])
-        if ratio != previous:
-            current, previous = i, ratio
+        if ratio(r) != previous:
+            current, previous = i, ratio(r)
         out.append({**r, "rank": current})
-    return out + [{**r, "rank": None} for r in rows if not r["total_marks"]]
+    return out + [{**r, "rank": None} for r in rows if not r.get("total_marks", 1)]
+
+
+@router.get("/exams/{exam_id}/results/questions")
+def exam_question_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db),
+                          rc: ResultClient = Depends(get_result_client)):
+    """Question-level analysis of a published exam (every question type): per question, how many students answered correctly,
+    incorrectly or not at all, the average marks and the options chosen. It covers every student of the exam, so only callers who see
+    every student (provider admins, platform roles, the exam's branch admins) may read it."""
+    e = _exam(db, exam_id)
+    if exam_access(db, p, "result.read", e) is not None:
+        raise api_error(403, "FORBIDDEN", "Question analysis covers every student of the exam; ask a provider or branch admin.")
+    ev = db.scalar(select(ExamVersion).where(ExamVersion.exam_id == exam_id).order_by(ExamVersion.version_no.desc()).limit(1))
+    if e.status != "PUBLISHED" or not ev:
+        raise api_error(409, "NOT_PUBLISHED", "Results exist only for published exams.")
+    try:
+        questions = rc.exam_question_results(str(ev.exam_version_id))
+    except ResultServiceError:
+        raise api_error(503, "RESULT_SERVICE_UNAVAILABLE", "Results are temporarily unavailable.")
+    return {"exam_id": str(exam_id), "questions": questions}
 
 
 @router.get("/exams/{exam_id}/results")
@@ -1002,11 +1060,11 @@ def exam_results(exam_id: UUID, p: Principal = Depends(get_principal), db: Sessi
         names = {}
     marks = [r["obtained_marks"] for r in rows]
     unified_exam = unified.is_unified_exam(db, e.exam_id)
-    if unified_exam:
-        rows = competition_ranked(rows)           # Global Test: exact obtained/maximum ratio, shared ranks (as the student ranking)
-    out_rows = [{**r, "rank": r["rank"] if unified_exam else i + 1,
+    # standard competition ranking (1, 2, 2, 4: decision D10) by the exact obtained/maximum ratio, as the student ranking
+    rows = competition_ranked(rows)
+    out_rows = [{**r,
                  "name": (f"{names[r['student_id']].first_name} {names[r['student_id']].last_name}" if r["student_id"] in names else None)}
-                for i, r in enumerate(rows)]
+                for r in rows]
     if subject_view:
         visible = [x for x in db.scalars(select(ExamVersionPaper).where(ExamVersionPaper.exam_version_id == ev.exam_version_id))
                    if str(x.source_submission_id) in branches.paper_ids]

@@ -1,7 +1,11 @@
 from datetime import datetime
 from uuid import UUID
 
+from decimal import Decimal
+
 from pydantic import BaseModel
+
+from app.marks import Marks
 
 
 class ResultResponse(BaseModel):
@@ -16,8 +20,8 @@ class ResultResponse(BaseModel):
     incorrect_answers: int
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    total_marks: Marks
+    obtained_marks: Marks
     accuracy: float
 
     created_at: datetime
@@ -49,8 +53,8 @@ class ResultListItem(BaseModel):
     incorrect_answers: int
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    total_marks: Marks
+    obtained_marks: Marks
     accuracy: float
 
     created_at: datetime
@@ -66,10 +70,10 @@ class SubjectPerformance(BaseModel):
     incorrect_answers: int
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    total_marks: Marks
+    obtained_marks: Marks
     accuracy: float
-    adjustment: int = 0              # a Global Test: this subject's manual adjustment (included in obtained_marks)
+    adjustment: Marks = Decimal(0)              # a Global Test: this subject's manual adjustment (included in obtained_marks)
 
 
 class QuestionReview(BaseModel):
@@ -89,9 +93,9 @@ class QuestionReview(BaseModel):
 
     status: str
 
-    marks_obtained: int
-    marks: int
-    negative_marks: int
+    marks_obtained: Marks
+    marks: Marks
+    negative_marks: Marks
 
     image_reference: str | None
     question_image: str | None = None
@@ -99,6 +103,11 @@ class QuestionReview(BaseModel):
     option_b_image: str | None = None
     option_c_image: str | None = None
     option_d_image: str | None = None
+    # MSQ / NAT (shown only once the review is open): the type, the options or number format, the typed key; correct_answer then
+    # holds the key in words ("A, C" / "9.8 ± 0.05")
+    question_type: str = "MCQ"
+    content: dict | None = None
+    answer_key: dict | None = None
 
 
 class ResultDetailsResponse(BaseModel):
@@ -109,4 +118,4 @@ class ResultDetailsResponse(BaseModel):
     review_available: bool = True
     review_available_at: datetime | None = None
     # a Global Test: a manual adjustment never attributed to a subject (included in the overall result only)
-    unattributed_adjustment: int | None = None
+    unattributed_adjustment: Marks | None = None

@@ -44,7 +44,13 @@ def _clean(text) -> str:
     return "".join(ch for ch in text if ch == "\n" or ch.isprintable())
 
 
+# Shown where a question (or a whole paper) has no marks of its own: the test that uses the paper decides them.
+SET_BY_TEST = "Set by the test"
+
+
 def _num(value) -> str:
+    if value is None:
+        return SET_BY_TEST
     return format(value.normalize(), "f") if hasattr(value, "normalize") else str(value)
 
 
@@ -57,7 +63,9 @@ def minus_marks(value) -> str:
     return f"−{_num(value)}" if value else "0"
 
 
-def _span(values: tuple, sign) -> str:
+def _span(values: tuple | None, sign) -> str:
+    if values is None:
+        return SET_BY_TEST
     low, high = values
     return sign(low) if low == high else f"{sign(low)} to {sign(high)}"
 
@@ -132,14 +140,23 @@ def _header(w: _Writer, paper: dict, answer_key: bool, width: float) -> list:
                               ("BACKGROUND", (0, 0), (-1, 0), colors.Color(238 / 255, 238 / 255, 238 / 255)),
                               ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     out.append(grid)
-    if any(m["correct"][0] != m["correct"][1] or m["incorrect"][0] != m["incorrect"][1] for m in paper["marking"]):
+    if any(m["correct"] and (m["correct"][0] != m["correct"][1] or m["incorrect"][0] != m["incorrect"][1]) for m in paper["marking"]):
         out.append(w.p("A range means the marks vary by question; each question shows its own marks.", size=8.5))
     out += [w.p(note, size=8.5) for note in paper.get("marking_notes", [])]
     out.append(Spacer(1, 2 * mm))
     if not answer_key:
         out.append(w.p("Instructions", size=11, bold=True, after=1 * mm))
+        types = {q.get("type", "MCQ_SINGLE") for q in paper["questions"]} or {"MCQ_SINGLE"}
+        lines = [line for t, line in (
+            ("MCQ_SINGLE", "MCQ: each question has four options (A)–(D); choose the one correct option."),
+            ("MCQ_MULTI", "MSQ (one or more correct): choose every correct option. Marks are given only when the choice is exactly "
+                          "right; a wrong or incomplete choice scores 0 (never negative)."),
+            ("NUMERICAL", "NAT (number answer): write the number only, without units; the accepted answer may allow a tolerance."))
+            if t in types]
+        if types == {"MCQ_SINGLE"}:
+            lines = ["Each question has four options (A)–(D); choose the one correct option."]
         out += [w.p(f"•  {line}", size=9.5, indent=2 * mm) for line in (
-            "Each question has four options (A)–(D); choose the one correct option.",
+            *lines,
             "Marks for a correct and an incorrect answer are given with each question and in the marking scheme above.",
             "An unanswered question scores 0.")]
     out.append(w.p(f"Downloaded {datetime.now(IST).strftime('%d %b %Y, %H:%M')} IST", size=8, after=1 * mm))
@@ -161,13 +178,20 @@ def render(paper: dict, answer_key: bool = False) -> bytes:
     story = _header(w, paper, answer_key, width)
     grey = colors.Color(90 / 255, 90 / 255, 90 / 255)
     for n, q in enumerate(paper["questions"], start=1):
-        block = [w.p(f"{n}. {readable(q['stem'])}", bold=True, after=0.5 * mm)]
-        for letter, option in zip("ABCD", q["options"], strict=True):
-            correct = answer_key and q["answer"] == letter
+        qtype = q.get("type", "MCQ_SINGLE")
+        label = {"MCQ_MULTI": "  [MSQ: one or more correct]", "NUMERICAL": "  [NAT: number answer]"}.get(qtype, "")
+        block = [w.p(f"{n}. {readable(q['stem'])}{label}", bold=True, after=0.5 * mm)]
+        for letter, option in zip(q.get("letters", "ABCD"), q["options"], strict=True):
+            correct = answer_key and letter in q.get("correct", {q.get("answer")})
             block.append(w.p(f"({letter}) {readable(option)}{'   ✓ correct' if correct else ''}", bold=correct, indent=6 * mm))
-        block.append(w.p(f"Marks: {plus_marks(q['marks_positive'])} / {minus_marks(q['marks_negative'])}", size=9, indent=6 * mm, color=grey))
+        if qtype == "NUMERICAL" and not answer_key:
+            block.append(w.p(f"Answer: ____________ {readable(q.get('unit') or '')}", size=10, indent=6 * mm))
+        marks = (SET_BY_TEST.lower() if q["marks_positive"] is None
+                 else f"{plus_marks(q['marks_positive'])} / {minus_marks(q['marks_negative'])}")
+        block.append(w.p(f"Marks: {marks}", size=9, indent=6 * mm, color=grey))
         if answer_key:
-            block.append(w.p(f"Answer: ({q['answer']})", size=10, bold=True, indent=6 * mm))
+            shown = f"({q['answer']})" if qtype == "MCQ_SINGLE" else q["answer"] + (f" {q['unit']}" if q.get("unit") else "")
+            block.append(w.p(f"Answer: {readable(shown)}", size=10, bold=True, indent=6 * mm))
             if q.get("explanation"):
                 block.append(w.p(f"Explanation: {readable(q['explanation'])}", size=9.5, indent=6 * mm))
         story += [KeepTogether(block), Spacer(1, 3 * mm)]       # a question stays on one page where it fits

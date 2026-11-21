@@ -6,22 +6,25 @@ import { useScope } from "../auth/ScopeContext";
 import { isGlobalRole } from "../auth/roles";
 import NeedBranch from "../components/NeedBranch";
 import type { GlobalTest } from "../components/globalTests";
-import { QuestionBrowser } from "../components/questionBank";
+import { QuestionBrowser, ReviewFlags } from "../components/questionBank";
+import { MarkingRulesEditor } from "../components/markingRules";
+import { describeRules, emptyRules, rulesPayload, rulesProblem, rulesTotal, subjectTotal } from "../components/markingRulesModel";
 import { Alert, Button, Card, DataTable, EmptyState, Field, PageHeader, SearchField, SelectField, Spinner, StatusBadge } from "../components/ui";
 import { useAction, useApi, useReference } from "../hooks/useApi";
 import { ApiError, api, errorMessage, type Page } from "../services/api";
-import { buildPapers, groupBySubject, type BankQuestion } from "../services/questions";
+import { buildPapers, groupBySubject, reviewPapers, type BankQuestion, type SubjectReview } from "../services/questions";
 
 type Subject = { subject_id: string; name: string };
 type Batch = { batch_id: string; name: string; status: string };
-type PV = { paper_version_id: string; version_no: number; status: string; question_count: number; total_marks: string };
+type PV = { paper_version_id: string; version_no: number; status: string; question_count: number; total_marks: string | null };
 type PaperRow = { paper_id: string; scope: string; subject_id: string; title: string; latest_version: PV | null };
 type DirStudent = { student_id: string; name: string | null };
 type Audience = { audience_type: "BATCHES" | "BRANCH" | "INSTITUTE" | "STUDENTS"; batch_ids: string[]; student_ids: string[] };
 type Preview = { eligible_count: number; sample_student_ids: string[]; not_eligible_student_ids: string[] };
 type Plan = { plan_id: string; name: string; status: string };
 type Job = { job_id: string; status: string; exam_id: string | null; error: string | null };
-type Slot = { subject_id: string; paper_version_id: string; label: string; question_count: number; total_marks: number; status: string };
+// total_marks null: the paper's questions have no marks of their own (the test's marking decides them)
+type Slot = { subject_id: string; paper_version_id: string; label: string; question_count: number; total_marks: number | null; status: string };
 
 const STEPS = [
   { id: "test", label: "Choose test" },
@@ -81,12 +84,15 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
   const [cfg, setCfg] = useState(() => {
     const start = new Date(Date.now() + 86400000);
     start.setMinutes(0, 0, 0);
-    return { name: "", exam_type: "", target_class: "", duration: "180", marking: "PER_QUESTION" as "PER_QUESTION" | "UNIFORM", correct: "4", wrong: "1",
+    return { name: "", exam_type: "", target_class: "", duration: "180", marking: "PER_QUESTION" as "PER_QUESTION" | "UNIFORM" | "RULES", correct: "4", wrong: "1", rules: emptyRules(),
       start: toLocalInput(start), end: toLocalInput(new Date(start.getTime() + 6 * 3600000)), generateAt: "", autoPublish: true };
   });
   const [publishPapers, setPublishPapers] = useState(true);
   const [result, setResult] = useState<{ plan: Plan; job: Job | null } | null>(null);
   const submit = useAction();
+  // possible duplicates among the chosen bank questions (never blocking): shown once, then the same button builds anyway
+  // (tied to the exact questions checked: another selection is checked again)
+  const [reviews, setReviews] = useState<{ key: string; items: SubjectReview[] } | null>(null);
 
   const globalTest = useApi<GlobalTest>(kind === "global" && globalId ? `/api/v1/global-tests/${globalId}` : null);
   const gt = globalTest.data;
@@ -105,14 +111,23 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
 
   // what the exam will contain
   const bankGroups = groupBySubject(selected);
-  const sections: { subject: string; questions: number; marks: number; detail: string }[] = kind === "global" && gt
-    ? gt.sections.map((s) => ({ subject: s.subject ?? "Subject", questions: s.question_count, marks: Number(s.total_marks), detail: `${s.paper_title} v${s.version_no}` }))
+  // `unmarked`: some question has no marks of its own (marks belong to the test), so "each question's own marks" cannot be used
+  const sections: { subject_id: string; subject: string; questions: number; marks: number | null; detail: string; unmarked: boolean }[] = kind === "global" && gt
+    ? gt.sections.map((s) => ({ subject_id: s.subject_id, subject: s.subject ?? "Subject", questions: s.question_count, marks: s.total_marks === null ? null : Number(s.total_marks),
+      detail: `${s.paper_title} v${s.version_no}`, unmarked: s.total_marks === null }))
     : sourceMode === "bank"
-      ? bankGroups.map((g) => ({ subject: sName(g.subject_id), questions: g.question_ids.length,
-        marks: g.question_ids.reduce((m, id) => m + Number(selected.get(id)!.latest.marks_positive), 0), detail: "new paper from selected bank questions" }))
-      : Object.values(slots).map((s) => ({ subject: sName(s.subject_id), questions: s.question_count, marks: s.total_marks, detail: s.label }));
+      ? bankGroups.map((g) => ({ subject_id: g.subject_id, subject: sName(g.subject_id), questions: g.question_ids.length,
+        marks: g.question_ids.some((id) => selected.get(id)!.latest.marks_positive === null) ? null
+          : g.question_ids.reduce((m, id) => m + Number(selected.get(id)!.latest.marks_positive), 0),
+        detail: "new paper from selected bank questions", unmarked: g.question_ids.some((id) => selected.get(id)!.latest.marks_positive === null) }))
+      : Object.values(slots).map((s) => ({ subject_id: s.subject_id, subject: sName(s.subject_id), questions: s.question_count, marks: s.total_marks,
+        detail: s.label, unmarked: s.total_marks === null }));
   const questionCount = sections.reduce((n, s) => n + s.questions, 0);
-  const totalMarks = eff.marking === "UNIFORM" ? questionCount * Number(eff.correct || 0) : sections.reduce((n, s) => n + s.marks, 0);
+  const totalMarks = eff.marking === "UNIFORM" ? questionCount * Number(eff.correct || 0)
+    : eff.marking === "RULES" ? rulesTotal(eff.rules, sections)
+      : sections.some((s) => s.marks === null) ? "—" : sections.reduce((n, s) => n + (s.marks ?? 0), 0);
+  const sectionMarks = (s: (typeof sections)[number]) => (eff.marking === "UNIFORM" ? s.questions * Number(eff.correct || 0)
+    : eff.marking === "RULES" ? subjectTotal(eff.rules, s.subject_id, s.questions) : s.marks ?? "—");
 
   const preview = useAudiencePreview(branchId, audience, Object.keys(slots), eff.target_class);
   const valid: Record<Step, string | null> = {
@@ -125,7 +140,10 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
       : !(Number(eff.duration) > 0 && Number(eff.duration) <= 720) ? "Duration must be between 1 and 720 minutes."
         : new Date(eff.end) <= new Date(eff.start) ? "The window must end after it starts."
           : eff.generateAt && new Date(eff.generateAt) > new Date(eff.start) ? "Generation must happen before the window opens."
-            : eff.marking === "UNIFORM" && !(/^\d+$/.test(eff.correct) && Number(eff.correct) > 0 && /^\d+$/.test(eff.wrong)) ? "Marks must be whole numbers; correct > 0." : null,
+            : eff.marking === "UNIFORM" && !(/^\d+$/.test(eff.correct) && Number(eff.correct) > 0 && /^\d+$/.test(eff.wrong)) ? "Marks must be whole numbers; correct > 0."
+              : eff.marking === "RULES" ? rulesProblem(eff.rules, sections.map((s) => s.subject_id))
+                : eff.marking === "PER_QUESTION" && sections.some((s) => s.unmarked)
+                  ? "Some questions have no marks of their own: choose “Same marks for every question” or “Marks per subject”." : null,
     review: null,
   };
 
@@ -139,6 +157,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
       const planBody = {
         name: eff.name.trim(), duration_minutes: Number(eff.duration), exam_type: eff.exam_type.trim() || null, target_class: eff.target_class.trim() || null,
         marking_mode: eff.marking, ...(eff.marking === "UNIFORM" ? { marks_correct: Number(eff.correct), marks_wrong: Number(eff.wrong) } : {}),
+        ...(eff.marking === "RULES" ? { marking_rules: rulesPayload(eff.rules) } : {}),
         ...audience, ...window };
       let planSlots: { subject_id: string; paper_version_id: string }[];
       if (sourceMode === "bank") {
@@ -146,10 +165,10 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
         // every paper as a dry run. Only then are the papers built (and approved/published), and the plan created from them.
         const groups = bankGroups.map((g) => ({ ...g, title: `${eff.name.trim()} – ${sName(g.subject_id)}` }));
         await api(`/api/v1/branches/${branchId}/exam-plans/check`, { method: "POST", body: { ...planBody, pending_subject_ids: groups.map((g) => g.subject_id) } });
-        for (const g of groups) {
-          await api(`/api/v1/papers/check`, { method: "POST", body: { scope: "PROVIDER", branch_id: branchId, subject_id: g.subject_id, title: g.title,
-            question_ids: g.question_ids, exam_type: eff.exam_type.trim() || null, target_class: eff.target_class.trim() || null } });
-        }
+        const found = await reviewPapers("PROVIDER", branchId, groups, { exam_type: eff.exam_type.trim() || null, target_class: eff.target_class.trim() || null });
+        const key = groups.map((g) => g.question_ids.join(",")).join("|");
+        // identical questions are refused every time (change the selection); possible duplicates are shown once
+        if (found.some((r) => r.blocking.length) || (found.length && reviews?.key !== key)) { setReviews({ key, items: found }); return; }
         const made: string[] = [];
         try {
           const built = await buildPapers("PROVIDER", branchId, groups, { exam_type: eff.exam_type, target_class: eff.target_class },
@@ -274,14 +293,17 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
           <label className="row checkbox-field"><input type="checkbox" checked={eff.autoPublish} onChange={(e) => setCfg({ ...cfg, autoPublish: e.target.checked })} /> Publish to students automatically once generated</label>
           <h3>Marking scheme</h3>
           <div className="grid cols-3">
-            <SelectField label="Marks" value={eff.marking} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, marking: e.target.value as "PER_QUESTION" | "UNIFORM" })}>
+            <SelectField label="Marks" value={eff.marking} disabled={kind === "global"} onChange={(e) => setCfg({ ...cfg, marking: e.target.value as "PER_QUESTION" | "UNIFORM" | "RULES" })}>
               <option value="PER_QUESTION">Use each question's own marks</option><option value="UNIFORM">Same marks for every question</option>
+              <option value="RULES">Marks per subject (decimals allowed)</option>
             </SelectField>
             {eff.marking === "UNIFORM" && <>
               <Field label="Marks for a correct answer" inputMode="numeric" value={eff.correct} onChange={(e) => setCfg({ ...cfg, correct: e.target.value })} />
               <Field label="Marks deducted for a wrong answer" inputMode="numeric" value={eff.wrong} onChange={(e) => setCfg({ ...cfg, wrong: e.target.value })} hint="0 for no negative marking" />
             </>}
           </div>
+          {eff.marking === "RULES" && <MarkingRulesEditor rows={eff.rules} onChange={(rules) => setCfg({ ...cfg, rules })}
+            subjects={sections.map((s) => ({ subject_id: s.subject_id, name: s.subject }))} />}
           <FixedPolicies />
           {valid.configure && <Alert kind="warn">{valid.configure}</Alert>}
         </Card>
@@ -296,7 +318,9 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
             <dt>Question source</dt><dd>{kind === "global" ? "The published test's platform papers (unchanged)" : sourceMode === "bank" ? `Question bank: ${selected.size} selected questions` : "Existing / uploaded papers"}</dd>
             <dt>Questions</dt><dd>{questionCount} in {sections.length} subject(s)</dd>
             <dt>Total marks</dt><dd>{totalMarks}</dd>
-            <dt>Marking</dt><dd>{eff.marking === "UNIFORM" ? `+${eff.correct} correct, −${eff.wrong} wrong, 0 unanswered` : "Each question's own marks (negative marks as set on the question), 0 unanswered"}</dd>
+            <dt>Marking</dt><dd>{eff.marking === "UNIFORM" ? `+${eff.correct} correct, −${eff.wrong} wrong, 0 unanswered`
+              : eff.marking === "RULES" ? `${describeRules(eff.rules.filter((x) => x.subject_id !== null || x.correct), sName).join("; ")}; 0 unanswered`
+                : "Each question's own marks (negative marks as set on the question), 0 unanswered"}</dd>
             <dt>Duration</dt><dd>{eff.duration} minutes, one timer across all subjects</dd>
             <dt>Audience</dt><dd>{AUDIENCE_LABEL[audience.audience_type]}{audience.audience_type === "BATCHES" ? ` (${audience.batch_ids.length})` : audience.audience_type === "STUDENTS" ? ` (${audience.student_ids.length})` : ""}
               {" · "}<strong>{preview.data ? `${preview.data.eligible_count} eligible student(s) now` : preview.loading ? "checking…" : "—"}</strong></dd>
@@ -306,7 +330,7 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
           </dl>
           <DataTable rows={sections} rowKey={(s) => s.subject + s.detail} columns={[
             { header: "Subject", render: (s) => s.subject }, { header: "Source", render: (s) => s.detail },
-            { header: "Questions", render: (s) => s.questions }, { header: "Marks", render: (s) => (eff.marking === "UNIFORM" ? s.questions * Number(eff.correct || 0) : s.marks) },
+            { header: "Questions", render: (s) => s.questions }, { header: "Marks", render: (s) => sectionMarks(s) },
           ]} />
           {kind === "new" && sourceMode === "bank" && (canPublishPapers ? (
             <label className="row checkbox-field"><input type="checkbox" checked={publishPapers} onChange={(e) => setPublishPapers(e.target.checked)} />
@@ -316,6 +340,8 @@ function Wizard({ providerId, branchId, globalTestId }: { providerId: string; br
             <Alert kind="warn">Some chosen paper versions are not approved yet. Generation will leave those subjects out and notify the responsible staff.</Alert>
           )}
           {submit.error && <Alert kind="error">{submit.error}</Alert>}
+          {reviews && reviews.key === bankGroups.map((g) => g.question_ids.join(",")).join("|") && (
+            <ReviewFlags reviews={reviews.items} stemOf={(id) => selected.get(id)?.latest.stem ?? ""} subjectName={sName} />)}
           <div className="row wizard-submit">
             {kind === "new" && <Button variant="secondary" busy={submit.busy} onClick={() => void save("draft")}>Save as draft</Button>}
             <Button busy={submit.busy} onClick={() => void save("schedule")}>Schedule</Button>
@@ -462,7 +488,7 @@ function PaperSlots({ providerId, branchId, subjects, slots, onChange }: { provi
     const p = papers.find((x) => x.latest_version?.paper_version_id === versionId);
     if (!versionId || !p?.latest_version) delete next[subjectId];
     else next[subjectId] = { subject_id: subjectId, paper_version_id: versionId, label: `${p.title} v${p.latest_version.version_no}${p.scope === "GLOBAL" ? " (platform)" : ""}`,
-      question_count: p.latest_version.question_count, total_marks: Number(p.latest_version.total_marks), status: p.latest_version.status };
+      question_count: p.latest_version.question_count, total_marks: p.latest_version.total_marks === null ? null : Number(p.latest_version.total_marks), status: p.latest_version.status };
     onChange(next);
   };
   if ((own.loading && !own.data) || (platform.loading && !platform.data)) return <Spinner />;
@@ -519,10 +545,10 @@ function InlineUpload({ branchId, subject, onClose, onDone }: { branchId: string
           const k = key.current?.files?.[0];
           if (k) form.append("answer_key", k);
           try {
-            const r = await api<{ paper_version_id: string; version_no: number; question_count: number; total_marks: string; status: string }>(
+            const r = await api<{ paper_version_id: string; version_no: number; question_count: number; total_marks: string | null; status: string }>(
               `/api/v1/branches/${branchId}/subjects/${subject.subject_id}/papers/upload`, { method: "POST", form });
             onDone({ subject_id: subject.subject_id, paper_version_id: r.paper_version_id, label: `${title.trim()} v${r.version_no} (uploaded)`,
-              question_count: r.question_count, total_marks: Number(r.total_marks), status: r.status });
+              question_count: r.question_count, total_marks: r.total_marks === null ? null : Number(r.total_marks), status: r.status });
           } catch (e) {
             if (e instanceof ApiError && e.code === "EXTRACTION_FAILED") { setErrors((e.extra.errors as typeof errors) ?? []); throw new Error("The paper was rejected; nothing was imported.", { cause: e }); }
             throw e;

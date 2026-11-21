@@ -18,3 +18,5 @@ defusedxml==0.7.1
 reportlab==4.2.5
 chardet==7.7.0
 Pillow==13.0.0
+# S3-compatible object storage client (AWS S3 now, Cloudflare R2 later): institute_common.objectstore. Apache-2.0.
+boto3==1.44.0

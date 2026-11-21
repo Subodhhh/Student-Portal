@@ -258,3 +258,39 @@ describe("Pictures in questions and options", () => {
     }
   });
 });
+
+describe("MSQ and NAT questions", () => {
+  const msq = { ...q("q2", "Physics"), question_type: "MCQ_MULTI", option_a: null, option_b: null, option_c: null, option_d: null,
+    content: { options: [{ id: "A", text: "Force" }, { id: "B", text: "Mass" }, { id: "C", text: "Velocity" }] } };
+  const nat = { ...q("q1", "Chemistry"), question_type: "NUMERICAL", option_a: null, option_b: null, option_c: null, option_d: null,
+    content: { format: "DECIMAL", decimals: 2, unit: "m/s²" } };
+  const saved = (calls: Call[]) => calls.filter((c) => c.url.endsWith("/attempts/a1/answers") && c.method === "POST").map((c) => (c.body as { selected_answer: string | null }).selected_answer);
+
+  it("ticks several MSQ options and saves them as one answer; a NAT number is checked before it is saved", async () => {
+    (globalTest.questions as unknown[]).splice(0, 2, msq, nat);       // typed questions have no option_a-d
+    try {
+      const calls = renderAttempt();
+      await begin();
+      expect(screen.getByText(/One or more options are correct/)).toBeTruthy();
+      const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+      expect(boxes.map((b) => b.value)).toEqual(["A", "B", "C"]);
+      fireEvent.click(boxes[0]);
+      await waitFor(() => expect(saved(calls)).toEqual(["A"]));
+      fireEvent.click(screen.getAllByRole("checkbox")[2]);
+      await waitFor(() => expect(saved(calls)).toEqual(["A", "AC"]));          // the chosen letters, sorted
+
+      fireEvent.click(screen.getByRole("button", { name: "Chemistry" }));
+      const box = await screen.findByLabelText(/Your answer/);
+      expect(screen.getByText("m/s²")).toBeTruthy();
+      fireEvent.change(box, { target: { value: "1e3" } });
+      fireEvent.blur(box);
+      expect((await screen.findByRole("alert")).textContent).toMatch(/digits/);
+      expect(saved(calls)).toEqual(["A", "AC"]);                               // an invalid number is never sent
+      fireEvent.change(box, { target: { value: "9.8" } });
+      fireEvent.keyDown(box, { key: "Enter" });
+      await waitFor(() => expect(saved(calls)).toEqual(["A", "AC", "9.8"]));
+    } finally {
+      globalTest.questions.splice(0, 2, q("q2", "Physics"), q("q1", "Chemistry"));
+    }
+  });
+});

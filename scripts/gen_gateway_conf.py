@@ -33,6 +33,11 @@ OUT = f"{ROOT}/institute-backend/institute-gateway/nginx.conf"
 EDGE_PROXY_IP = "10.231.47.2"
 
 
+# Routes that need more than the default body size (and time to receive it). Bulk question imports accept files up to
+# BULK_IMPORT_MAX_BYTES (512 MB); the paper service enforces the exact limit, the gateway only lets the upload through.
+LARGE_UPLOADS = {"/api/v1/bulk-imports": "client_max_body_size 520m; client_body_timeout 300s; proxy_read_timeout 300s;"}
+
+
 def render() -> str:
     table = route_table(SERVICES)
     bad = ambiguities(table)
@@ -61,7 +66,8 @@ def render() -> str:
             "    location ^~ /internal/ { return 404; }", ""]
     for path, svc in entries:
         regex = "^" + re.sub(r"\\\{[^/]+?\\\}", "[^/]+", re.escape(path)).replace("\\/", "/") + "$"
-        out.append(f"    location ~ {regex} {{ proxy_pass http://$institute_{svc}; }}")
+        extra = (LARGE_UPLOADS[path] + " ") if path in LARGE_UPLOADS else ""
+        out.append(f"    location ~ {regex} {{ {extra}proxy_pass http://$institute_{svc}; }}")
     out += ["", "    location / { default_type application/json; return 404 '{\"detail\":{\"code\":\"NOT_FOUND\",\"message\":\"No such route.\"}}'; }", "}", ""]
     return "\n".join(out)
 

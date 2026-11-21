@@ -86,6 +86,48 @@ interface QuestionReview {
   option_b_image?: string | null;
   option_c_image?: string | null;
   option_d_image?: string | null;
+  // MSQ / NAT (once the review is open): the type, the options or number format and the key; correct_answer is then the key in
+  // words ("A, C", "9.8 ± 0.05")
+  question_type?: string;
+  content?: { options?: { id: string; text: string | null; image?: string | null }[]; unit?: string | null } | null;
+  answer_key?: { correct?: string[] } | null;
+}
+
+/** An MSQ's options with what the student chose and what was correct; a NAT's answer with its unit. */
+function TypedReview({ q, testId }: { q: QuestionReview; testId?: string }) {
+  if (q.question_type === "NUMERICAL") {
+    const unit = q.content?.unit ? ` ${q.content.unit}` : "";
+    return (
+      <div className="question-review-answer-grid">
+        <div className="question-answer-box"><span>Your Answer</span><strong>{q.selected_answer ? `${q.selected_answer}${unit}` : "Not Answered"}</strong></div>
+        <div className="question-answer-box"><span>Accepted Answer</span><strong>{q.correct_answer}{unit}</strong></div>
+        <div className="question-answer-box"><span>Marks</span><strong>{q.marks_obtained > 0 ? `+${q.marks_obtained}` : q.marks_obtained}</strong></div>
+      </div>
+    );
+  }
+  const chosen = new Set(q.selected_answer ?? "");
+  const correct = new Set(q.answer_key?.correct ?? []);
+  return (
+    <>
+      <p className="question-review-note">One or more options were correct: marks are given only for exactly the correct options.</p>
+      <ul className="question-review-options">
+        {(q.content?.options ?? []).map((o) => (
+          <li key={o.id} className={correct.has(o.id) ? "correct-option" : chosen.has(o.id) ? "wrong-option" : undefined}>
+            <strong>{o.id}.</strong>{" "}
+            {o.image && testId ? <img className="question-image option-image" src={`${TEST_API_URL}/tests/${testId}/images/${o.image}`} alt={`Option ${o.id} picture`} />
+              : <MathText text={o.text ?? ""} />}
+            {chosen.has(o.id) && <span className="question-review-tag"> · your choice</span>}
+            {correct.has(o.id) && <span className="question-review-tag"> · correct</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="question-review-answer-grid">
+        <div className="question-answer-box"><span>Your Answer</span><strong>{q.selected_answer ? [...q.selected_answer].join(", ") : "Not Answered"}</strong></div>
+        <div className="question-answer-box"><span>Correct Answer</span><strong>{q.correct_answer}</strong></div>
+        <div className="question-answer-box"><span>Marks</span><strong>{q.marks_obtained > 0 ? `+${q.marks_obtained}` : q.marks_obtained}</strong></div>
+      </div>
+    </>
+  );
 }
 
 interface ResultDetails {
@@ -578,6 +620,8 @@ export default function TestResultPage() {
                       />
                     )}
 
+                    {question.question_type === "MCQ_MULTI" || question.question_type === "NUMERICAL"
+                      ? <TypedReview q={question} testId={result?.test_id} /> : (
                     <div className="question-review-answer-grid">
 
                       <div className="question-answer-box">
@@ -613,6 +657,7 @@ export default function TestResultPage() {
                       </div>
 
                     </div>
+                    )}
 
                   </div>
                 </div>

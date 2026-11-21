@@ -1,15 +1,18 @@
 import type { GlobalTest } from "../components/globalTests";
+import { markingSummary } from "../components/markingRulesModel";
+import type { MarkingRule } from "../components/markingRulesModel";
 
 // Types of the centrally scheduled Global Tests (dates published by the platform, papers submitted by providers).
 
 export const subjectsOf = (t: GlobalTest) => (t.kind === "SCHEDULE" ? t.subjects : t.sections).map((s) => s.subject ?? "Subject").join(", ");
-export const markingOf = (t: Pick<GlobalTest, "marking_mode" | "marks_correct" | "marks_wrong">) =>
-  t.marking_mode === "UNIFORM" ? `+${t.marks_correct} correct, −${t.marks_wrong} wrong` : "Each paper's own marks";
+export const markingOf = (t: Pick<GlobalTest, "marking_mode" | "marks_correct" | "marks_wrong" | "marking_rules">) =>
+  t.marking_mode === "UNIFORM" ? `+${t.marks_correct} correct, −${t.marks_wrong} wrong`
+    : t.marking_mode === "RULES" ? markingSummary(t) : "Each paper's own marks";
 
 export type OccurrenceSubject = { subject_id: string; subject: string | null; can_submit: boolean };
 export type Occurrence = {
   occurrence_id: string; test_id: string; test_name: string; test_status: string; exam_type: string | null; target_class: string | null;
-  duration_minutes: number; marking: { mode: string; correct: number | null; wrong: number | null }; start_at: string; end_at: string;
+  duration_minutes: number; marking: { mode: string; correct: number | null; wrong: number | null; rules?: MarkingRule[] }; start_at: string; end_at: string;
   status: "DRAFT" | "PUBLISHED" | "CANCELLED"; submission_deadline: string; submissions_open: boolean; generated_at: string | null;
   generation_error: string | null; generation_failed_at?: string | null; generation_attempts?: number | null; cancel_reason: string | null; subjects: OccurrenceSubject[]; submissions: { active: number; withdrawn: number };
 };

@@ -40,10 +40,10 @@ def _me(staff: Staff, assignments, csrf: str | None = None) -> MeOut:
     )
 
 
-def _start_session(response: Response, db: Session, staff: Staff, ip: str) -> AuthResult:
+def _start_session(request: Request, response: Response, db: Session, staff: Staff, ip: str) -> AuthResult:
     assignments = load_assignments(db, staff.staff_id)
     sid, csrf = sessions.create_session(str(staff.staff_id))
-    set_session_cookie(response, sid, int(sessions.ABSOLUTE_LIFETIME.total_seconds()))
+    set_session_cookie(response, sid, int(sessions.ABSOLUTE_LIFETIME.total_seconds()), request)
     audit.record(db, "auth.login", "SUCCESS", actor=staff.staff_id, ip=ip)
     return AuthResult(status="AUTHENTICATED", me=_me(staff, assignments, csrf))
 
@@ -89,7 +89,7 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
         return AuthResult(status="MFA_REQUIRED", challenge_id=cid)
 
     ratelimit.reset("login", "acct", code)
-    return _start_session(response, db, staff, ip)
+    return _start_session(request, response, db, staff, ip)
 
 
 @router.post("/mfa/verify", response_model=AuthResult)
@@ -106,7 +106,7 @@ def mfa_verify(body: MfaVerifyRequest, request: Request, response: Response, db:
     if not staff or staff.status != "ACTIVE" or not load_assignments(db, staff.staff_id):
         raise api_error(401, "INVALID_OTP", "Invalid or expired verification code.")
     ratelimit.reset("login", "acct", staff.staff_code)
-    return _start_session(response, db, staff, ip)
+    return _start_session(request, response, db, staff, ip)
 
 
 @router.post("/mfa/resend", response_model=Message)
@@ -130,9 +130,9 @@ def mfa_resend(body: MfaResendRequest, request: Request, db: Session = Depends(g
 
 
 @router.post("/logout", response_model=Message)
-def logout(response: Response, principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+def logout(request: Request, response: Response, principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     sessions.delete_session(principal.session_id)
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     audit.record(db, "auth.logout", "SUCCESS", actor=principal.staff_id, ip=principal.ip)
     return Message(message="Logged out.")
 
@@ -201,7 +201,7 @@ def reset_password(body: ResetPasswordRequest, request: Request, db: Session = D
 
 
 @router.post("/change-password", response_model=Message)
-def change_password(body: ChangePasswordRequest, response: Response,
+def change_password(body: ChangePasswordRequest, request: Request, response: Response,
                     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     staff = principal.staff
     if not ratelimit.hit("change_pw", "acct", str(staff.staff_id), 5, WINDOW):
@@ -214,6 +214,6 @@ def change_password(body: ChangePasswordRequest, response: Response,
     staff.password_changed_at = utcnow()
     db.commit()
     sessions.invalidate_staff_sessions(str(staff.staff_id))  # includes the current session
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     audit.record(db, "auth.password_change", "SUCCESS", actor=staff.staff_id, ip=principal.ip)
     return Message(message="Password changed. Please sign in again.")

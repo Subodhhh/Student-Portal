@@ -10,6 +10,8 @@ import { useAction, useApi } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import { audienceBody, audienceReady, emptyAudience, newRequestKey, subjectsInAll, type AudienceState, type CheckError, type ScheduledTest, type ScopeResponse } from "../services/createTest";
 import { StudentCount } from "../components/StudentCount";
+import { MarkingRulesEditor } from "../components/markingRules";
+import { emptyRules, markingSummary, rulesPayload, rulesProblem, type MarkingRule } from "../components/markingRulesModel";
 
 // Test -> Weekly Test: one month of recurring tests planned at once. Same configuration as a Daily Test (audience, subjects and papers,
 // duration, marking) plus the recurrence. The server computes the dates, schedules one test per date (never twice, even on retry) and
@@ -18,7 +20,7 @@ import { StudentCount } from "../components/StudentCount";
 type Series = {
   series_id: string; name: string; description: string | null; status: string; month: string; weekdays: number[]; start_time: string; timezone: string;
   window_minutes: number; duration_minutes: number; generate_lead_minutes: number; marking_mode: string; marks_correct: number | null; marks_wrong: number | null;
-  shuffle_questions: boolean; branches: string[]; planned_count: number; scheduled_count: number; missing_occurrences: string[]; states: Record<string, number>;
+  marking_rules: { rules: MarkingRule[] } | null; shuffle_questions: boolean; branches: string[]; planned_count: number; scheduled_count: number; missing_occurrences: string[]; states: Record<string, number>;
   last_generated_at: string | null; last_generation_error: string | null; created_at: string; cancelled_at: string | null; cancel_reason: string | null;
   tests?: ScheduledTest[];
 };
@@ -94,7 +96,7 @@ function SeriesForm({ providerId }: { providerId: string }) {
   const [description, setDescription] = useState("");
   const [papers, setPapers] = useState<Record<string, string>>({});            // subject -> paper_id (insertion order = paper order)
   const [cfg, setCfg] = useState({ month: nextMonth(), weekdays: [5] as number[], start: "10:00", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    window: "120", duration: "60", lead: "60", marking: "UNIFORM" as "UNIFORM" | "PER_QUESTION", correct: "4", wrong: "1", exam_type: "", target_class: "",
+    window: "120", duration: "60", lead: "60", marking: "UNIFORM" as "UNIFORM" | "PER_QUESTION" | "RULES", correct: "4", wrong: "1", rules: emptyRules(), exam_type: "", target_class: "",
     shuffle: "NO" as "YES" | "NO" });
   const [preview, setPreview] = useState<{ key: string; data: Preview } | null>(null);
   const [errors, setErrors] = useState<CheckError[]>([]);
@@ -113,6 +115,7 @@ function SeriesForm({ providerId }: { providerId: string }) {
     subjects: subjectIds.map((sid) => ({ subject_id: sid, paper_id: papers[sid] })), month: cfg.month, weekdays: [...cfg.weekdays].sort(),
     start_time: cfg.start, timezone: cfg.timezone, window_minutes: Number(cfg.window), duration_minutes: Number(cfg.duration),
     generate_lead_minutes: Number(cfg.lead), marking_mode: cfg.marking, marks_correct: uniform ? Number(cfg.correct) : null, marks_wrong: uniform ? Number(cfg.wrong) : null,
+    ...(cfg.marking === "RULES" ? { marking_rules: rulesPayload(cfg.rules) } : {}),
     exam_type: cfg.exam_type.trim() || null, target_class: cfg.target_class.trim() || null, shuffle_questions: cfg.shuffle === "YES",
   };
   const json = JSON.stringify(body);
@@ -120,7 +123,8 @@ function SeriesForm({ providerId }: { providerId: string }) {
   const incomplete = audienceReady(aud) ?? (name.trim().length < 3 ? "Enter a name (at least 3 characters)." : null)
     ?? (subjectIds.length === 0 ? "Choose at least one subject." : subjectIds.some((sid) => !papers[sid]) ? "Choose a paper for every subject." : null)
     ?? (cfg.weekdays.length === 0 ? "Choose at least one day of the week." : null)
-    ?? (!(Number(cfg.duration) > 0) || Number(cfg.duration) > Number(cfg.window) ? "The duration must be positive and fit inside the window." : null);
+    ?? (!(Number(cfg.duration) > 0) || Number(cfg.duration) > Number(cfg.window) ? "The duration must be positive and fit inside the window." : null)
+    ?? (cfg.marking === "RULES" ? rulesProblem(cfg.rules, subjectIds) : null);
 
   const toggleSubject = (sid: string) => setPapers((p) => { const n = { ...p }; if (sid in n) delete n[sid]; else n[sid] = ""; return n; });
   const toggleDay = (d: number) => setCfg((c) => ({ ...c, weekdays: c.weekdays.includes(d) ? c.weekdays.filter((x) => x !== d) : [...c.weekdays, d] }));
@@ -196,8 +200,9 @@ function SeriesForm({ providerId }: { providerId: string }) {
       <Card>
         <h2>4. Marking</h2>
         <div className="grid cols-2">
-          <SelectField label="Marking" value={cfg.marking} onChange={(e) => setCfg({ ...cfg, marking: e.target.value as "UNIFORM" | "PER_QUESTION" })}>
+          <SelectField label="Marking" value={cfg.marking} onChange={(e) => setCfg({ ...cfg, marking: e.target.value as "UNIFORM" | "PER_QUESTION" | "RULES" })}>
             <option value="UNIFORM">Same marks for every question</option><option value="PER_QUESTION">Marks from the question paper</option>
+            <option value="RULES">Marks per subject (decimals allowed)</option>
           </SelectField>
           {uniform && <>
             <Field label="Marks for a correct answer" type="number" min={1} max={100} value={cfg.correct} onChange={(e) => setCfg({ ...cfg, correct: e.target.value })} />
@@ -210,6 +215,8 @@ function SeriesForm({ providerId }: { providerId: string }) {
           <Field label="Exam type (optional)" value={cfg.exam_type} onChange={(e) => setCfg({ ...cfg, exam_type: e.target.value })} />
           <ClassTargetSelect value={cfg.target_class} onChange={(v) => setCfg({ ...cfg, target_class: v })} />
         </div>
+        {cfg.marking === "RULES" && <MarkingRulesEditor rows={cfg.rules} onChange={(rules) => setCfg({ ...cfg, rules })}
+          subjects={subjectIds.map((sid) => ({ subject_id: sid, name: allowed.find((x) => x.subject_id === sid)?.name ?? "Subject" }))} />}
       </Card>
       <Card>
         <div className="card-head"><h2>5. Preview and create</h2>
@@ -279,7 +286,7 @@ export function WeeklyTestDetailPage() {
           <dt>Status</dt><dd><StatusBadge status={d.status} /></dd>
           <dt>Branches</dt><dd>{d.branches.join(", ")}</dd>
           <dt>Scheduled</dt><dd>{d.scheduled_count} of {d.planned_count} dates{d.missing_occurrences.length ? ` · ${d.missing_occurrences.length} still to schedule` : ""}</dd>
-          <dt>Marking</dt><dd>{d.marking_mode === "UNIFORM" ? `+${d.marks_correct} correct, −${d.marks_wrong} wrong, 0 unanswered` : "As in the question papers"}</dd>
+          <dt>Marking</dt><dd>{d.marking_mode === "PER_QUESTION" ? "As in the question papers" : markingSummary(d)}</dd>
           <dt>Shuffle Questions</dt><dd>{d.shuffle_questions ? "Yes (each student's own fixed order)" : "No (paper order)"}</dd>
           <dt>Exam generated</dt><dd>{d.generate_lead_minutes} minutes before each test opens</dd>
         </dl>

@@ -72,7 +72,10 @@ function BankTab() {
       <div className="toolbar">
         <SourcePicker value={source} onChange={reset} />
         {((source === "GLOBAL" && global && can("question.manage")) || (source !== "GLOBAL" && can("question.manage"))) && (
-          <Button onClick={() => setAdding(true)}>{source === "GLOBAL" ? "Add platform question" : "Add question"}</Button>
+          <div className="row">
+            {source !== "GLOBAL" && <Link className="btn secondary" to="/papers/bulk-import">Bulk import from Excel or Word</Link>}
+            <Button onClick={() => setAdding(true)}>{source === "GLOBAL" ? "Add platform question" : "Add question"}</Button>
+          </div>
         )}
       </div>
       {built && (

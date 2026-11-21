@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import question_types as qtypes
 from app.models.attempt_answer import (
     AttemptAnswer,
     QuestionState,
@@ -72,7 +73,7 @@ def validate_question(
     # Global Test with paper choice: only the attempt's own papers (a question of another contribution "does not belong" to it)
     question = db.execute(
         text(f"""
-            SELECT q.question_id
+            SELECT q.question_id, q.question_type, q.content
             FROM questions q
             WHERE q.question_id = :question_id
               AND q.test_id = :test_id
@@ -90,6 +91,22 @@ def validate_question(
             status_code=400,
             detail="Question does not belong to this test",
         )
+    return question
+
+
+def canonical_answer(question, selected_answer: str | None) -> str | None:
+    """The answer as stored, checked against the question's type with the shared rulebook (app/question_types.py): MCQ one of A-D,
+    MSQ distinct letters of its options (stored sorted), NAT a plain number (stored canonical). Anything else is refused with 422
+    and never stored, so it can never be scored (decision D12)."""
+    qtype = question.question_type if question.question_type in (qtypes.MSQ, qtypes.NAT) else qtypes.MCQ
+    content = question.content
+    if isinstance(content, str):                       # SQLite (tests) returns JSON as text
+        import json
+        content = json.loads(content)
+    try:
+        return qtypes.normalise_answer(qtype, selected_answer, content=content)
+    except qtypes.QuestionTypeError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_ANSWER", "message": exc.message})
 
 
 def visit_question(
@@ -156,12 +173,13 @@ def save_answer(
         student_id=student_id,
     )
 
-    validate_question(
+    question = validate_question(
         db=db,
         test_id=attempt.test_id,
         question_id=question_id,
         attempt_id=attempt.attempt_id,
     )
+    selected_answer = canonical_answer(question, selected_answer)
 
     answer = get_answer(
         db=db,

@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { rulesPayload, type RuleRow } from "../components/markingRulesModel";
 
 // Types and pure helpers of the Daily Test wizard and the Weekly Test form (kept out of the page modules for fast refresh).
 
@@ -58,7 +59,8 @@ export const localToIso = (v: string) => (v ? new Date(v).toISOString() : "");
 
 export function draftBody(d: {
   audience: ReturnType<typeof audienceBody>; name: string; description: string; subjectIds: string[];
-  meta: { duration: string; start: string; end: string; marking: "UNIFORM" | "PER_QUESTION"; correct: string; wrong: string; exam_type: string; target_class: string;
+  meta: { duration: string; start: string; end: string; marking: "UNIFORM" | "PER_QUESTION" | "RULES"; correct: string; wrong: string; rules: RuleRow[];
+    exam_type: string; target_class: string;
     shuffle: "YES" | "NO" };
   versions: Record<string, string | null>;
 }) {
@@ -68,6 +70,7 @@ export function draftBody(d: {
     subjects: d.subjectIds.map((sid) => ({ subject_id: sid, paper_version_id: d.versions[sid] ?? null })),
     duration_minutes: Number(d.meta.duration), start_at: localToIso(d.meta.start), end_at: localToIso(d.meta.end), marking_mode: d.meta.marking,
     marks_correct: uniform ? Number(d.meta.correct) : null, marks_wrong: uniform ? Number(d.meta.wrong) : null,
+    ...(d.meta.marking === "RULES" ? { marking_rules: rulesPayload(d.meta.rules) } : {}),
     exam_type: d.meta.exam_type.trim() || null, target_class: d.meta.target_class.trim() || null, shuffle_questions: d.meta.shuffle === "YES",
   };
 }

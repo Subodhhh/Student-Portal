@@ -5,11 +5,18 @@ from uuid import UUID, uuid4
 from sqlalchemy import (Boolean, CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, Text,
                         UniqueConstraint, text)
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 
 from institute_common.core.taxonomy import sql_in
 from institute_common.database import Base, JSONType, UTCDateTime, utcnow
 
 AUDIENCE_TYPES = ("BATCHES", "BRANCH", "INSTITUTE", "STUDENTS", "TARGETED")
+
+
+# JSON column whose Python None is SQL NULL (plain JSON columns store the JSON value `null`), so the marking_rules CHECKs can test
+# "IS NOT NULL".
+RULES_JSON = JSONB(none_as_null=True).with_variant(JSON(none_as_null=True), "sqlite")
 
 
 class ExamPlan(Base):
@@ -20,7 +27,9 @@ class ExamPlan(Base):
         CheckConstraint("status IN ('DRAFT','ACTIVE','INACTIVE')", name="exam_plans_status_check"),
         CheckConstraint("duration_minutes > 0", name="exam_plans_duration_check"),
         CheckConstraint(f"audience_type IN ({sql_in(AUDIENCE_TYPES)})", name="exam_plans_audience_check"),
-        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="exam_plans_marking_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM','RULES')", name="exam_plans_marking_check"),
+        # RULES marking always has its rules; the other modes never carry any (see institute_common.core.marking)
+        CheckConstraint("(marking_mode = 'RULES') = (marking_rules IS NOT NULL)", name="exam_plans_marking_rules_check"),
         CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="exam_plans_uniform_marks_check"),
         UniqueConstraint("series_id", "start_at", name="uq_exam_plan_series_start"),
     )
@@ -44,10 +53,13 @@ class ExamPlan(Base):
     #   TARGETED  Test -> Create Test: the UNION of whole branches (exam_plan_branches), batches of any of the provider's branches
     #             (exam_plan_batches) and listed students (exam_plan_students); one assignment per student
     audience_type: Mapped[str] = mapped_column(String(12), nullable=False, default="BATCHES", server_default="BATCHES")
-    # PER_QUESTION: each question's own marks (default). UNIFORM: +marks_correct / -marks_wrong for every question of the exam.
+    # PER_QUESTION: each question's own marks (default). UNIFORM: +marks_correct / -marks_wrong (whole numbers) for every question of
+    # the exam. RULES: marks per question type and subject from marking_rules (decimals allowed).
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
     marks_correct: Mapped[int | None] = mapped_column(Integer)
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # RULES: the test creator's marking rules, decimals stored as exact strings (institute_common.core.marking). NULL otherwise.
+    marking_rules: Mapped[dict | None] = mapped_column(RULES_JSON)
     # Daily/Weekly Test option: each student gets their own fixed question order (Student services); False keeps the paper order.
     shuffle_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     exam_type: Mapped[str | None] = mapped_column(String(80))
@@ -402,7 +414,9 @@ class GlobalTest(Base):
         CheckConstraint("status IN ('DRAFT','PUBLISHED','WITHDRAWN')", name="global_tests_status_check"),
         CheckConstraint("duration_minutes > 0 AND duration_minutes <= 720", name="global_tests_duration_check"),
         CheckConstraint("kind IN ('SCHEDULE','SECTIONS')", name="global_tests_kind_check"),
-        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="global_tests_marking_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM','RULES')", name="global_tests_marking_check"),
+        # RULES marking always has its rules; the other modes never carry any (see institute_common.core.marking)
+        CheckConstraint("(marking_mode = 'RULES') = (marking_rules IS NOT NULL)", name="global_tests_marking_rules_check"),
         CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="global_tests_uniform_marks_check"),
         CheckConstraint("generate_lead_minutes >= 0 AND generate_lead_minutes <= 10080", name="global_tests_lead_check"),
     )
@@ -422,6 +436,8 @@ class GlobalTest(Base):
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="PER_QUESTION", server_default="PER_QUESTION")
     marks_correct: Mapped[int | None] = mapped_column(Integer)
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # RULES: the test creator's marking rules, decimals stored as exact strings (institute_common.core.marking). NULL otherwise.
+    marking_rules: Mapped[dict | None] = mapped_column(RULES_JSON)
     # Papers are accepted until `generate_lead_minutes` before an occurrence opens; then its exams are generated and never change.
     generate_lead_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     created_by: Mapped[UUID] = mapped_column(nullable=False)
@@ -501,7 +517,9 @@ class TestSeries(Base):
         CheckConstraint("status IN ('ACTIVE','CANCELLED')", name="test_series_status_check"),
         CheckConstraint("duration_minutes > 0 AND duration_minutes <= window_minutes AND window_minutes <= 1440", name="test_series_window_check"),
         CheckConstraint("generate_lead_minutes >= 0 AND generate_lead_minutes <= 10080", name="test_series_lead_check"),
-        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM')", name="test_series_marking_check"),
+        CheckConstraint("marking_mode IN ('PER_QUESTION','UNIFORM','RULES')", name="test_series_marking_check"),
+        # RULES marking always has its rules; the other modes never carry any (see institute_common.core.marking)
+        CheckConstraint("(marking_mode = 'RULES') = (marking_rules IS NOT NULL)", name="test_series_marking_rules_check"),
         CheckConstraint("marking_mode = 'PER_QUESTION' OR (marks_correct > 0 AND marks_wrong >= 0)", name="test_series_uniform_marks_check"),
     )
 
@@ -521,6 +539,8 @@ class TestSeries(Base):
     marking_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="UNIFORM", server_default="UNIFORM")
     marks_correct: Mapped[int | None] = mapped_column(Integer)
     marks_wrong: Mapped[int | None] = mapped_column(Integer)
+    # RULES: the test creator's marking rules, decimals stored as exact strings (institute_common.core.marking). NULL otherwise.
+    marking_rules: Mapped[dict | None] = mapped_column(RULES_JSON)
     # Daily/Weekly Test option: each student gets their own fixed question order (Student services); False keeps the paper order.
     shuffle_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     exam_type: Mapped[str | None] = mapped_column(String(80))

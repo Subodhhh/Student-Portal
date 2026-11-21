@@ -78,7 +78,7 @@ class ContributionOut(BaseModel):
     version_no: int
     version_status: str
     question_count: int
-    total_marks: str
+    total_marks: str | None          # None: the paper's questions carry no marks of their own
     note: str | None
     status: str
     submitted_by: UUID
@@ -164,7 +164,7 @@ def _out_many(db: Session, p: Principal, rows: list[GlobalTestContribution]) -> 
             subject=subjects.get(c.subject_id), provider_id=c.provider_id, provider_name=providers.get(c.provider_id), branch_id=c.branch_id,
             branch_name=branches.get(c.branch_id), paper_id=paper.paper_id if paper else c.paper_version_id, paper_title=paper.title if paper else "—",
             paper_version_id=c.paper_version_id, version_no=v.version_no if v else 0, version_status=v.status if v else "MISSING",
-            question_count=v.question_count if v else 0, total_marks=str(v.total_marks) if v else "0", note=c.note, status=c.status,
+            question_count=v.question_count if v else 0, total_marks=(None if v.total_marks is None else str(v.total_marks)) if v else "0", note=c.note, status=c.status,
             submitted_by=c.submitted_by, submitted_by_name=people.get(c.submitted_by), submitted_at=c.submitted_at,
             reviewed_by_name=people.get(c.reviewed_by) if c.reviewed_by else None, reviewed_at=c.reviewed_at, review_note=c.review_note,
             copy_status=c.copy_status, copy_error=c.copy_error, global_paper_id=c.global_paper_id, global_paper_version_id=c.global_paper_version_id,
@@ -218,7 +218,7 @@ def contribution_options(test_id: UUID, p: Principal = Depends(get_principal), d
             continue
         items.append({"paper_id": paper.paper_id, "paper_title": paper.title, "subject_id": paper.subject_id, "provider_id": paper.provider_id,
                       "branch_id": paper.branch_id, "paper_version_id": v.paper_version_id, "version_no": v.version_no, "version_status": v.status,
-                      "question_count": v.question_count, "total_marks": str(v.total_marks)})
+                      "question_count": v.question_count, "total_marks": None if v.total_marks is None else str(v.total_marks)})
     names = dict(db.execute(select(Subject.subject_id, Subject.name).where(Subject.subject_id.in_({i["subject_id"] for i in items} or {None}))).all())
     for i in items:
         i["subject"] = names.get(i["subject_id"])

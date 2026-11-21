@@ -17,6 +17,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit
+from institute_common.core.marking import MarkingRulesIn, check_marking_choice, rules_problem
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
 from institute_common.core.class_levels import TargetClass
@@ -48,9 +49,10 @@ class GlobalTestIn(Strict):
     duration_minutes: int = Field(gt=0, le=720)
     subject_ids: list[UUID] = Field(default_factory=list, max_length=20)     # SCHEDULE test: providers supply the papers
     sections: list[SectionIn] = Field(default_factory=list, max_length=20)   # SECTIONS test (earlier model)
-    marking_mode: str = Field(default="PER_QUESTION", pattern="^(UNIFORM|PER_QUESTION)$")
+    marking_mode: str = Field(default="PER_QUESTION", pattern="^(UNIFORM|PER_QUESTION|RULES)$")
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
+    marking_rules: MarkingRulesIn | None = None      # RULES: marks per question type and subject (decimals allowed)
     generate_lead_minutes: int = Field(default=60, ge=0, le=10080)
 
     @model_validator(mode="after")
@@ -61,6 +63,14 @@ class GlobalTestIn(Strict):
             raise ValueError("a paper version may appear only once")
         if len(set(self.subject_ids)) != len(self.subject_ids):
             raise ValueError("a subject is selected twice")
+        check_marking_choice(self.marking_mode, self.marks_correct, self.marks_wrong, self.marking_rules)
+        if self.marking_rules is not None and self.sections:
+            # SECTIONS tests are the earlier model, scheduled by providers with per-question marking; rules need the SCHEDULE model
+            raise ValueError("rules-based marking needs a test whose providers submit papers per subject")
+        if self.marking_rules is not None:
+            problem = rules_problem(self.marking_rules.to_storage(), self.subject_ids)
+            if problem:
+                raise ValueError(problem)
         if self.marking_mode == "UNIFORM" and (self.marks_correct is None or self.marks_wrong is None):
             raise ValueError("uniform marking needs marks for a correct and for a wrong answer")
         if self.marking_mode == "PER_QUESTION" and (self.marks_correct is not None or self.marks_wrong is not None):
@@ -96,7 +106,7 @@ class SectionOut(BaseModel):
     version_no: int
     version_status: str
     question_count: int
-    total_marks: Decimal
+    total_marks: Decimal | None      # None: a paper without marks of its own (the test's marking decides them)
 
 
 class GlobalTestOut(BaseModel):
@@ -112,13 +122,14 @@ class GlobalTestOut(BaseModel):
     published_at: datetime | None
     publisher: str | None
     question_count: int
-    total_marks: Decimal
+    total_marks: Decimal | None      # None: a paper without marks of its own (the test's marking decides them)
     sections: list[SectionOut]
     kind: str = "SECTIONS"
     subjects: list[dict] = []
     marking_mode: str = "PER_QUESTION"
     marks_correct: int | None = None
     marks_wrong: int | None = None
+    marking_rules: dict | None = None
     generate_lead_minutes: int = 60
     occurrences: dict = {}                 # counts per status, plus how many were generated
     next_occurrence_at: datetime | None = None
@@ -189,9 +200,10 @@ def _outs(db: Session, tests: list[GlobalTest]) -> list[GlobalTestOut]:
         out.append(GlobalTestOut(test_id=t.test_id, name=t.name, description=t.description, exam_type=t.exam_type, target_class=t.target_class,
                                  duration_minutes=t.duration_minutes, status=t.status, derived_from_test_id=t.derived_from_test_id,
                                  created_at=t.created_at, published_at=t.published_at, publisher=publishers.get(t.published_by),
-                                 question_count=sum(x.question_count for x in secs), total_marks=sum((x.total_marks for x in secs), Decimal(0)),
+                                 question_count=sum(x.question_count for x in secs), total_marks=None if any(x.total_marks is None for x in secs) else sum((x.total_marks for x in secs), Decimal(0)),
                                  sections=secs, kind=t.kind, subjects=subjects.get(t.test_id, []), marking_mode=t.marking_mode,
-                                 marks_correct=t.marks_correct, marks_wrong=t.marks_wrong, generate_lead_minutes=t.generate_lead_minutes,
+                                 marks_correct=t.marks_correct, marks_wrong=t.marks_wrong, marking_rules=t.marking_rules,
+                                 generate_lead_minutes=t.generate_lead_minutes,
                                  occurrences=occ, next_occurrence_at=upcoming.get(t.test_id)))
     return out
 
@@ -208,8 +220,9 @@ def _write_subjects(db: Session, t: GlobalTest, subject_ids: list[UUID]) -> None
 
 
 def _write_definition(db: Session, t: GlobalTest, body: "GlobalTestIn") -> None:
-    for k, v in body.model_dump(exclude={"sections", "subject_ids"}).items():
+    for k, v in body.model_dump(exclude={"sections", "subject_ids", "marking_rules"}).items():
         setattr(t, k, v)
+    t.marking_rules = body.marking_rules.to_storage() if body.marking_rules else None      # exact decimal strings
     t.kind = "SCHEDULE" if body.subject_ids else "SECTIONS"
     db.flush()
     _write_subjects(db, t, body.subject_ids)
@@ -350,7 +363,7 @@ def derive_global_test(test_id: UUID, p: Principal = Depends(get_principal), db:
     src = _test(db, p, test_id)
     t = GlobalTest(name=f"{src.name} (copy)"[:255], description=src.description, exam_type=src.exam_type, target_class=src.target_class,
                    duration_minutes=src.duration_minutes, derived_from_test_id=src.test_id, created_by=p.staff_id, kind=src.kind,
-                   marking_mode=src.marking_mode, marks_correct=src.marks_correct, marks_wrong=src.marks_wrong,
+                   marking_mode=src.marking_mode, marks_correct=src.marks_correct, marks_wrong=src.marks_wrong, marking_rules=src.marking_rules,
                    generate_lead_minutes=src.generate_lead_minutes)
     db.add(t)
     db.flush()

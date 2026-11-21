@@ -240,10 +240,13 @@ def same_text_key(text: str) -> str:
     return unicodedata.normalize("NFC", " ".join((text or "").split()))
 
 
-def _validate_rows(res: ExtractionResult, rows, max_questions: int, images: dict[int, RowImages] | None = None) -> None:
+def _validate_rows(res: ExtractionResult, rows, max_questions: int, images: dict[int, RowImages] | None = None,
+                   marks_optional: bool = False) -> None:
     """The single validation path for every input format: `rows` yields (row_number, dict-of-stripped-text) or
     (row_number, None) for a structurally broken row. `images` holds each row's pictures by template image column (already checked
-    by question_images.check_image, or a problem string). Any problem anywhere rejects the whole paper (see callers)."""
+    by question_images.check_image, or a problem string). Any problem anywhere rejects the whole paper (see callers).
+    `marks_optional` (corrections of papers built from bank questions): a row with BOTH marks empty is accepted without marks, because
+    marks belong to the test; uploads keep requiring them."""
     if images is None:                    # never `images or {}`: the CSV reader fills this same dict while rows are read
         images = {}
     seen: dict[str, int] = {}
@@ -320,9 +323,11 @@ def _validate_rows(res: ExtractionResult, rows, max_questions: int, images: dict
         if correct not in {"A", "B", "C", "D"}:
             problems.append(("correct", "Correct answer must be A, B, C or D."))
         marks, neg = _dec(row["marks"]), _dec(row["negative_marks"])
-        if marks is None or marks <= 0:
+        if marks_optional and not row["marks"] and not row["negative_marks"]:
+            pass                                    # a question without marks of its own: the test decides them
+        elif marks is None or marks <= 0:
             problems.append(("marks", "Marks must be a positive number."))
-        if neg is None or neg < 0:
+        elif neg is None or neg < 0:
             problems.append(("negative_marks", "Negative marks must be zero or a positive number."))
         norm = same_text_key(row["question"]) + ("\x00" + pictures["question"].sha256 if "question" in pictures else "")
         if (row["question"] or "question" in pictures) and norm in seen:
@@ -355,10 +360,11 @@ def _finish(res: ExtractionResult) -> ExtractionResult:
     return res
 
 
-def validate_paper(rows: list[tuple[int, dict]], max_questions: int, images: dict[int, RowImages] | None = None) -> ExtractionResult:
+def validate_paper(rows: list[tuple[int, dict]], max_questions: int, images: dict[int, RowImages] | None = None,
+                   marks_optional: bool = False) -> ExtractionResult:
     """Run the one validator over an already-structured paper (used for corrections): any problem rejects the whole paper."""
     res = ExtractionResult()
-    _validate_rows(res, rows, max_questions, images)
+    _validate_rows(res, rows, max_questions, images, marks_optional=marks_optional)
     return _finish(res)
 
 

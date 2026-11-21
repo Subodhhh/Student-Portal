@@ -12,13 +12,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import insert, select
-from sqlalchemy import text
+from sqlalchemy import insert, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import question_types as qtypes
 from app.config import settings
 from app.database import get_db
+from app.marks import MAX_QUESTION_MARKS, MAX_TOTAL_MARKS, Marks
 from app.models import paper_eligibility as eligibility_models
 from app.models import question as question_models
 from app.models import test as test_models
@@ -47,12 +48,19 @@ class QuestionIn(BaseModel):
     order: int = Field(ge=1)
     subject: str | None = Field(default=None, max_length=100)
     text: str = ""                            # may be empty when the question is a picture (checked in _check_questions)
-    options: dict[str, str]
+    # MCQ (the default, and every payload sent before MSQ/NAT existed): options A-D and the correct letter. MSQ / NAT (payload v2,
+    # app/question_types.py): `content` (MSQ options with picture checksums / NAT number format), `key` (never served to students)
+    # and the scoring `scheme`.
+    type: str = Field(default=qtypes.MCQ, pattern="^(MCQ_SINGLE|MCQ_MULTI|NUMERICAL)$")
+    options: dict[str, str] = Field(default_factory=dict)
     # pictures by field ("question", "A".."D") -> checksum of a picture sent first to PUT /question-images/{checksum}
     images: dict[str, str] = Field(default_factory=dict)
-    correct: str = Field(pattern="^[ABCD]$")
-    marks: int = Field(ge=0)
-    negative_marks: int = Field(ge=0)
+    correct: str | None = Field(default=None, pattern="^[ABCD]$")
+    content: dict | None = None
+    key: dict | None = None
+    scheme: str | None = Field(default=None, max_length=30)
+    marks: Marks = Field(ge=0, le=MAX_QUESTION_MARKS)
+    negative_marks: Marks = Field(ge=0, le=MAX_QUESTION_MARKS)
     paper_id: uuid.UUID | None = None         # a Global Test with paper choice: the contribution (Institute submission id)
 
 
@@ -61,7 +69,7 @@ class PaperIn(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     provider_name: str | None = Field(default=None, max_length=255)
     question_count: int = Field(ge=1)
-    total_marks: int = Field(ge=0)
+    total_marks: Marks = Field(ge=0, le=MAX_TOTAL_MARKS)
 
 
 class SectionIn(BaseModel):
@@ -158,6 +166,11 @@ def _check_questions(body) -> None:
     if body.end_at <= body.start_at:
         raise HTTPException(status_code=422, detail="end_at must be after start_at")
     for q in body.questions:
+        if q.type != qtypes.MCQ:
+            _check_typed(q)
+            continue
+        if q.correct is None or q.content is not None or q.key is not None:
+            raise HTTPException(status_code=422, detail="An MCQ needs its correct option and no content/key")
         if set(q.options) != {"A", "B", "C", "D"}:
             raise HTTPException(status_code=422, detail="Each question needs options A-D")
         if set(q.images) - set(IMAGE_FIELDS) or any(not re.fullmatch(CHECKSUM, c) for c in q.images.values()):
@@ -169,9 +182,34 @@ def _check_questions(body) -> None:
                 raise HTTPException(status_code=422, detail=f"Option {k} needs exactly one of its text or its picture")
 
 
+def _check_typed(q) -> None:
+    """An MSQ / NAT question of the payload, checked with the shared rulebook; its content and key are replaced by their canonical
+    form (what is stored). 422 on anything else."""
+    if q.options or q.correct is not None or q.content is None or q.key is None:
+        raise HTTPException(status_code=422, detail="An MSQ/NAT question has content and key, and no options or correct letter")
+    if q.scheme != qtypes.SCHEMES[q.type]:
+        raise HTTPException(status_code=422, detail=f"{q.type} questions are scored {qtypes.SCHEMES[q.type]}")
+    if q.type == qtypes.MSQ and q.negative_marks != 0:
+        raise HTTPException(status_code=422, detail="MSQ questions never lose marks (all-or-nothing)")
+    try:
+        q.content, q.key = qtypes.validate(q.type, q.content, q.key)
+    except qtypes.QuestionTypeError as exc:
+        raise HTTPException(status_code=422, detail=f"Question {q.order}: {exc.message}")
+    pictures = [o["image"] for o in q.content.get("options", []) if o.get("image")]
+    if set(q.images) - {"question"} or any(not re.fullmatch(CHECKSUM, c) for c in [*q.images.values(), *pictures]):
+        raise HTTPException(status_code=422, detail="MSQ/NAT pictures: the question picture and option pictures as SHA-256 checksums")
+    if not q.text.strip() and "question" not in q.images:
+        raise HTTPException(status_code=422, detail="Each question needs its text or its picture")
+
+
+def _content_pictures(q) -> dict[str, str]:
+    """role (option_a .. option_h) -> checksum of the pictures inside an MSQ's content."""
+    return {f"option_{o['id'].lower()}": o["image"] for o in (q.content or {}).get("options", []) if o.get("image")}
+
+
 def _check_images_present(db: Session, body) -> None:
     """Every picture the exam names must already be here (the Institute uploads missing ones first). Otherwise 409: retryable."""
-    wanted = {c for q in body.questions for c in q.images.values()}
+    wanted = {c for q in body.questions for c in [*q.images.values(), *_content_pictures(q).values()]}
     if wanted:
         have = set(db.scalars(select(question_models.QuestionImage.checksum).where(question_models.QuestionImage.checksum.in_(wanted))))
         if wanted - have:
@@ -202,14 +240,22 @@ def _store(db: Session, body, sections: list | None, student_ids, extra_rows=())
         if db.get(test_models.Test, body.exam_version_id):
             return {"status": "already_published"}
         raise _reference_missing(exc)
+    pictures = []
     for q in body.questions:
+        question_id = uuid.uuid5(NAMESPACE, f"{body.exam_version_id}:{q.order}")
+        typed = q.type != qtypes.MCQ
         db.add(question_models.Question(
-            question_id=uuid.uuid5(NAMESPACE, f"{body.exam_version_id}:{q.order}"), test_id=body.exam_version_id,
-            subject=q.subject, paper_id=getattr(q, "paper_id", None), question_order=q.order, question_text=q.text, question_type="MCQ",
-            option_a=q.options["A"], option_b=q.options["B"], option_c=q.options["C"], option_d=q.options["D"],
-            correct_answer=q.correct, marks=q.marks, negative_marks=q.negative_marks,
+            question_id=question_id, test_id=body.exam_version_id,
+            subject=q.subject, paper_id=getattr(q, "paper_id", None), question_order=q.order, question_text=q.text,
+            question_type=q.type if typed else "MCQ",        # MCQ rows keep exactly the value they always had
+            option_a=None if typed else q.options["A"], option_b=None if typed else q.options["B"],
+            option_c=None if typed else q.options["C"], option_d=None if typed else q.options["D"],
+            correct_answer="" if typed else q.correct, marks=q.marks, negative_marks=q.negative_marks,
+            content=q.content if typed else None, answer_key=q.key if typed else None, scheme=q.scheme if typed else None,
             **{column: q.images.get(field) for field, column in IMAGE_FIELDS.items()},
         ))
+        pictures += [{"question_id": question_id, "role": role, "checksum": checksum} for role, checksum in _content_pictures(q).items()]
+    extra_rows = [*extra_rows, (question_models.QuestionPicture, pictures)]
     for sid in dict.fromkeys(student_ids):
         db.add(audience_models.TestAudience(
             test_id=body.exam_version_id, audience_type=audience_models.AudienceType.STUDENT, student_id=sid,
@@ -344,8 +390,10 @@ def student_eligibility(test_id: uuid.UUID, student_id: str, db: Session = Depen
 
 
 class KeyChange(BaseModel):
+    """MCQ: `correct` (A-D, unchanged). MSQ / NAT: `key` (the typed key, checked with the shared rulebook)."""
     question_order: int = Field(ge=1)
-    correct: str = Field(pattern="^[ABCD]$")
+    correct: str | None = Field(default=None, pattern="^[ABCD]$")
+    key: dict | None = None
 
 
 class AnswerKeyIn(BaseModel):
@@ -368,9 +416,28 @@ def correct_answer_key(test_id: uuid.UUID, body: AnswerKeyIn, db: Session = Depe
     missing = [c.question_order for c in body.changes if c.question_order not in rows]
     if missing:
         raise HTTPException(status_code=404, detail=f"Questions not found: {missing}")
-    out = []
+    out, typed_keys = [], {}
+    for c in body.changes:                               # all checked before anything changes (all-or-nothing)
+        q = rows[c.question_order]
+        if q.question_type in (qtypes.MSQ, qtypes.NAT):
+            if c.key is None or c.correct is not None:
+                raise HTTPException(status_code=422, detail=f"Question {c.question_order} is {q.question_type}: give its key, not a letter")
+            try:
+                _, typed_keys[c.question_order] = qtypes.validate(q.question_type, q.content, c.key)
+            except qtypes.QuestionTypeError as exc:
+                raise HTTPException(status_code=422, detail=f"Question {c.question_order}: {exc.message}")
+        elif c.correct is None or c.key is not None:
+            raise HTTPException(status_code=422, detail=f"Question {c.question_order} is an MCQ: give its correct letter")
     for c in body.changes:
         q = rows[c.question_order]
+        if c.question_order in typed_keys:
+            previous, new = q.answer_key, typed_keys[c.question_order]
+            if previous == new:
+                out.append({"question_order": c.question_order, "previous": previous, "new": new, "unchanged": True})
+                continue
+            q.answer_key = new
+            out.append({"question_order": c.question_order, "previous": previous, "new": new})
+            continue
         previous = q.correct_answer
         if previous == c.correct:
             out.append({"question_order": c.question_order, "previous": previous, "new": c.correct, "unchanged": True})

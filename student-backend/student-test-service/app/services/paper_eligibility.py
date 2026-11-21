@@ -2,6 +2,7 @@
 configuration (each subject with its papers), student_paper_eligibility each student's frozen eligibility, and the attempt service's
 attempt_selected_papers the papers an attempt was started with (read here, never written). Other tests have no papers in their
 sections and keep their existing behaviour."""
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -55,13 +56,13 @@ def student_view(sections, eligibility, snap: dict[str, UUID] | None) -> tuple[l
     if subs is None:
         return None
     chosen = {str(p) for p in snap.values()} if snap is not None else None
-    out, total_q, total_m, known = [], 0, 0, True
+    out, total_q, total_m, known = [], 0, Decimal(0), True
     for s in subs:
         papers = [p for p in s["papers"] if chosen is None or str(p["paper_id"]) in chosen]
         status = "PAPER" if chosen is not None and papers else s["status"]
         count = papers[0]["question_count"] if status == "PAPER" and papers else 0
         if status == "PAPER" and papers:
-            total_q, total_m = total_q + count, total_m + papers[0]["total_marks"]
+            total_q, total_m = total_q + count, total_m + Decimal(str(papers[0]["total_marks"]))
         elif status == "SELECTABLE":
             known = False
         out.append({"position": s["position"], "subject": s["subject"], "status": status,

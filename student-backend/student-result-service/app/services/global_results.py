@@ -6,6 +6,7 @@ Manual adjustments of any Global Test result: test_results.subject_adjustments =
 (never added again). A per-subject view is the scored marks plus that subject's delta. An adjustment without a subject attribution (NULL with a
 MARKS_ADJUSTMENT on record) is never guessed: it is shown as unattributed, and the result leaves subject rankings until re-attributed."""
 import json
+from decimal import Decimal
 
 from sqlalchemy import Uuid, bindparam, select, text
 from sqlalchemy.orm import Session
@@ -53,10 +54,15 @@ def has_manual(db: Session, result_id) -> bool:
                                                             ResultHistory.kind == "MARKS_ADJUSTMENT").limit(1)) is not None
 
 
-def deltas(db: Session, result_id, subject_adjustments) -> dict[str, int] | None:
+def as_decimals(subject_adjustments) -> dict[str, Decimal] | None:
+    """The stored {subject: delta} JSON (ints and 2-decimal numbers) as exact Decimals; str() first so 0.1 stays 0.1."""
+    return None if subject_adjustments is None else {k: Decimal(str(v)) for k, v in subject_adjustments.items()}
+
+
+def deltas(db: Session, result_id, subject_adjustments) -> dict[str, Decimal] | None:
     """{subject: delta} of a Global Test result ({} when never adjusted); None when its adjustment is unattributed."""
     if isinstance(subject_adjustments, str):
         subject_adjustments = json.loads(subject_adjustments)
     if subject_adjustments is not None:
-        return {k: int(v) for k, v in subject_adjustments.items()}
+        return as_decimals(subject_adjustments)
     return None if has_manual(db, result_id) else {}

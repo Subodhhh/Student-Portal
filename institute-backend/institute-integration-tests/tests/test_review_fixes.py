@@ -193,13 +193,16 @@ def test_correcting_a_platform_question_makes_a_provider_copy(client, world, ban
     assert other["latest"]["stem"] == "Platform question?"
 
 
-def test_correcting_another_branchs_question_makes_a_copy_even_for_the_provider_admin(client, world, bank, login, db_factory, make_staff):  # noqa: F811
+def test_correcting_another_branchs_question_copies_it_for_a_branch_admin_but_versions_it_for_the_provider_admin(client, world, bank, login, db_factory, make_staff):  # noqa: F811
+    """Provider questions are shared by all branches (three-scope bank): a Branch Admin may use another branch's question, not change it,
+    so its correction is a copy; the Provider Admin may change it, so its correction is the shared question's next version (decision D6)."""
     b2q = create(client, login, bank["pa1"], q_body(bank["phy"], branch_id=str(world["p1b2"]), stem="Branch two question?"))
     pv = _paper_with(client, login, bank["pa1"], world["p1b1"], bank["phy"], [b2q])
     _, ba = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b1"])])
     assert _revise(client, login(ba), pv, 1, "Branch one wording?").status_code == 201
-    assert _revise(client, login(bank["pa1"]), pv, 1, "Provider admin wording?").status_code == 201
     assert _versions(db_factory, b2q) == [(1, "Branch two question?")]
+    assert _revise(client, login(bank["pa1"]), pv, 1, "Provider admin wording?").status_code == 201
+    assert _versions(db_factory, b2q) == [(1, "Branch two question?"), (2, "Provider admin wording?")]
     # editing that question directly is a separate, authorised action: the provider admin may, the other branch's admin may not
     body_ = {k: v for k, v in q_body(bank["phy"], stem="Edited at its source?").items()
              if k in ("stem", "option_a", "option_b", "option_c", "option_d", "correct_option", "marks_positive", "marks_negative")}

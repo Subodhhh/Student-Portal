@@ -11,6 +11,7 @@ import {
 
 import "../../styles/test-attempt.css";
 import { MathText } from "../../components/MathText";
+import { natAnswerProblem } from "../../utils/natAnswer";
 import { enterFullscreen, useExamIntegrity, type IntegrityState } from "./examIntegrity";
 import { isNoAttempt } from "../../services/attempts";
 
@@ -39,7 +40,12 @@ type ApiQuestion = {
   option_b_image?: string | null;
   option_c_image?: string | null;
   option_d_image?: string | null;
+  // MSQ (MCQ_MULTI): its options, pictures as checksums; NAT (NUMERICAL): the number format and unit. Never the answer key.
+  content?: { options?: { id: string; text: string | null; image?: string | null }[]; format?: string; decimals?: number; unit?: string | null } | null;
 };
+
+type Kind = "MCQ" | "MSQ" | "NAT";
+const kindOf = (questionType: string): Kind => (questionType === "MCQ_MULTI" ? "MSQ" : questionType === "NUMERICAL" ? "NAT" : "MCQ");
 
 /** One answer option: identified by its letter (what the server stores), shown as its text or its picture. */
 type QuestionOption = { letter: string; text: string; image: string | null };
@@ -106,7 +112,11 @@ type Question = {
   question: string;
   questionImage: string | null;
   options: QuestionOption[];
-  answer: string | null;            // the chosen option's letter
+  kind: Kind;
+  // MCQ: the chosen option's letter; MSQ: the chosen letters, sorted and joined ("AC"); NAT: the number as saved
+  answer: string | null;
+  natFormat: string | null;         // NAT: INTEGER or DECIMAL
+  unit: string | null;              // NAT: shown next to the answer box (never typed)
   status: QuestionStatus;
   imageReference: string | null;
   marks: number;
@@ -135,6 +145,9 @@ function TestAttemptPage() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
 
   const [submitted, setSubmitted] = useState(false);
+  // why the server (or the check here) refused the current question's answer; a NAT answer being typed (saved on leaving the box)
+  const [answerProblem, setAnswerProblem] = useState<{ id: string; message: string } | null>(null);
+  const [natDraft, setNatDraft] = useState<{ id: string; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectionRequired, setSelectionRequired] = useState<string[] | null>(null);   // Global Test with paper choice: subjects without a chosen paper
@@ -326,8 +339,10 @@ function TestAttemptPage() {
          */
         const mappedQuestions: Question[] =
           testData.questions.map((question) => {
+            const kind = kindOf(question.question_type);
             // every option keeps its letter; a picture option has no text, so it is never dropped or shifted
-            const options: QuestionOption[] = [
+            const options: QuestionOption[] = kind === "NAT" ? [] : kind === "MSQ"
+              ? (question.content?.options ?? []).map((o) => ({ letter: o.id, text: o.text ?? "", image: o.image ?? null })) : [
               ["A", question.option_a, question.option_a_image],
               ["B", question.option_b, question.option_b_image],
               ["C", question.option_c, question.option_c_image],
@@ -347,6 +362,12 @@ function TestAttemptPage() {
               questionImage: question.question_image ?? null,
 
               options,
+
+              kind,
+
+              natFormat: question.content?.format ?? null,
+
+              unit: question.content?.unit ?? null,
 
               answer: null,
 
@@ -434,17 +455,17 @@ function TestAttemptPage() {
               return question;
             }
 
-            const selectedOption = question.options.find(
-              (option) => option.letter === savedAnswer.selected_answer
-            );
+            const saved = savedAnswer.selected_answer;
+            const known = question.kind === "NAT"
+              || [...saved].every((letter) => question.options.some((option) => option.letter === letter));
 
-            if (!selectedOption) {
+            if (!known || (question.kind === "MCQ" && saved.length !== 1)) {
               return question;
             }
 
             return {
               ...question,
-              answer: selectedOption.letter,
+              answer: saved,
               status: "answered",
             };
           })
@@ -621,12 +642,17 @@ function TestAttemptPage() {
       return;
     }
 
-    // `answer` is the option's letter
-    if (!currentQuestion.options.some((option) => option.letter === answer)) {
+    // MCQ: one letter; MSQ: the chosen letters joined ("AC"); NAT: the typed number (checked here and again by the server)
+    const valid = currentQuestion.kind === "NAT"
+      ? !natAnswerProblem(answer, currentQuestion.natFormat === "INTEGER")
+      : answer.length > 0 && [...answer].every((letter) => currentQuestion.options.some((option) => option.letter === letter))
+        && (currentQuestion.kind === "MSQ" || answer.length === 1);
+    if (!valid) {
       return;
     }
 
     const selectedAnswer = answer;
+    setAnswerProblem(null);
 
     setQuestions((previousQuestions) =>
       previousQuestions.map((question) =>
@@ -661,6 +687,12 @@ function TestAttemptPage() {
       if (!response.ok) {
         if (response.status === 400) {
           setSubmitted(true);
+        }
+        if (response.status === 422) {        // the server refused the answer: it is not saved, say why
+          const body = await response.json().catch(() => null);
+          setAnswerProblem({ id: currentQuestionId, message: body?.detail?.message ?? "This answer could not be saved." });
+          setQuestions((previous) => previous.map((question) =>
+            question.id === currentQuestionId ? { ...question, answer: null, status: "not-answered" } : question));
         }
 
         throw new Error(
@@ -1146,8 +1178,63 @@ function TestAttemptPage() {
               </div>
             )}
 
+            {currentQuestion.kind === "MSQ" && (
+              <p className="test-attempt-hint">One or more options are correct. Select every correct option: marks are given only for
+                exactly the right options, and a wrong choice never loses marks.</p>
+            )}
+
+            {currentQuestion.kind === "NAT" && (() => {
+              const draft = natDraft?.id === currentQuestion.id ? natDraft.text : currentQuestion.answer ?? "";
+              const save = () => {
+                const text = draft.trim();
+                if (text === (currentQuestion.answer ?? "")) return;
+                if (!text) { void handleClearResponse(); return; }
+                const problem = natAnswerProblem(text, currentQuestion.natFormat === "INTEGER");
+                if (problem) { setAnswerProblem({ id: currentQuestion.id, message: problem }); return; }
+                void handleAnswerSelect(text);
+              };
+              return (
+                <div className="test-attempt-numeric">
+                  <label htmlFor={`nat-${currentQuestion.id}`}>Your answer{currentQuestion.natFormat === "INTEGER" ? " (a whole number)" : " (a number)"}</label>
+                  <div className="test-attempt-numeric-row">
+                    <input id={`nat-${currentQuestion.id}`} type="text" inputMode="decimal" autoComplete="off" maxLength={20} value={draft}
+                      aria-describedby={`nat-${currentQuestion.id}-hint`}
+                      onChange={(event) => { setNatDraft({ id: currentQuestion.id, text: event.target.value }); setAnswerProblem(null); }}
+                      onBlur={save} onKeyDown={(event) => { if (event.key === "Enter") save(); }} />
+                    {currentQuestion.unit && <span className="test-attempt-unit">{currentQuestion.unit}</span>}
+                    <button type="button" className="secondary-button" onClick={save}>Save answer</button>
+                  </div>
+                  <p id={`nat-${currentQuestion.id}-hint`} className="test-attempt-hint">Type digits only: no units, commas or spaces.
+                    {currentQuestion.answer ? ` Saved: ${currentQuestion.answer}` : " Not answered yet."}</p>
+                </div>
+              );
+            })()}
+
+            {answerProblem?.id === currentQuestion.id && <p className="test-attempt-error" role="alert">{answerProblem.message}</p>}
+
             <div className="test-attempt-options">
-              {currentQuestion.options.map((option) => (
+              {currentQuestion.kind === "MSQ" && currentQuestion.options.map((option) => {
+                const chosen = (currentQuestion.answer ?? "").includes(option.letter);
+                const toggle = () => {
+                  const next = [...currentQuestion.options.map((o) => o.letter)]
+                    .filter((letter) => (letter === option.letter ? !chosen : (currentQuestion.answer ?? "").includes(letter))).join("");
+                  if (next) void handleAnswerSelect(next); else void handleClearResponse();
+                };
+                return (
+                  <label key={option.letter} className={chosen ? "test-attempt-option selected" : "test-attempt-option"}>
+                    <input type="checkbox" value={option.letter} checked={chosen} onChange={toggle} />
+                    <span className="option-checkbox" />
+                    <span className="option-letter">{option.letter}.</span>
+                    {option.image ? (
+                      <img className="test-attempt-option-image" src={`${TEST_API_URL}/tests/${currentTestId}/images/${option.image}`}
+                        alt={`Option ${option.letter} picture`} />
+                    ) : (
+                      <MathText text={option.text} />
+                    )}
+                  </label>
+                );
+              })}
+              {currentQuestion.kind === "MCQ" && currentQuestion.options.map((option) => (
                 <label
                   key={option.letter}
                   className={

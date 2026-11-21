@@ -6,19 +6,20 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_student
 from app.database import get_db
-from app.models.question import Question, QuestionImage
+from app.models.question import Question, QuestionImage, QuestionPicture
 from app.repositories.test_repository import get_test_for_student
 from app.schemas.test import TestResponse, TestStartResponse
 from app.services.test_service import (
     AttemptRequired,
     get_available_tests,
-    get_scheduled_tests_for_student,
     get_missed_tests_for_student,
+    get_scheduled_tests_for_student,
     get_test,
-    get_test_details as get_test_details_service,
     get_test_for_start,
 )
-
+from app.services.test_service import (
+    get_test_details as get_test_details_service,
+)
 
 router = APIRouter(
     prefix="/tests",
@@ -158,7 +159,9 @@ def question_picture(test_id: UUID, checksum: str, student_id: str = Depends(get
     of this test's questions uses it. Every other request gets the same 404, so pictures of other tests cannot be probed."""
     used = db.scalar(select(Question.question_id).where(Question.test_id == test_id, or_(
         Question.question_image == checksum, Question.option_a_image == checksum, Question.option_b_image == checksum,
-        Question.option_c_image == checksum, Question.option_d_image == checksum)).limit(1))
+        Question.option_c_image == checksum, Question.option_d_image == checksum)).limit(1)) or db.scalar(
+        select(QuestionPicture.question_id).join(Question, Question.question_id == QuestionPicture.question_id)
+        .where(Question.test_id == test_id, QuestionPicture.checksum == checksum).limit(1))     # MSQ option pictures
     picture = db.get(QuestionImage, checksum) if used else None
     if picture is None or not get_test_for_student(db=db, test_id=test_id, student_id=student_id):
         raise HTTPException(status_code=404, detail="Picture not found")

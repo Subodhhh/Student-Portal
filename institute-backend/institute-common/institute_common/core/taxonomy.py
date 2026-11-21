@@ -13,7 +13,7 @@ from pydantic import AfterValidator
 
 DIFFICULTIES = ("EASY", "MEDIUM", "HARD")
 PATTERNS = ("SINGLE_CORRECT", "ASSERTION_REASON", "STATEMENT_BASED", "MATCH_THE_COLUMN", "DIAGRAM_BASED", "CASE_BASED")
-QUESTION_TYPES = ("MCQ_SINGLE",)
+QUESTION_TYPES = ("MCQ_SINGLE", "MCQ_MULTI", "NUMERICAL")   # core/question_types.py: MCQ, MSQ, NAT
 SCOPES = ("PROVIDER", "GLOBAL")
 
 LABEL_MAX = 80        # exam type, class, chapter, subtopic, subtype
@@ -49,3 +49,18 @@ def clean_label(value: str | None, max_len: int = LABEL_MAX) -> str | None:
 
 Label = Annotated[str | None, AfterValidator(clean_label)]
 TopicLabel = Annotated[str | None, AfterValidator(lambda v: clean_label(v, TOPIC_MAX))]
+
+
+TAXONOMY_LEVELS = ("CHAPTER", "TOPIC", "SUBTOPIC")
+# The longest name each level may have: the limits of the bank_questions label columns the names are copied into.
+LEVEL_MAX = {"CHAPTER": LABEL_MAX, "TOPIC": TOPIC_MAX, "SUBTOPIC": LABEL_MAX}
+
+
+def label_key(value: str | None) -> str | None:
+    """The comparison form of a label: cleaned like any label (trimmed, inner whitespace collapsed), Unicode-normalised (NFKC, so
+    full-width and compatibility characters compare equal) and case-folded. "Laws  of Motion", "laws of motion" and "LAWS OF MOTION"
+    all give "laws of motion", so they can never become three taxonomy records. None for a blank value."""
+    cleaned = clean_label(value, TOPIC_MAX)
+    if cleaned is None:
+        return None
+    return unicodedata.normalize("NFKC", cleaned).casefold()

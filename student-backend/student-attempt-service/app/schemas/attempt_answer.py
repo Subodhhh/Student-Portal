@@ -1,12 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SaveAnswerRequest(BaseModel):
     question_id: UUID
-    selected_answer: str | None
+    # validated and canonicalised server-side against the question's type (services/attempt_answer_service.canonical_answer)
+    selected_answer: str | None = Field(default=None, max_length=200)
 
 
 class AttemptAnswerResponse(BaseModel):

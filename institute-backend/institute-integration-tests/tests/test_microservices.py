@@ -338,6 +338,20 @@ NEW_ROUTES = {
     ("GET", f"{API}/review-drafts/{{draft_id}}"), ("PATCH", f"{API}/review-drafts/{{draft_id}}"),
     ("POST", f"{API}/review-drafts/{{draft_id}}/import"), ("POST", f"{API}/review-drafts/{{draft_id}}/discard"),
     ("GET", f"{API}/question-images/{{asset_id}}"),                                # pictures of questions and options (provider-scoped)
+    # canonical question taxonomy (paper service): provider-scoped chapters/topics/subtopics, aliases and matching
+    ("GET", f"{API}/question-taxonomy/nodes"), ("POST", f"{API}/question-taxonomy/nodes"), ("PATCH", f"{API}/question-taxonomy/nodes/{{node_id}}"),
+    ("POST", f"{API}/question-taxonomy/nodes/{{node_id}}/aliases"), ("GET", f"{API}/question-taxonomy/match"),
+    # bulk question import (paper service; the work itself runs in the bulk import worker)
+    ("POST", f"{API}/bulk-imports"), ("GET", f"{API}/bulk-imports"), ("GET", f"{API}/bulk-imports/{{job_id}}"),
+    ("GET", f"{API}/bulk-imports/targets"),       # three-scope import targets (THREE_SCOPE_QUESTION_BANK_PLAN.md)
+    ("GET", f"{API}/bulk-imports/{{job_id}}/rows"), ("PATCH", f"{API}/bulk-imports/{{job_id}}/rows/{{row_no}}"),
+    ("GET", f"{API}/bulk-imports/{{job_id}}/images/{{sha256}}"), ("GET", f"{API}/bulk-imports/{{job_id}}/taxonomy-issues"),
+    ("POST", f"{API}/bulk-imports/{{job_id}}/taxonomy-resolutions"), ("POST", f"{API}/bulk-imports/{{job_id}}/revalidate"),
+    ("POST", f"{API}/bulk-imports/{{job_id}}/confirm"), ("POST", f"{API}/bulk-imports/{{job_id}}/cancel"),
+    ("GET", f"{API}/bulk-imports/{{job_id}}/report.csv"),
+    # MSQ / NAT (QUESTION_TYPES_ARCHITECTURE.md): R1 "Import anyway" for a KEY_CONFLICT row, and the question-level analysis
+    ("POST", f"{API}/bulk-imports/{{job_id}}/rows/{{row_no}}/import-anyway"), ("GET", f"{API}/exams/{{exam_id}}/results/questions"),
+    ("GET", f"{API}/bulk-import-templates/{{kind}}"),                               # the Excel / Word question templates
 }
 
 

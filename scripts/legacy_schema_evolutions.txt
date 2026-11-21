@@ -18,3 +18,16 @@ exam_plans	constraint	exam_plans_status_check
 exam_version_papers	column	source_provider_id uuid NO
 exam_version_papers	constraint	exam_version_papers_source_provider_id_not_null
 exam_versions	trigger	exam_versions_immutable
+# paper 0010_optional_question_marks: marks belong to the test; a question may have no marks of its own (both NULL), so a paper
+# may have no total
+paper_versions	column	total_marks numeric NO
+question_versions	column	marks_negative numeric NO
+question_versions	column	marks_positive numeric NO
+question_versions	constraint	question_versions_marks_check
+paper_versions	constraint	paper_versions_total_marks_not_null
+question_versions	constraint	question_versions_marks_negative_not_null
+question_versions	constraint	question_versions_marks_positive_not_null
+# paper 0015_question_types: MSQ and NAT have no correct letter (their key is answer_key), so correct_option becomes nullable and
+# the letter CHECK becomes part of question_versions_shape_check (an MCQ still needs one of A-D)
+question_versions	column	correct_option character varying NO
+question_versions	constraint	question_versions_correct_check

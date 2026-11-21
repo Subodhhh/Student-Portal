@@ -70,7 +70,7 @@ FUNCTIONS = {"institute_audit_immutable": AUDIT_FN, "institute_history_immutable
 TRIGGERS: dict[str, list[tuple[str, str, str, str]]] = {
     "identity": [("institute_audit_logs_immutable", "institute_audit_logs", "UPDATE OR DELETE", "institute_audit_immutable")],
     "paper": [(f"{t}_immutable", t, "UPDATE OR DELETE", "institute_history_immutable")
-              for t in ("paper_version_events", "question_versions", "paper_version_questions")],
+              for t in ("paper_version_events", "question_versions", "paper_version_questions", "question_version_assets")],
     "exam": [
         ("exam_versions_immutable", "exam_versions",
          "UPDATE OF exam_id, version_no, duration_minutes, start_at, end_at, total_questions, total_marks, missing_subjects, generation_job_id, settings OR DELETE",

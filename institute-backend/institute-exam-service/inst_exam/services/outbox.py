@@ -15,7 +15,10 @@ from institute_common.config import settings
 from institute_common.database import utcnow
 from institute_common.models.academics import Subject
 from institute_common.models.exams import Exam, ExamOutbox, ExamPlan, ExamVersion, ExamVersionPaper, StudentExamAssignment
-from institute_common.models.papers import IMAGE_FIELD_COLUMNS, PaperVersionQuestion, QuestionImageAsset, QuestionVersion
+from institute_common.core import question_types as qtypes
+from institute_common.core.marking import MarkingRuleMissing, question_marks_for, wire_mark
+from institute_common.objectstore import ObjectMissing, ObjectStoreError, stored_asset_bytes
+from institute_common.models.papers import IMAGE_FIELD_COLUMNS, PaperVersionQuestion, Question, QuestionImageAsset, QuestionVersion
 from inst_exam.services.notify import notify, responsible_staff
 from inst_exam.services.student_notifications import enqueue as enqueue_student_notification
 from inst_exam.services.student_notifications import fmt_ist
@@ -91,6 +94,19 @@ def set_publisher(p: ExamPublisher | None) -> None:
     _publisher = p
 
 
+def question_marks(marking: dict, subject_id: UUID, question_type: str, version: QuestionVersion) -> tuple[Decimal, Decimal]:
+    """(marks for a correct answer, marks deducted for a wrong one) of one delivered question under the exam's FROZEN marking
+    (exam_versions.settings["marking"]), so later edits of the plan never change an exam already generated."""
+    if marking.get("mode", "PER_QUESTION") == "PER_QUESTION" and None not in (version.marks_positive, version.marks_negative):
+        for label, val in (("marks", version.marks_positive), ("negative_marks", version.marks_negative)):
+            if Decimal(val) != Decimal(val).to_integral_value():   # whole numbers only (unchanged behaviour of this mode)
+                raise PermanentPublishError(f"Question marks must be whole numbers for student delivery ({label}={val}).")
+    try:            # one rule for every mode; an MSQ never loses marks (R5)
+        return question_marks_for(marking, subject_id, question_type, version.marks_positive, version.marks_negative)
+    except (MarkingRuleMissing, ValueError) as exc:   # generation checked the marks, so this means the snapshot is damaged
+        raise PermanentPublishError(str(exc)) from exc
+
+
 def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH") -> dict:
     ev = db.get(ExamVersion, exam_version_id)
     exam = db.get(Exam, ev.exam_id)
@@ -114,41 +130,47 @@ def build_payload(db: Session, exam_version_id: UUID, operation: str = "PUBLISH"
     if (ev.settings or {}).get("shuffle_questions"):        # absent (paper order) for every other exam, so their payloads are unchanged
         payload["shuffle_questions"] = True
     # Exam-level marking frozen at generation (exam_versions.settings). PER_QUESTION (the default, and every exam generated before
-    # settings existed) keeps each question's own marks; UNIFORM gives every question +correct / -wrong. The Student result service
-    # evaluates exactly the marks delivered here, so evaluation always matches the configured scheme.
+    # settings existed) keeps each question's own marks; UNIFORM gives every question +correct / -wrong; RULES takes the marks of the
+    # question's type and subject from the frozen rules. The Student result service evaluates exactly the marks delivered here.
     marking = (ev.settings or {}).get("marking") or {"mode": "PER_QUESTION"}
-    uniform = marking.get("mode") == "UNIFORM"
+    total_marks = Decimal(0)
     order = 0
     for p in papers:
         subject = db.get(Subject, p.subject_id)
         p_id = str(p.source_submission_id) if p.source_submission_id else None
         rows = db.execute(
-            select(QuestionVersion).join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+            select(QuestionVersion, Question.question_type)
+            .join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+            .join(Question, Question.question_id == QuestionVersion.question_id)
             .where(PaperVersionQuestion.paper_version_id == p.paper_version_id).order_by(PaperVersionQuestion.position)
-        ).scalars().all()
+        ).all()
+        question_types = {q.question_version_id: question_type for q, question_type in rows}
+        rows = [q for q, _question_type in rows]
         # picture asset id -> its checksum (the Student service names pictures by content); bytes are never loaded here
         ids = {getattr(q, c) for q in rows for c in IMAGE_FIELD_COLUMNS.values() if getattr(q, c) is not None}
+        ids |= {UUID(str(o["image"])) for q in rows for o in (q.content or {}).get("options", []) if o.get("image")}
         checksums = dict(db.execute(select(QuestionImageAsset.asset_id, QuestionImageAsset.checksum)
                                     .where(QuestionImageAsset.asset_id.in_(ids))).all()) if ids else {}
         for q in rows:
             order += 1
-            if uniform:
-                marks, negative = int(marking["correct"]), int(marking["wrong"])
-            else:
-                for label, val in (("marks", q.marks_positive), ("negative_marks", q.marks_negative)):
-                    if Decimal(val) != Decimal(val).to_integral_value():
-                        raise PermanentPublishError(f"Question marks must be whole numbers for student delivery ({label}={val}).")
-                marks, negative = int(q.marks_positive), int(q.marks_negative)
+            marks, negative = question_marks(marking, p.subject_id, question_types[q.question_version_id], q)
+            total_marks += marks
             pictures = {f: checksums[getattr(q, c)] for f, c in IMAGE_FIELD_COLUMNS.items() if getattr(q, c) is not None}
+            qtype = q.question_type or qtypes.MCQ
+            if qtype == qtypes.MCQ:
+                body = {"options": {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d}, "correct": q.correct_option}
+            else:           # payload v2 (QUESTION_TYPES_ARCHITECTURE.md): the typed entry; option pictures travel as checksums
+                content = {**q.content, "options": [{**o, "image": checksums[UUID(str(o["image"]))] if o.get("image") else None}
+                                                    for o in q.content.get("options", [])]} if q.content.get("options") else q.content
+                body = {"type": qtype, "content": content, "key": q.answer_key, "scheme": qtypes.SCHEMES[qtype]}
             payload["questions"].append({
-                "order": order, "subject": subject.name if subject else None, "text": q.stem,
-                "options": {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d},
-                "correct": q.correct_option, "marks": marks, "negative_marks": negative,
+                "order": order, "subject": subject.name if subject else None, "text": q.stem, **body,
+                "marks": wire_mark(marks), "negative_marks": wire_mark(negative),
                 **({"paper_id": p_id} if p_id else {}),
                 **({"images": pictures} if pictures else {}),      # only questions with pictures: other payloads are unchanged
             })
     payload["total_questions"] = len(payload["questions"])
-    payload["total_marks"] = sum(q["marks"] for q in payload["questions"])
+    payload["total_marks"] = wire_mark(total_marks)       # exact Decimal sum, never a sum of the (int | str) wire values
     if plan.global_occurrence_id and _paper_choice(db, payload, exam, plan, papers):
         return payload
     if sections:     # every configured subject, in order: its delivered question count, or why the student has no paper for it
@@ -180,10 +202,11 @@ def _paper_choice(db: Session, payload: dict, exam: Exam, plan: ExamPlan, papers
     configured = db.execute(select(GlobalTestSubject.subject_id, Subject.name).join(Subject, Subject.subject_id == GlobalTestSubject.subject_id)
                             .where(GlobalTestSubject.test_id == plan.global_test_id).order_by(GlobalTestSubject.position)).all()
     name_of = dict(configured)
-    marks: dict[str, int] = {}
+    marks: dict[str, Decimal] = {}
     counts: dict[str, int] = {}
     for q in payload["questions"]:
-        marks[q.get("paper_id")] = marks.get(q.get("paper_id"), 0) + q["marks"]
+        # wire values are int or an exact decimal string: Decimal(str(...)) reads both without float rounding
+        marks[q.get("paper_id")] = marks.get(q.get("paper_id"), Decimal(0)) + Decimal(str(q["marks"]))
         counts[q.get("paper_id")] = counts.get(q.get("paper_id"), 0) + 1
     providers = dict(db.execute(select(Provider.provider_id, Provider.name)).all())
     delivered: dict[UUID, list[dict]] = {}
@@ -193,7 +216,7 @@ def _paper_choice(db: Session, payload: dict, exam: Exam, plan: ExamPlan, papers
         delivered.setdefault(p.subject_id, []).append({"paper_id": str(p.source_submission_id), "label": title or name_of.get(p.subject_id, "Paper"),
                                                        "provider_name": providers.get(p.source_provider_id),
                                                        "question_count": counts.get(str(p.source_submission_id), 0),
-                                                       "total_marks": marks.get(str(p.source_submission_id), 0)})
+                                                       "total_marks": wire_mark(marks.get(str(p.source_submission_id), Decimal(0)))})
     payload["sections"] = [{"position": i, "subject": name, "papers": delivered.get(sid, [])} for i, (sid, name) in enumerate(configured, start=1)]
     occ = plan.global_occurrence_id
     eligible: dict[tuple[str, UUID], list[str]] = {}
@@ -228,6 +251,7 @@ def _paper_choice(db: Session, payload: dict, exam: Exam, plan: ExamPlan, papers
 def _ensure_images(db: Session, sender, payload: dict) -> None:
     """Before an exam with pictures is sent, the receiver must hold every picture (publishers without pictures support skip this)."""
     wanted = {cs for q in payload.get("questions", []) for cs in q.get("images", {}).values()}
+    wanted |= {o["image"] for q in payload.get("questions", []) for o in (q.get("content") or {}).get("options", []) if o.get("image")}
     if not wanted or not hasattr(sender, "ensure_images"):
         return
     rows = dict(db.execute(select(QuestionImageAsset.checksum, QuestionImageAsset.mime_type)
@@ -242,9 +266,14 @@ def _bytes_loader(db: Session, checksum: str):
     """Reads one picture's bytes only when the receiver says it lacks it."""
     def load() -> bytes:
         asset = db.scalar(select(QuestionImageAsset).where(QuestionImageAsset.checksum == checksum).limit(1))
-        if asset is None or asset.storage != "db" or asset.image_data is None:
+        if asset is None:
             raise PermanentPublishError("a picture of this exam has no stored bytes")
-        return asset.image_data
+        try:
+            return stored_asset_bytes(asset)          # database or object store, wherever the asset says
+        except ObjectMissing as exc:
+            raise PermanentPublishError("a picture of this exam has no stored bytes") from exc
+        except ObjectStoreError as exc:               # the store is unreachable: try the delivery again later
+            raise TransientPublishError("the picture store is unavailable") from exc
     return load
 
 

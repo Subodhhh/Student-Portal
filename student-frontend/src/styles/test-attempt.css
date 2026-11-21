@@ -1561,3 +1561,83 @@ body,
   border-radius: 6px;
   background: #fff;
 }
+
+/* MSQ (one or more correct options): a square box instead of the round radio */
+.option-checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #94a3b8;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.test-attempt-option.selected .option-checkbox {
+  border-color: #2563eb;
+  background: #2563eb;
+}
+
+.test-attempt-option.selected .option-checkbox::after {
+  content: "";
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.test-attempt-option:focus-within {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* NAT (a number answer) */
+.test-attempt-numeric {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.test-attempt-numeric label {
+  font-weight: 600;
+}
+
+.test-attempt-numeric-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.test-attempt-numeric input {
+  width: min(240px, 100%);
+  padding: 10px 12px;
+  font-size: 1.05rem;
+  border: 2px solid #94a3b8;
+  border-radius: 8px;
+}
+
+.test-attempt-numeric input:focus {
+  border-color: #2563eb;
+  outline: none;
+}
+
+.test-attempt-unit {
+  font-weight: 600;
+  color: #334155;
+}
+
+.test-attempt-hint {
+  color: #475569;
+  font-size: 0.9rem;
+  margin: 8px 0;
+}
+
+.test-attempt-error {
+  color: #b91c1c;
+  font-weight: 600;
+  margin: 8px 0;
+}

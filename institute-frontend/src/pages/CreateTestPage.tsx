@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { ClassTargetSelect } from "../components/classLevels";
+import { MarkingRulesEditor } from "../components/markingRules";
+import { describeRules, emptyRules, rulesProblem, rulesTotal } from "../components/markingRulesModel";
 import { Link } from "react-router-dom";
 import { useScope } from "../auth/ScopeContext";
 import ScopeBar from "../components/ScopeBar";
@@ -46,7 +48,8 @@ function Wizard({ providerId }: { providerId: string }) {
     const start0 = new Date(Date.now() + 86400000);
     start0.setMinutes(0, 0, 0);
     return { duration: "60", start: toLocal(start0), end: toLocal(new Date(start0.getTime() + 3 * 3600000)),
-      marking: "UNIFORM" as "UNIFORM" | "PER_QUESTION", correct: "4", wrong: "1", exam_type: "", target_class: "", shuffle: "NO" as "YES" | "NO" };
+      marking: "UNIFORM" as "UNIFORM" | "PER_QUESTION" | "RULES", correct: "4", wrong: "1", rules: emptyRules(), exam_type: "", target_class: "",
+      shuffle: "NO" as "YES" | "NO" };
   });
   const [files, setFiles] = useState<Record<string, { paper?: File; key?: File }>>({});
   const [source, setSource] = useState<Record<string, "upload" | "bank">>({});      // per subject; upload by default
@@ -81,7 +84,8 @@ function Wizard({ providerId }: { providerId: string }) {
     name: name.trim().length < 3 ? "Enter a test name (at least 3 characters)." : null,
     subjects: subjectIds.length === 0 ? "Select at least one subject." : null,
     details: !(Number(meta.duration) > 0) ? "Duration must be positive." : !meta.start || !meta.end ? "Choose when the window opens and closes."
-      : new Date(meta.end) <= new Date(meta.start) ? "The window must close after it opens." : meta.marking === "UNIFORM" && !(Number(meta.correct) >= 1 && Number(meta.wrong) >= 0) ? "Enter the marks for correct and wrong answers." : null,
+      : new Date(meta.end) <= new Date(meta.start) ? "The window must close after it opens." : meta.marking === "UNIFORM" && !(Number(meta.correct) >= 1 && Number(meta.wrong) >= 0) ? "Enter the marks for correct and wrong answers."
+        : meta.marking === "RULES" ? rulesProblem(meta.rules, subjectIds) : null,
     files: validated ? null : subjectIds.some((sid) => (fromBank(sid) ? !reports[reportKey(sid)]?.ok : !files[sid]?.paper || !files[sid]?.key))
       ? "For every subject choose a question paper AND an answer key, or an approved paper from the bank." : null,
     validate: validated ? null : "Run Import & Validate until every subject passes.",
@@ -222,8 +226,9 @@ function Wizard({ providerId }: { providerId: string }) {
           <h2>Details & schedule</h2>
           <div className="grid cols-2">
             <Field label="Duration (minutes)" type="number" min={1} max={720} value={meta.duration} onChange={(e) => setMeta({ ...meta, duration: e.target.value })} />
-            <SelectField label="Marking" value={meta.marking} onChange={(e) => setMeta({ ...meta, marking: e.target.value as "UNIFORM" | "PER_QUESTION" })}>
+            <SelectField label="Marking" value={meta.marking} onChange={(e) => setMeta({ ...meta, marking: e.target.value as "UNIFORM" | "PER_QUESTION" | "RULES" })}>
               <option value="UNIFORM">Same marks for every question</option><option value="PER_QUESTION">Marks from the question paper</option>
+              <option value="RULES">Marks per subject (decimals allowed)</option>
             </SelectField>
             {meta.marking === "UNIFORM" && <>
               <Field label="Marks for a correct answer" type="number" min={1} max={100} value={meta.correct} onChange={(e) => setMeta({ ...meta, correct: e.target.value })} />
@@ -238,6 +243,8 @@ function Wizard({ providerId }: { providerId: string }) {
             <Field label="Exam type (optional)" value={meta.exam_type} onChange={(e) => setMeta({ ...meta, exam_type: e.target.value })} />
             <ClassTargetSelect value={meta.target_class} onChange={(v) => setMeta({ ...meta, target_class: v })} />
           </div>
+          {meta.marking === "RULES" && <MarkingRulesEditor rows={meta.rules} onChange={(rules) => setMeta({ ...meta, rules })}
+            subjects={subjectIds.map((sid) => ({ subject_id: sid, name: subjectName(sid) }))} />}
           <p className="muted small">Times are in your timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}) and stored in UTC. Unanswered questions score 0. A student who
             starts before the window closes gets the full duration. Total marks are calculated from the validated papers.</p>
         </Card>
@@ -299,8 +306,12 @@ function Wizard({ providerId }: { providerId: string }) {
             <dt>Eligible students</dt><dd>{audienceStale ? "recalculated at publication" : eligible?.count ?? "—"}</dd>
             <dt>Subjects</dt><dd>{subjectIds.map((sid) => `${subjectName(sid)} (${reports[reportKey(sid)]?.question_count ?? "?"} questions)`).join(", ")}</dd>
             <dt>Questions</dt><dd>{subjectIds.reduce((n, sid) => n + (reports[reportKey(sid)]?.question_count ?? 0), 0)}</dd>
-            <dt>Total marks</dt><dd>{meta.marking === "UNIFORM" ? subjectIds.reduce((n, sid) => n + (reports[reportKey(sid)]?.question_count ?? 0), 0) * Number(meta.correct) : subjectIds.reduce((n, sid) => n + Number(reports[reportKey(sid)]?.total_marks ?? 0), 0)}</dd>
-            <dt>Marking</dt><dd>{meta.marking === "UNIFORM" ? `+${meta.correct} correct, −${meta.wrong} wrong, 0 unanswered` : "As in the question papers"}</dd>
+            <dt>Total marks</dt><dd>{meta.marking === "RULES"
+              ? rulesTotal(meta.rules, subjectIds.map((sid) => ({ subject_id: sid, questions: reports[reportKey(sid)]?.question_count ?? 0 })))
+              : meta.marking === "UNIFORM" ? subjectIds.reduce((n, sid) => n + (reports[reportKey(sid)]?.question_count ?? 0), 0) * Number(meta.correct) : subjectIds.reduce((n, sid) => n + Number(reports[reportKey(sid)]?.total_marks ?? 0), 0)}</dd>
+            <dt>Marking</dt><dd>{meta.marking === "UNIFORM" ? `+${meta.correct} correct, −${meta.wrong} wrong, 0 unanswered`
+              : meta.marking === "RULES" ? `${describeRules(meta.rules.filter((r) => r.subject_id !== null || r.correct), subjectName).join("; ")}; 0 unanswered`
+                : "As in the question papers"}</dd>
             <dt>Shuffle Questions</dt><dd>{meta.shuffle === "YES" ? "Yes (each student's own fixed order)" : "No (paper order)"}</dd>
             <dt>Duration</dt><dd>{meta.duration} minutes</dd>
             <dt>Window</dt><dd>{new Date(meta.start).toLocaleString()} – {new Date(meta.end).toLocaleString()} (UTC {localToIso(meta.start).slice(0, 16)} – {localToIso(meta.end).slice(0, 16)})</dd>

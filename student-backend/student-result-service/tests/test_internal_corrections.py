@@ -130,7 +130,9 @@ def fake_questions(monkeypatch, per_attempt):
     """per_attempt: {student_id: [(selected, correct, marks, negative), ...]}; keyed through the attempt id."""
     def fake(db, attempt_id):
         sid = db.scalar(select(ResultRow.student_id).where(ResultRow.attempt_id == attempt_id))
-        return [{"selected_answer": s, "correct_answer": ca, "marks": m, "negative_marks": n} for s, ca, m, n in per_attempt[sid]]
+        # the shape get_questions_with_answers returns (question id and order included)
+        return [{"question_id": uuid.uuid5(uuid.NAMESPACE_OID, f"{sid}:{i}"), "question_order": i, "selected_answer": s,
+                 "correct_answer": ca, "marks": m, "negative_marks": n} for i, (s, ca, m, n) in enumerate(per_attempt[sid], start=1)]
     monkeypatch.setattr(reevaluation, "get_questions_with_answers", fake)
 
 

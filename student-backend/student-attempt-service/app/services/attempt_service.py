@@ -7,8 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.attempt_answer import QuestionState
+from app.models.paper_selection import AttemptSelectedPaper
 from app.models.test_attempt import AttemptStatus, TestAttempt
-from app.repositories.attempt_answer_repository import (
+from app.repositories.attempt_answer_repository import (  # noqa: F401  (kept as it was)
     get_answers_by_attempt,
 )
 from app.repositories.attempt_repository import (
@@ -16,7 +17,6 @@ from app.repositories.attempt_repository import (
     get_attempt_by_id,
     get_attempt_by_test,
 )
-from app.models.paper_selection import AttemptSelectedPaper
 from app.services import paper_selection
 from app.services.integrity import finish, start_retake
 from app.services.question_order import section_order
@@ -174,6 +174,7 @@ def get_attempt_workspace(
                 q.subject,
                 q.question_text,
                 q.question_type,
+                q.content,
                 q.option_a,
                 q.option_b,
                 q.option_c,
@@ -244,6 +245,8 @@ def get_attempt_workspace(
                 "subject": row["subject"],
                 "question_text": row["question_text"],
                 "question_type": row["question_type"],
+                # MSQ options / NAT number format; never the key (answer_key, correct_answer and scheme are not selected)
+                "content": json.loads(row["content"]) if isinstance(row["content"], str) else row["content"],
                 "option_a": row["option_a"],
                 "option_b": row["option_b"],
                 "option_c": row["option_c"],

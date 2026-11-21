@@ -1,9 +1,13 @@
+import uuid
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import question_types
+from app.marks import to_decimal
 from app.models.test_result import TestResult
 from app.repositories.result_repository import (
     create_result,
@@ -13,9 +17,9 @@ from app.repositories.result_repository import (
     get_review_window,
     get_student_results,
 )
-from app.services import global_results
+from app.services import global_results, scoring
 from app.services.question_order import section_order
-from app.services.reevaluation import score
+from app.services.reevaluation import replace_question_rows, score
 
 
 def evaluate_attempt(
@@ -64,11 +68,14 @@ def evaluate_attempt(
     # One scoring implementation for first evaluation and authorized re-evaluation (app/services/reevaluation.score):
     # +marks for a correct answer, -negative marks for a wrong one, 0 for unanswered.
     result = TestResult(
+        result_id=uuid.uuid4(),
         attempt_id=attempt_id,
         test_id=attempt["test_id"],
         student_id=student_id,
         **score(questions),
     )
+    # the marks awarded per question (D9), committed together with the result
+    replace_question_rows(db, result.result_id, questions)
 
     try:
         return create_result(
@@ -177,41 +184,28 @@ def get_result_details(
                 "correct_answers": 0,
                 "incorrect_answers": 0,
                 "unanswered_questions": 0,
-                "total_marks": 0,
-                "obtained_marks": 0,
+                "total_marks": Decimal(0),
+                "obtained_marks": Decimal(0),
             }
 
         subject_data = subjects[subject]
 
-        marks = question["marks"] or 0
-        negative_marks = question["negative_marks"] or 0
-
+        marks = to_decimal(question["marks"] or 0)
+        negative_marks = to_decimal(question["negative_marks"] or 0)
         selected_answer = question["selected_answer"]
-        correct_answer = question["correct_answer"]
-
+        qtype = scoring.question_type(question)
+        key = scoring.key_of(question)
+        correct_answer = key if qtype == "MCQ_SINGLE" else question_types.describe_key(qtype, key)
         subject_data["total_questions"] += 1
         subject_data["total_marks"] += marks
-
-        if not selected_answer:
-            status = "UNANSWERED"
+        status, marks_obtained = scoring.outcome(question)      # the ONE scorer: the same marks as the stored result
+        if status == "UNANSWERED":
             marks_obtained = 0
             subject_data["unanswered_questions"] += 1
-
-        elif selected_answer.strip().upper() == correct_answer.strip().upper():
-            status = "CORRECT"
-            marks_obtained = marks
-
-            subject_data["attempted_questions"] += 1
-            subject_data["correct_answers"] += 1
-            subject_data["obtained_marks"] += marks
-
         else:
-            status = "INCORRECT"
-            marks_obtained = -negative_marks
-
             subject_data["attempted_questions"] += 1
-            subject_data["incorrect_answers"] += 1
-            subject_data["obtained_marks"] -= negative_marks
+            subject_data["correct_answers" if status == "CORRECT" else "incorrect_answers"] += 1
+            subject_data["obtained_marks"] += marks_obtained
 
         question_reviews.append(
             {
@@ -225,6 +219,10 @@ def get_result_details(
                 "option_d": question["option_d"],
                 "selected_answer": selected_answer,
                 "correct_answer": correct_answer,
+                # MSQ / NAT: the options or number format and the typed key (shown only once the review is open)
+                "question_type": "MCQ" if qtype == "MCQ_SINGLE" else qtype,
+                "content": scoring._json(question.get("content")),
+                "answer_key": None if qtype == "MCQ_SINGLE" else key,
                 "status": status,
                 "marks_obtained": marks_obtained,
                 "marks": marks,
@@ -265,10 +263,10 @@ def get_result_details(
         # each subject's marks include its attributed manual adjustment
         deltas = global_results.deltas(db, result["result_id"], result["subject_adjustments"])
         for x in subject_performance:
-            x["adjustment"] = (deltas or {}).get(x["subject"], 0)
+            x["adjustment"] = (deltas or {}).get(x["subject"], Decimal(0))
             x["obtained_marks"] += x["adjustment"]
         if deltas is None:              # never guessed: the official total minus the scored subjects, shown on its own line
-            unattributed = result["obtained_marks"] - sum(x["obtained_marks"] for x in subject_performance)
+            unattributed = to_decimal(result["obtained_marks"]) - sum((x["obtained_marks"] for x in subject_performance), Decimal(0))
     if sections:
         # a unified Global Test: every configured subject in the configured order; one without a paper is shown as unavailable with
         # no questions and no marks (nothing is invented); the subjects with questions are exactly the ones scored above

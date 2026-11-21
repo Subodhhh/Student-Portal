@@ -13,6 +13,7 @@ from institute_common.database import get_db, utcnow
 from institute_common.internal_http import require_internal_key
 from institute_common.models.academics import Subject
 from institute_common.models.papers import (
+    QuestionVersionAsset,
     GlobalPaperCopy,
     Paper,
     PaperShare,
@@ -234,12 +235,19 @@ def copy_paper_to_global(body: GlobalPaperCopyIn, db: Session = Depends(get_db))
                 stem_image_id=source_qv.stem_image_id, option_a_image_id=source_qv.option_a_image_id,
                 option_b_image_id=source_qv.option_b_image_id, option_c_image_id=source_qv.option_c_image_id,
                 option_d_image_id=source_qv.option_d_image_id,
+                # an MSQ / NAT keeps its type, content (option pictures by the same asset ids) and key
+                question_type=source_qv.question_type, content=source_qv.content, answer_key=source_qv.answer_key,
+                schema_version=source_qv.schema_version,
             )
             db.add(global_qv)
             db.flush()
+            for link in db.scalars(select(QuestionVersionAsset).where(
+                    QuestionVersionAsset.question_version_id == source_qv.question_version_id)):
+                db.add(QuestionVersionAsset(question_version_id=global_qv.question_version_id, role=link.role, asset_id=link.asset_id))
 
             copied_question_versions.append((item.position, global_qv))
-            total_marks += global_qv.marks_positive
+            # a question without marks of its own makes the copy's total unknown (None), exactly like its source paper
+            total_marks = None if total_marks is None or global_qv.marks_positive is None else total_marks + global_qv.marks_positive
 
         global_version = PaperVersion(
             paper_id=global_paper.paper_id,

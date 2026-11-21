@@ -1,0 +1,76 @@
+[
+  {
+    "order": 1,
+    "subject": "Physics",
+    "text": "Typed Q1",
+    "options": {
+      "A": "a",
+      "B": "b",
+      "C": "c",
+      "D": "d"
+    },
+    "correct": "B",
+    "marks": 4,
+    "negative_marks": 1
+  },
+  {
+    "order": 2,
+    "subject": "Physics",
+    "text": "Typed Q2",
+    "type": "MCQ_MULTI",
+    "content": {
+      "options": [
+        {
+          "id": "A",
+          "text": "Force",
+          "image": null
+        },
+        {
+          "id": "B",
+          "text": "Mass",
+          "image": null
+        },
+        {
+          "id": "C",
+          "text": "Velocity",
+          "image": null
+        },
+        {
+          "id": "D",
+          "text": "Time",
+          "image": null
+        }
+      ]
+    },
+    "key": {
+      "correct": [
+        "A",
+        "C"
+      ]
+    },
+    "scheme": "ALL_OR_NOTHING",
+    "marks": 4,
+    "negative_marks": 0
+  },
+  {
+    "order": 3,
+    "subject": "Physics",
+    "text": "Typed Q3",
+    "type": "NUMERICAL",
+    "content": {
+      "format": "DECIMAL",
+      "decimals": 2,
+      "unit": "m/s²"
+    },
+    "key": {
+      "value": "9.8",
+      "tolerance": {
+        "kind": "ABS",
+        "amount": "0.05"
+      }
+    },
+    "scheme": "NUMERIC_TOLERANCE",
+    "marks": 4,
+    "negative_marks": 1
+  }
+]

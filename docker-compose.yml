@@ -300,9 +300,29 @@ services:
       INTERNAL_API_KEYS: ${INSTITUTE_PAPER_KEY:-}
       # Question and option pictures are stored and shown exactly as uploaded, never read: OCR and picture recognition were removed
       # on 2026-11-16 (backup and rollback: ~/backups/recognition-removal-20261116).
+      # Object storage (institute_common/objectstore.py): local directory on the shared volume until the S3 bucket is approved.
+      OBJECT_STORE_DIR: /var/institute/files/objects
     volumes:
       - institute-files:/var/institute/files
     depends_on: [institute-identity-service]
+    networks: [student-portal-network]
+
+  institute-bulk-import-worker:
+    # Bulk question import (Excel/Word, up to 100,000 questions): reads, validates and imports in the background, in its own container
+    # so large imports never slow down the API or exam taking. The database is the queue; several workers may run side by side.
+    image: institute-paper-service:latest
+    container_name: institute-bulk-import-worker
+    restart: unless-stopped
+    env_file: *institute_env
+    environment:
+      OBJECT_STORE_DIR: /var/institute/files/objects
+    command: ["python", "-m", "inst_paper.bulk_import_worker", "loop"]
+    mem_limit: 1g              # streaming keeps an import far below this; the cap protects the host from a hostile file
+    volumes:
+      - institute-files:/var/institute/files
+    healthcheck:
+      disable: true
+    depends_on: [institute-paper-service]
     networks: [student-portal-network]
 
   institute-exam-service:
@@ -319,6 +339,7 @@ services:
       OPERATIONS_SERVICE_API_KEY: ${INSTITUTE_OPERATIONS_KEY:-}
       PAPER_SERVICE_URL: http://institute-paper-service:8000
       PAPER_SERVICE_API_KEY: ${INSTITUTE_PAPER_KEY:-}
+      OBJECT_STORE_DIR: /var/institute/files/objects     # read pictures stored by the paper service (delivery to students)
       ENROLLMENT_SERVICE_URL: http://institute-enrollment-service:8000
       ENROLLMENT_SERVICE_API_KEY: ${INSTITUTE_ENROLLMENT_KEY:-}
       STUDENT_TEST_SERVICE_URL: http://student-test-service:8001
@@ -331,6 +352,8 @@ services:
       STUDENT_NOTIFICATION_SERVICE_API_KEY: ${STUDENT_NOTIFICATION_SERVICE_KEY:-}
       STUDENT_SERVICE_URL: http://student-authentication-service:8000
       STUDENT_SERVICE_API_KEY: ${STUDENT_AUTH_SERVICE_KEY:-}
+    volumes:
+      - institute-files:/var/institute/files:ro      # object-stored question pictures, delivered to the Student test service
     depends_on: [institute-identity-service, institute-operations-service, institute-paper-service]
     networks: [student-portal-network]
 
@@ -342,6 +365,8 @@ services:
     env_file: *institute_env
     environment: *exam_env
     command: ["sh", "-c", "while true; do python -m inst_exam.worker run-once; sleep 30; done"]
+    volumes:
+      - institute-files:/var/institute/files:ro      # object-stored question pictures, delivered to the Student test service
     healthcheck:
       disable: true
     depends_on: [institute-exam-service]

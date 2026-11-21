@@ -54,7 +54,7 @@ class AttemptAnswer(Base):
     )
 
     selected_answer: Mapped[str | None] = mapped_column(
-        String(10),
+        String(64),          # canonical answer (app/question_types.py): "B", "ACD", "-12.5"
         nullable=True,
     )
 

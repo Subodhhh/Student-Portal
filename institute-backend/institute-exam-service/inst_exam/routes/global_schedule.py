@@ -198,7 +198,8 @@ def _occ_out(db: Session, p: Principal, occ: GlobalTestOccurrence, test: GlobalT
             mine |= _my_subjects(db, p, prov)
     out = {"occurrence_id": occ.occurrence_id, "test_id": test.test_id, "test_name": test.name, "test_status": test.status,
            "exam_type": test.exam_type, "target_class": test.target_class, "duration_minutes": test.duration_minutes,
-           "marking": {"mode": test.marking_mode, "correct": test.marks_correct, "wrong": test.marks_wrong},
+           "marking": {"mode": test.marking_mode, "correct": test.marks_correct, "wrong": test.marks_wrong,
+                       **({"rules": test.marking_rules["rules"]} if test.marking_rules else {})},
            "start_at": occ.start_at, "end_at": occ.end_at, "status": occ.status, "submission_deadline": gg.deadline(test, occ),
            "submissions_open": _open(test, occ), "generated_at": occ.generated_at, "generation_error": occ.generation_error if _is_platform(p) else None,
            "generation_failed_at": occ.generation_failed_at, "generation_attempts": occ.generation_attempts if _is_platform(p) else None,

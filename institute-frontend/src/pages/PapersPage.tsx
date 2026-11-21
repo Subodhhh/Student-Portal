@@ -8,10 +8,13 @@ import { ApiError, API_URL, api, downloadFile } from "../services/api";
 import { MathText } from "../components/MathText";
 import { RecognitionPreview } from "../components/RecognitionPreview";
 import type { FieldName } from "../components/recognitionModel";
+import { marksText, type QuestionVersion } from "../services/questions";
+import { TypeBadge, TypedAnswerView } from "../components/questionBank";
 
-type PV = { paper_version_id: string; paper_id: string; version_no: number; status: string; question_count: number; total_marks: string; created_at: string; published_at?: string | null };
+type PV = { paper_version_id: string; paper_id: string; version_no: number; status: string; question_count: number; total_marks: string | null; created_at: string; published_at?: string | null };
 type PaperRow = { paper_id: string; scope?: string; subject_id: string; title: string; latest_version: PV | null };
-type Q = { question_version_id: string; version_no: number; stem: string; option_a: string; option_b: string; option_c: string; option_d: string; correct_option: string | null; marks_positive: string; marks_negative: string; explanation: string | null; topic: string | null; answers_hidden?: boolean };
+type Q = { question_version_id: string; version_no: number; stem: string; option_a: string; option_b: string; option_c: string; option_d: string; correct_option: string | null; marks_positive: string | null; marks_negative: string | null; explanation: string | null; topic: string | null; answers_hidden?: boolean }
+  & Pick<QuestionVersion, "question_type" | "content" | "answer_key" | "question_id" | "stem_image_id" | "option_a_image_id" | "option_b_image_id" | "option_c_image_id" | "option_d_image_id">;
 type Detail = PaperRow & { questions: Q[]; history: { event: string; from: string | null; to: string | null; reason: string | null; at: string }[] };
 type UploadError = { row: number | null; field: string | null; message: string };
 
@@ -39,7 +42,7 @@ export function PaperDetailPage() {
   });
   return (
     <>
-      <PageHeader crumbs={[<Link key="papers" to="/papers">Question Bank & Papers</Link>, d.data.title]} title={`${d.data.title} — v${v.version_no}`} subtitle={`${v.question_count} questions · ${v.total_marks} marks`}
+      <PageHeader crumbs={[<Link key="papers" to="/papers">Question Bank & Papers</Link>, d.data.title]} title={`${d.data.title} — v${v.version_no}`} subtitle={`${v.question_count} questions · ${v.total_marks === null ? "marks set by the test" : `${v.total_marks} marks`}`}
         actions={<><StatusBadge status={v.status} />
           {/* the server enforces the same rule on every download */}
           {downloadable && <Button variant="secondary" busy={dl.busy} onClick={() => void dl.run(() => downloadFile(`/api/v1/paper-versions/${versionId}/pdf`, "question-paper.pdf"))}>Download Question Paper</Button>}
@@ -58,10 +61,14 @@ export function PaperDetailPage() {
           <h2>Questions (preview — visible to authorized staff only)</h2>
           {d.data.questions.map((q, i) => (
             <article key={q.question_version_id} style={{ borderBottom: "1px solid var(--c-border)", padding: "var(--space-3) 0" }}>
-              <div className="row between"><strong>{i + 1}. <MathText text={q.stem} /></strong>
-                {allow.correct && v.status !== "WITHDRAWN" && <Button variant="secondary" small onClick={() => setEditing({ position: i + 1, q })}>Correct</Button>}</div>
-              <span className="muted small">(+{q.marks_positive} / −{q.marks_negative}{q.topic ? ` · ${q.topic}` : ""})</span>
-              <ol type="A" style={{ margin: "6px 0" }}>{[q.option_a, q.option_b, q.option_c, q.option_d].map((o, k) => <li key={k} style={q.correct_option === "ABCD"[k] ? { fontWeight: 700, color: "var(--c-ok)" } : undefined}><MathText text={o} /></li>)}</ol>
+              <div className="row between"><strong>{i + 1}. <TypeBadge type={q.question_type} /> <MathText text={q.stem} /></strong>
+                {allow.correct && v.status !== "WITHDRAWN" && (!q.question_type || q.question_type === "MCQ_SINGLE")
+                  && <Button variant="secondary" small onClick={() => setEditing({ position: i + 1, q })}>Correct</Button>}</div>
+              <span className="muted small">({marksText(q)}{q.topic ? ` · ${q.topic}` : ""})</span>
+              {q.question_type && q.question_type !== "MCQ_SINGLE"
+                ? <><TypedAnswerView v={q as unknown as QuestionVersion} />
+                  {allow.correct && <p className="small muted">MSQ and NAT questions are corrected in the Question Bank (a new version); then build the paper again.</p>}</>
+                : <ol type="A" style={{ margin: "6px 0" }}>{[q.option_a, q.option_b, q.option_c, q.option_d].map((o, k) => <li key={k} style={q.correct_option === "ABCD"[k] ? { fontWeight: 700, color: "var(--c-ok)" } : undefined}><MathText text={o} /></li>)}</ol>}
               {q.explanation && <p className="small muted">Explanation: <MathText text={q.explanation} /></p>}
               {q.answers_hidden && <p className="small muted">Answer and explanation are hidden until your students' review window opens.</p>}
             </article>
@@ -74,7 +81,7 @@ export function PaperDetailPage() {
           <DataTable rows={versions.data ?? []} rowKey={(x) => x.paper_version_id} empty={versions.loading ? <Spinner /> : <EmptyState title="No versions" />}
             columns={[
               { header: "Version", render: (x) => (x.paper_version_id === versionId ? <strong>v{x.version_no} (this one)</strong> : <Link to={`/papers/${x.paper_version_id}`}>v{x.version_no}</Link>) },
-              { header: "Questions", render: (x) => x.question_count }, { header: "Marks", render: (x) => Number(x.total_marks) },
+              { header: "Questions", render: (x) => x.question_count }, { header: "Marks", render: (x) => (x.total_marks === null ? "Set by the test" : Number(x.total_marks)) },
               { header: "Created", render: (x) => new Date(x.created_at).toLocaleString() }, { header: "Status", render: (x) => <StatusBadge status={x.status} /> },
             ]} />
         </Card>
@@ -131,7 +138,7 @@ function VersionChanges({ current, versions, questions }: { current: PV; version
 function CorrectQuestion({ versionId, position, q, onClose, onSaved }: { versionId: string; position: number; q: Q; onClose: () => void; onSaved: (newVersionId: string) => void }) {
   const act = useAction();
   const [f, setF] = useState({ stem: q.stem, option_a: q.option_a, option_b: q.option_b, option_c: q.option_c, option_d: q.option_d, correct_option: q.correct_option ?? "A",
-    marks_positive: String(q.marks_positive), marks_negative: String(q.marks_negative), explanation: q.explanation ?? "", topic: q.topic ?? "" });
+    marks_positive: q.marks_positive ?? "", marks_negative: q.marks_negative ?? "", explanation: q.explanation ?? "", topic: q.topic ?? "" });
   const [reason, setReason] = useState("");
   const [problems, setProblems] = useState<UploadError[]>([]);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -146,7 +153,8 @@ function CorrectQuestion({ versionId, position, q, onClose, onSaved }: { version
     // Only fields that actually changed are sent; the server re-validates the whole paper.
     const edit: Record<string, unknown> = { position };
     (Object.keys(f) as (keyof typeof f)[]).forEach((k) => {
-      const before = k === "explanation" || k === "topic" ? (q[k] ?? "") : String(q[k as keyof Q]);
+      // fields that may be empty (no explanation, topic or marks of its own) compare as ""
+      const before = k === "explanation" || k === "topic" || k === "marks_positive" || k === "marks_negative" ? (q[k] ?? "") : String(q[k as keyof Q]);
       if (f[k] !== before) edit[k] = f[k];
     });
     try {

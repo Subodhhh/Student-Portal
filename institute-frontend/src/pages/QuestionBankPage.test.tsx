@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { API_URL } from "../services/api";
 import { renderApp } from "../test/renderApp";
 import { fail, me, page, stubApi } from "../test/stubApi";
 
@@ -72,6 +73,7 @@ describe("Question Bank", () => {
 
   it("creates one paper per subject from a multi-subject selection, referencing the questions", async () => {
     const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([q("q1", "phy"), q("q2", "phy"), q("q3", "che")]),
+      "POST /api/v1/papers/check": { ok: true, question_count: 1, total_marks: null, review: [] },
       "POST /api/v1/papers": (_u: URL, init: RequestInit) => {
         const b = JSON.parse(init.body as string);
         return { paper_id: `p-${b.subject_id}`, paper_version_id: `v-${b.subject_id}`, version_no: 1, status: "VALIDATED", question_count: b.question_ids.length, total_marks: "8.00" };
@@ -86,6 +88,58 @@ describe("Question Bank", () => {
     expect(await screen.findByText(/Created/)).toBeTruthy();
     const posts = calls.filter((c) => c.method === "POST" && c.path === "/api/v1/papers").map((c) => c.body as { subject_id: string; question_ids: string[]; branch_id: string; scope: string });
     expect(posts.map((b) => [b.subject_id, b.question_ids, b.branch_id, b.scope])).toEqual([["phy", ["q1", "q2"], "b1", "PROVIDER"], ["che", ["q3"], "b1", "PROVIDER"]]);
+  });
+
+  it("shows possible duplicates before building, and builds only when asked again", async () => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([q("q1", "phy"), q("q2", "phy", { branch_id: null })]),
+      "POST /api/v1/papers/check": { ok: true, question_count: 2, total_marks: null,
+        review: [{ positions: [1, 2], reason: "Same question with its options in a different order." }] },
+      "POST /api/v1/papers": { paper_id: "p", paper_version_id: "v", version_no: 1, status: "VALIDATED", question_count: 2, total_marks: null } });
+    renderApp("/papers");
+    expect(await screen.findByText("Provider-wide")).toBeTruthy();                       // the origin of a question without a branch
+    for (const id of ["q1", "q2"]) fireEvent.click(await screen.findByLabelText(`Select question: Question ${id}?`));
+    fireEvent.click(screen.getByRole("button", { name: "Create paper from selection" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create paper from selected questions" });
+    fireEvent.change(within(dialog).getByLabelText(/Physics paper title/), { target: { value: "Physics set" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create paper" }));
+    expect(await within(dialog).findByText(/Same question with its options in a different order/)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST" && c.path === "/api/v1/papers")).toBe(false);          // nothing built yet
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create anyway" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/api/v1/papers")).toBe(true));
+  });
+
+  it("names the branch a shared question came from, and previews its pictures through the authorised endpoint", async () => {
+    const pictured = q("q1", "phy", { branch_id: "b2", origin_branch_name: "Thane Branch", can_edit: false,
+      latest: { ...q("q1", "phy").latest, stem: "", stem_image_id: "img-stem", option_b: "", option_b_image_id: "img-b" } });
+    stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([pictured]),
+      "/api/v1/questions/q1": { question: pictured, versions: [pictured.latest], usage: [], usage_elsewhere: 0 } });
+    renderApp("/papers");
+    const row = (await screen.findByText("Thane Branch")).closest("tr")!;                  // not "Another branch"
+    fireEvent.click(within(row).getByRole("button", { name: "Preview" }));
+    const dialog = await screen.findByRole("dialog", { name: "Question preview" });
+    expect((within(dialog).getByAltText("Question picture") as HTMLImageElement).src).toBe(`${API_URL}/api/v1/question-images/img-stem`);
+    expect((within(dialog).getByAltText("Option B picture") as HTMLImageElement).src).toBe(`${API_URL}/api/v1/question-images/img-b`);
+  });
+
+  it("refuses identical questions, naming both, and offers no way around it", async () => {
+    const same = q("q2", "phy", { scope: "GLOBAL", provider_id: null, branch_id: null, latest: { ...q("q1", "phy").latest, question_id: "q2" } });
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([q("q1", "phy"), same]),
+      "POST /api/v1/papers/check": () => fail(422, { code: "INVALID_QUESTIONS", message: "The paper was not created: fix the listed questions.",
+        errors: [{ position: 2, message: "Same question as position 1." }] }),
+      "POST /api/v1/papers": { paper_id: "p", paper_version_id: "v", version_no: 1, status: "VALIDATED", question_count: 2, total_marks: null } });
+    renderApp("/papers");
+    await screen.findAllByText("Question q1?");
+    for (const box of screen.getAllByLabelText("Select question: Question q1?")) fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Create paper from selection" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create paper from selected questions" });
+    fireEvent.change(within(dialog).getByLabelText(/Physics paper title/), { target: { value: "Physics set" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create paper" }));
+    expect(await within(dialog).findByText("The same question is selected twice. Unselect one question of each pair below, then create the paper.")).toBeTruthy();
+    expect(within(dialog).getByText(/Question 1 of your selection/)).toBeTruthy();
+    expect(within(dialog).getByText(/Question 2 of your selection/)).toBeTruthy();
+    expect(within(dialog).getByText(/Identical question \(same text, options and pictures\)/)).toBeTruthy();
+    expect((within(dialog).getByRole("button", { name: "Create paper" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.path === "/api/v1/papers")).toBe(false);
   });
 
   it("lets the Super Admin add a platform question, and hides edit actions on questions it cannot change", async () => {
@@ -107,7 +161,9 @@ describe("Question Bank", () => {
     fireEvent.click(within(d).getByRole("button", { name: "Add question" }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.path === "/api/v1/questions")).toBeTruthy());
     const body = calls.find((c) => c.method === "POST" && c.path === "/api/v1/questions")!.body as Record<string, unknown>;
-    expect([body.scope, body.branch_id, body.chapter, body.marks_positive, body.subject_id]).toEqual(["GLOBAL", undefined, "Laws of Motion", "4", "phy"]);
+    // marks are optional and no longer pre-filled: left empty, the question carries no marks and each test decides them
+    expect([body.scope, body.branch_id, body.chapter, body.marks_positive, body.marks_negative, body.subject_id])
+      .toEqual(["GLOBAL", undefined, "Laws of Motion", null, null, "phy"]);
   });
 });
 

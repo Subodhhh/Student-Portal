@@ -216,6 +216,8 @@ def get_test_for_start(
             "option_b_image": question.option_b_image,
             "option_c_image": question.option_c_image,
             "option_d_image": question.option_d_image,
+            # MSQ options / NAT format only: the key (answer_key, scheme, correct_answer) is never part of what a student gets
+            "content": question.content,
         }
         for question in questions
     ]

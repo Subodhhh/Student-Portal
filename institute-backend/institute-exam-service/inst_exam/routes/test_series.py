@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit
+from institute_common.core.marking import MarkingRulesIn, check_marking_choice, rules_problem
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
 from institute_common.core.class_levels import TargetClass, class_target
@@ -60,9 +61,10 @@ class SeriesIn(Strict):
     window_minutes: int = Field(gt=0, le=1440)
     duration_minutes: int = Field(gt=0, le=720)
     generate_lead_minutes: int = Field(default=60, ge=0, le=10080)
-    marking_mode: str = Field(default="UNIFORM", pattern="^(UNIFORM|PER_QUESTION)$")
+    marking_mode: str = Field(default="UNIFORM", pattern="^(UNIFORM|PER_QUESTION|RULES)$")
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
+    marking_rules: MarkingRulesIn | None = None      # RULES: copied to every occurrence's plan (see routes/tests.TestDraftIn)
     exam_type: Label = None
     target_class: TargetClass = None
     shuffle_questions: bool = False      # copied to every occurrence's plan (see routes/tests.TestDraftIn)
@@ -90,6 +92,11 @@ class SeriesIn(Strict):
             raise ValueError("the duration must fit inside the window each test is open")
         if len({s.subject_id for s in self.subjects}) != len(self.subjects):
             raise ValueError("a subject is selected twice")
+        check_marking_choice(self.marking_mode, self.marks_correct, self.marks_wrong, self.marking_rules)
+        if self.marking_rules is not None:
+            problem = rules_problem(self.marking_rules.to_storage(), [s.subject_id for s in self.subjects])
+            if problem:
+                raise ValueError(problem)
         if self.marking_mode == "UNIFORM" and (self.marks_correct is None or self.marks_wrong is None):
             raise ValueError("uniform marking needs marks for a correct and for a wrong answer")
         if self.marking_mode == "PER_QUESTION" and (self.marks_correct is not None or self.marks_wrong is not None):
@@ -257,7 +264,7 @@ def _new_plan(db: Session, s: TestSeries, a: daily.TestAudienceIn, d: date, star
                     duration_minutes=s.duration_minutes, start_at=start, end_at=end,
                     generate_at=start - timedelta(minutes=s.generate_lead_minutes), auto_publish=True, status="ACTIVE",
                     audience_type="TARGETED", marking_mode=s.marking_mode, marks_correct=s.marks_correct, marks_wrong=s.marks_wrong,
-                    exam_type=s.exam_type, target_class=s.target_class, shuffle_questions=s.shuffle_questions, series_id=s.series_id,
+                    marking_rules=s.marking_rules, exam_type=s.exam_type, target_class=s.target_class, shuffle_questions=s.shuffle_questions, series_id=s.series_id,
                     created_by=s.created_by)
     db.add(plan)
     db.flush()
@@ -293,7 +300,8 @@ def _out(db: Session, s: TestSeries, with_tests: bool = False, viewer: Principal
     out = {"series_id": s.series_id, "name": s.name, "description": s.description, "status": s.status, "provider_id": s.provider_id,
            "branch_id": s.branch_id, "month": s.month, "weekdays": s.weekdays, "start_time": s.start_time, "timezone": s.timezone,
            "window_minutes": s.window_minutes, "duration_minutes": s.duration_minutes, "generate_lead_minutes": s.generate_lead_minutes,
-           "marking_mode": s.marking_mode, "marks_correct": s.marks_correct, "marks_wrong": s.marks_wrong, "exam_type": s.exam_type,
+           "marking_mode": s.marking_mode, "marks_correct": s.marks_correct, "marks_wrong": s.marks_wrong,
+           "marking_rules": s.marking_rules, "exam_type": s.exam_type,
            "target_class": s.target_class, "shuffle_questions": s.shuffle_questions, "subjects": s.subjects, "branches": sorted(names.values()),
            "audience": s.audience, "planned_count": len(planned), "scheduled_count": len(plans), "missing_occurrences": missing,
            "states": states, "last_generated_at": s.last_generated_at, "last_generation_error": s.last_generation_error,
@@ -354,7 +362,9 @@ def create_series(body: SeriesIn, idempotency_key: str = Header(min_length=8, ma
         s = TestSeries(provider_id=a.provider_id, branch_id=a.branch_ids[0], name=body.name, description=body.description, month=body.month,
                        weekdays=sorted(body.weekdays), start_time=body.start_time, timezone=body.timezone, window_minutes=body.window_minutes,
                        duration_minutes=body.duration_minutes, generate_lead_minutes=body.generate_lead_minutes, marking_mode=body.marking_mode,
-                       marks_correct=body.marks_correct, marks_wrong=body.marks_wrong, exam_type=body.exam_type, target_class=body.target_class,
+                       marks_correct=body.marks_correct, marks_wrong=body.marks_wrong,
+                       marking_rules=body.marking_rules.to_storage() if body.marking_rules else None,
+                       exam_type=body.exam_type, target_class=body.target_class,
                        shuffle_questions=body.shuffle_questions, audience=a.model_dump(mode="json"), subjects=[x.model_dump(mode="json") for x in body.subjects],
                        client_request_id=idempotency_key, created_by=p.staff_id)
         db.add(s)

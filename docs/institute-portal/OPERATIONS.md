@@ -18,11 +18,51 @@ Each service documents its variables in its `.env.example`; real `.env` files ar
 | `REDIS_URL` | shared Redis (Institute keys are `inst_` prefixed) |
 | `CORS_ORIGINS`, `FRONTEND_BASE_URL` | explicit Institute UI origin(s) and the base for email links |
 | `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_SAMESITE` | `strict` works only when the UI and API are same-site (see blockers) |
+| `STUDENT_QUESTION_TYPES` (exam service) | question types exams may deliver: `MCQ_SINGLE` (default). Add `MCQ_MULTI,NUMERICAL` only after the Student test, attempt, result and ranking services with MSQ / NAT support (and their migrations g1 / h1 / i1) are deployed; generation refuses a paper with a type not listed |
 | `ARGON2_*`, `HIBP_ENABLED` | password hashing cost and optional breached-password lookup |
 | `EMAIL_BACKEND` (`console` dev only, `smtp`), `SMTP_*`, `EMAIL_FROM` | provider-agnostic email |
 | `STUDENT_SERVICE_URL/API_KEY`, `STUDENT_TEST_SERVICE_URL/API_KEY`, `STUDENT_RESULT_SERVICE_URL/API_KEY`, `STUDENT_ATTEMPT_SERVICE_URL/API_KEY`, `STUDENT_NOTIFICATION_SERVICE_URL/API_KEY` | outbound service keys, one per receiving service (the test-service pair is also used for answer-key corrections, the result-service pair for result corrections) |
 | `INSTITUTE_SERVICE_API_KEYS` (set on each *student* service: authentication, test, result, attempt, notification) | inbound keys accepted by `/internal/v1`; empty disables the API (404) |
 | `FILE_STORE_DIR`, `MAX_UPLOAD_BYTES`, `MAX_PAPER_QUESTIONS` | private upload storage and limits |
+| `OBJECT_STORE` (`local` default, `s3`), `OBJECT_STORE_DIR`, `OBJECT_STORE_BUCKET`, `OBJECT_STORE_REGION`, `OBJECT_STORE_ENDPOINT_URL`, `OBJECT_STORE_PREFIX`, `OBJECT_STORE_SIGNED_URL_SECONDS` | object storage for question pictures (`institute_common/objectstore.py`); set on the **paper and exam services and the exam worker** (the worker delivers pictures to the Student test service). Credentials are not settings: see below |
+
+### Object storage: connecting the real S3 bucket (only after approval)
+
+Development and tests use `OBJECT_STORE=local` (a private directory) or moto's in-memory fake; nothing talks to AWS until these
+steps are done. Existing pictures stay in the database (`storage='db'`); only new object-stored pictures use the bucket.
+
+1. **Bucket**: create ONE bucket in the chosen region (e.g. `ap-south-1`), *Block all public access* ON, *Object Ownership* "Bucket owner
+   enforced", default encryption SSE-S3 (the free default). Versioning optional. No bucket policy granting public reads, no website hosting.
+2. **Lifecycle** (keeps storage free of leftovers): expire objects under `staging/` after 7 days (used by bulk-import previews, Phase D).
+3. **Access**: an IAM user (or, better, a role for the server) with exactly this policy - nothing account-wide:
+
+       {"Version": "2012-10-17", "Statement": [
+         {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+          "Resource": "arn:aws:s3:::<bucket>/<prefix>*"},
+         {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::<bucket>",
+          "Condition": {"StringLike": {"s3:prefix": "<prefix>*"}}}]}
+
+   `ListBucket` is what lets a missing object answer "not found" instead of "access denied".
+4. **Credentials**: give the paper service, exam service and exam worker `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` through the
+   deployment's secret store (or an instance/task role, which needs no keys). Never in `.env.example`, compose files or the repository.
+5. **Settings** on the same three services: `OBJECT_STORE=s3`, `OBJECT_STORE_BUCKET=<bucket>`, `OBJECT_STORE_REGION=<region>`,
+   `OBJECT_STORE_PREFIX=prod/` (or `qa/`), optionally `OBJECT_STORE_SIGNED_URL_SECONDS` (default 300).
+6. **Check**: open a question picture as staff: the API answers `307` to a signed URL that stops working after its lifetime; the same URL
+   without the signature returns `AccessDenied`.
+7. **Free tier**: S3's free tier is 5 GB-month of storage and limited requests for 12 months; beyond it storage and requests are billed.
+   Watch the bucket size; set an AWS Budget alert before going live.
+
+Cloudflare R2 later: create an R2 bucket and an API token scoped to it, set `OBJECT_STORE_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`,
+`OBJECT_STORE_REGION=auto` and the token as `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. No code changes. Objects already in S3 must be
+copied first (the database records `storage='s3'` plus the key; a different store reports them as unavailable rather than guessing).
+
+### Local development on plain http://localhost (session cookie)
+
+Chrome refuses the `__Host-` session cookie on plain `http://localhost`. On a local development stack set
+`SESSION_COOKIE_LOCAL_HTTP=true` (with `APP_ENV=dev`): browsers whose `Origin` is `http://localhost`, `127.0.0.1` or `[::1]` then get the
+same Secure, HttpOnly, SameSite session cookie without the prefix (`inst_sid`); every other request, e.g. https through a tunnel, keeps
+`__Host-inst_sid`. The setting is refused when `APP_ENV` is `qa` or `prod`. Every Institute service reads the session, so all of them need
+the setting (recreate them after changing it); signing in again afterwards is expected.
 
 ### Service-key rotation (no downtime)
 
@@ -52,6 +92,20 @@ no `UPDATE/DELETE` on append-only history tables, `SELECT/INSERT/UPDATE` on the 
 `students`; a separate *migration* role for DDL. No superuser for the application.
 
 ## Background work
+
+**Bulk question import worker** (`institute-bulk-import-worker`, image `institute-paper-service`, `python -m inst_paper.bulk_import_worker loop`):
+reads, validates and imports uploaded Excel/Word question files. The database is its queue (no Redis); several workers may run; a crashed
+worker's job is resumed after its lease (`BULK_IMPORT_LEASE_SECONDS`, default 300 s). It needs the same `DATABASE_URL` and object-store
+settings as the paper service. Unconfirmed previews and their files are deleted after `BULK_IMPORT_PREVIEW_DAYS` (7). Run it with a memory
+cap (compose: `mem_limit: 1g`). Tuning: `BULK_IMPORT_BATCH_SIZE`, `BULK_IMPORT_MAX_ROWS`, `BULK_IMPORT_MAX_BYTES`, `BULK_IMPORT_MAX_ACTIVE_JOBS`.
+
+Three import targets (`docs/institute-portal/THREE_SCOPE_QUESTION_BANK_PLAN.md`): **GLOBAL** (platform bank, platform administrators;
+pictures become platform assets under `question-images/platform/<sha256>`), **provider-wide** (the provider's Provider Admin; `branch_id`
+NULL) and **branch** (unchanged). Every provider question is shared with all branches of its provider. `BULK_IMPORT_MAX_ACTIVE_JOBS`
+counts per provider, and separately for the platform. Deploying this needs paper migration `0014_three_scope_question_bank` (relaxing
+only: the old code runs on it, so migrate first, then roll out paper service, bulk worker, gateway and frontend). Before rolling the
+code back, finish or cancel GLOBAL and provider-wide imports; the `0014` downgrade refuses while provider-wide questions, platform
+pictures or such imports exist.
 
 `institute-worker` runs `python -m app.worker run-once` every 60 seconds: it generates plans whose `generate_at` has passed, delivers
 the exam outbox, delivers queued student notifications, syncs assignment status from the attempt service and queues one "result available" notice per student.

@@ -3,9 +3,9 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.test_result import TestResult
 from app.services.global_results import SNAPSHOT_FILTER
 from app.services.official import OFFICIAL_SQL
-from app.models.test_result import TestResult
 
 
 def get_attempt(db: Session, attempt_id: UUID, student_id: str):
@@ -76,6 +76,8 @@ def get_questions_with_answers(
             q.subject,
             q.question_text,
             q.question_type,
+            q.content,
+            q.answer_key,
             q.option_a,
             q.option_b,
             q.option_c,

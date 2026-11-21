@@ -87,16 +87,19 @@ def resolve_submission(db: Session, sub: GlobalPaperSubmission, class_level=_LOO
 
 def unusable(db: Session, test: GlobalTest, version: PaperVersion | None) -> str | None:
     """Why a submitted paper version cannot be delivered (None = usable): not approved/published by the deadline, no questions, or a
-    mark that is not a whole number under per-question marking (the student services score whole marks)."""
+    under per-question marking, a question without marks or a mark that is not a whole number. UNIFORM and RULES marking take
+    the marks from the test, so the questions' own marks do not matter."""
     from decimal import Decimal
     if not version or version.status not in READY:
         return "NOT_APPROVED"
     if not version.question_count:
         return "NO_QUESTIONS"
-    if test.marking_mode != "UNIFORM":
+    if test.marking_mode == "PER_QUESTION":
         for plus, minus in db.execute(select(QuestionVersion.marks_positive, QuestionVersion.marks_negative)
                                       .join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
                                       .where(PaperVersionQuestion.paper_version_id == version.paper_version_id)):
+            if plus is None or minus is None:
+                return "UNMARKED_QUESTIONS"
             if any(Decimal(v) != Decimal(v).to_integral_value() for v in (plus, minus)):
                 return "FRACTIONAL_MARKS"
     return None
@@ -225,7 +228,7 @@ def _plan_for_occurrence(db: Session, test: GlobalTest, occ: GlobalTestOccurrenc
     plan = ExamPlan(provider_id=provider_id, branch_id=branch_id, name=test.name, description=test.description,
                     duration_minutes=test.duration_minutes, start_at=occ.start_at, end_at=occ.end_at, auto_publish=True, status="ACTIVE",
                     audience_type="STUDENTS", marking_mode=test.marking_mode, marks_correct=test.marks_correct, marks_wrong=test.marks_wrong,
-                    exam_type=test.exam_type, target_class=test.target_class, global_test_id=test.test_id,
+                    marking_rules=test.marking_rules, exam_type=test.exam_type, target_class=test.target_class, global_test_id=test.test_id,
                     global_occurrence_id=occ.occurrence_id, client_request_id=key, created_by=test.created_by)
     db.add(plan)
     try:
@@ -360,7 +363,8 @@ def _finish(db: Session, occ: GlobalTestOccurrence, report: dict, now: datetime)
 
 
 REASONS = {"NOT_APPROVED": "was not approved by the deadline", "NO_QUESTIONS": "has no questions",
-           "FRACTIONAL_MARKS": "has marks that are not whole numbers"}
+           "FRACTIONAL_MARKS": "has marks that are not whole numbers",
+           "UNMARKED_QUESTIONS": "has questions without marks (this test uses each question's own marks)"}
 
 
 def _notify_missing_papers(db: Session, test: GlobalTest, occ: GlobalTestOccurrence, subject_order: list[UUID], names: dict,

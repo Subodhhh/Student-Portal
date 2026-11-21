@@ -1804,3 +1804,40 @@
 }
 
 .question-image.option-image { display: block; max-width: min(100%, 320px); max-height: 200px; margin-top: 6px; }
+
+/* MSQ review: the options with the student's choice and the correct ones */
+.question-review-note {
+  color: #475569;
+  font-size: 0.9rem;
+  margin: 8px 0;
+}
+
+.question-review-options {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.question-review-options li {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.question-review-options li.correct-option {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.question-review-options li.wrong-option {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+.question-review-tag {
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 600;
+}

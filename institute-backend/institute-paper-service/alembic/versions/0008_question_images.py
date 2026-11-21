@@ -23,6 +23,7 @@ depends_on = None
 
 TABLE = "question_image_assets"
 NOW = sa.text("CURRENT_TIMESTAMP")
+LATER_COLUMNS = {"storage_key"}          # 0012_object_storage_keys
 IMAGE_COLUMNS = ("stem_image_id", "option_a_image_id", "option_b_image_id", "option_c_image_id", "option_d_image_id")
 
 
@@ -48,7 +49,8 @@ def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     if TABLE in inspector.get_table_names():
         want = {c.name for c in _columns()}
-        have = {c["name"] for c in inspector.get_columns(TABLE)}
+        # columns a LATER revision adds are expected on a table the baseline created from today's models
+        have = {c["name"] for c in inspector.get_columns(TABLE)} - LATER_COLUMNS
         if have != want:
             raise RuntimeError(f"{TABLE} already exists but differs from what 0008_question_images creates (missing "
                                f"{sorted(want - have)}, unexpected {sorted(have - want)}). Fix the table by hand before upgrading.")

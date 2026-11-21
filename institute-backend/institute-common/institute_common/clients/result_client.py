@@ -1,4 +1,8 @@
-"""Client for the Student result service (internal API, service key): reads results and applies corrections."""
+"""Client for the Student result service (internal API, service key): reads results and applies corrections.
+
+Marks may be decimals (e.g. 3.25). Responses are parsed with JSON numbers that have a fraction read as `Decimal` (never float), so
+sums, comparisons and rank ratios computed from them stay exact. Whole numbers stay `int`, exactly as before."""
+from decimal import Decimal
 from typing import Protocol
 
 from institute_common.config import settings
@@ -21,7 +25,8 @@ class ResultRejected(Exception):
 class ResultClient(Protocol):
     def exam_results(self, test_id: str) -> list[dict]: ...
     def exam_subject_results(self, test_id: str) -> list[dict]: ...
-    def adjust(self, *, test_id: str, student_id: str, obtained_marks: int, reason: str, actor: str, correction_ref: str,
+    def exam_question_results(self, test_id: str) -> list[dict]: ...
+    def adjust(self, *, test_id: str, student_id: str, obtained_marks: int | str, reason: str, actor: str, correction_ref: str,
                subjects: list[dict] | None = None) -> dict: ...
     def reevaluate(self, *, test_id: str, reason: str, actor: str, correction_ref: str, paper_ids: list[str] | None = None) -> dict: ...
 
@@ -40,7 +45,7 @@ class HttpResultClient:
             raise ResultServiceError("Result service unavailable") from exc
         if r.status_code >= 400:
             raise ResultRejected(r.status_code, _detail(r))
-        return r.json()
+        return r.json(parse_float=Decimal)
 
     def exam_results(self, test_id: str) -> list[dict]:
         try:
@@ -52,6 +57,13 @@ class HttpResultClient:
         """Per student, the marks of every subject ({"student_id", "subjects": [{"subject", ...}]}), for subject-scoped readers."""
         try:
             return self._call("GET", f"/tests/{test_id}/results/subjects")
+        except ResultRejected as exc:
+            raise ResultServiceError(f"result service refused the request ({exc.status})") from exc
+
+    def exam_question_results(self, test_id: str) -> list[dict]:
+        """Per question: correct / incorrect / unanswered counts, average marks and option choices (MCQ, MSQ)."""
+        try:
+            return self._call("GET", f"/tests/{test_id}/results/questions")
         except ResultRejected as exc:
             raise ResultServiceError(f"result service refused the request ({exc.status})") from exc
 
@@ -82,6 +94,9 @@ class UnconfiguredResultClient:
         raise ResultServiceError("Result service is not configured.")
 
     def exam_subject_results(self, test_id):
+        raise ResultServiceError("Result service is not configured.")
+
+    def exam_question_results(self, test_id):
         raise ResultServiceError("Result service is not configured.")
 
     def adjust(self, **kw):

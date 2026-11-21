@@ -17,41 +17,55 @@ from sqlalchemy.orm import Session
 
 from institute_common.database import utcnow
 from institute_common.models.papers import QuestionImageAsset, QuestionVersion
+from institute_common.objectstore import ObjectMissing, ObjectStore, ObjectStoreError, question_image_key, store_named, stored_asset_bytes
 
 from inst_paper.services.question_images import ExtractedImage
 
 UNREFERENCED_RETENTION = timedelta(days=7)        # longer than any open preview; review drafts re-store pictures when reopened
 
 
-def store_images(db: Session, provider_id: UUID, images: Iterable[ExtractedImage], staff_id: UUID, ip: str | None) -> dict[str, UUID]:
-    """Store every picture not yet stored for this provider. Returns {sha256: asset_id} for all of them (new and existing)."""
+def store_images(db: Session, provider_id: UUID | None, images: Iterable[ExtractedImage], staff_id: UUID, ip: str | None,
+                 object_store: ObjectStore | None = None) -> dict[str, UUID]:
+    """Store every picture not yet stored for this provider - or for the platform when `provider_id` is None (GLOBAL imports).
+    Returns {sha256: asset_id} for all of them (new and existing).
+
+    Without `object_store` the bytes go into the database (storage "db"), as every existing upload does. With one, the bytes are put
+    into that store FIRST under a server-made key (question-images/<provider>/<sha256>), then the row pointing at them is added; a
+    retry after a failure puts the same key again, so nothing is duplicated."""
     wanted = {img.sha256: img for img in images}
     if not wanted:
         return {}
+    owner = QuestionImageAsset.provider_id == provider_id if provider_id else QuestionImageAsset.provider_id.is_(None)
     found = dict(db.execute(select(QuestionImageAsset.checksum, QuestionImageAsset.asset_id).where(
-        QuestionImageAsset.provider_id == provider_id, QuestionImageAsset.checksum.in_(wanted))).all())
+        owner, QuestionImageAsset.checksum.in_(wanted))).all())
     for sha, img in wanted.items():
         if sha in found:
             continue
+        if object_store is None:
+            where = {"storage": "db", "image_data": img.data}
+        else:
+            key = question_image_key(provider_id, sha)
+            object_store.put(key, img.data, img.mime)
+            where = {"storage": object_store.name, "storage_key": key}
         asset = QuestionImageAsset(provider_id=provider_id, file_name=img.name[:255], mime_type=img.mime, file_size=len(img.data),
-                                   width=img.width, height=img.height, checksum=sha, storage="db", image_data=img.data,
-                                   created_by=staff_id, created_ip=ip)
+                                   width=img.width, height=img.height, checksum=sha, created_by=staff_id, created_ip=ip, **where)
         try:
             with db.begin_nested():                    # a concurrent upload of the same picture wins the unique key: reuse its asset
                 db.add(asset)
                 db.flush()
             found[sha] = asset.asset_id
         except IntegrityError:
-            found[sha] = db.scalar(select(QuestionImageAsset.asset_id).where(
-                QuestionImageAsset.provider_id == provider_id, QuestionImageAsset.checksum == sha))
+            found[sha] = db.scalar(select(QuestionImageAsset.asset_id).where(owner, QuestionImageAsset.checksum == sha))
     return found
 
 
 def image_bytes(asset: QuestionImageAsset) -> bytes:
-    """The picture's original bytes, from wherever `storage` says they live."""
-    if asset.storage == "db" and asset.image_data is not None:
-        return asset.image_data
-    raise LookupError(f"picture {asset.asset_id} has no stored bytes ({asset.storage})")
+    """The picture's original bytes, from wherever `storage` says they live (database or object store). LookupError when they are
+    gone; ObjectStoreError when the object store cannot be reached."""
+    try:
+        return stored_asset_bytes(asset)
+    except ObjectMissing as exc:
+        raise LookupError(f"picture {asset.asset_id} has no stored bytes ({asset.storage})") from exc
 
 
 def referenced_by_question(asset_id) -> "object":
@@ -66,8 +80,18 @@ def sweep_unreferenced(db: Session, dry_run: bool = True, now=None) -> dict:
     cutoff = (now or utcnow()) - UNREFERENCED_RETENTION
     stale = db.scalars(select(QuestionImageAsset.asset_id).where(
         QuestionImageAsset.created_at < cutoff, ~referenced_by_question(QuestionImageAsset.asset_id))).all()
+    deleted, failed = 0, 0
     if not dry_run:
         for asset_id in stale:
-            db.delete(db.get(QuestionImageAsset, asset_id))
+            asset = db.get(QuestionImageAsset, asset_id)
+            if asset.storage != "db":
+                # The object goes first: if that fails the row stays, so the next run retries - never a row-less (orphaned) object.
+                try:
+                    store_named(asset.storage).delete(asset.storage_key)
+                except ObjectStoreError:
+                    failed += 1
+                    continue
+            db.delete(asset)
+            deleted += 1
         db.commit()
-    return {"unused_pictures": len(stale), "deleted": 0 if dry_run else len(stale), "dry_run": dry_run}
+    return {"unused_pictures": len(stale), "deleted": deleted, "failed": failed, "dry_run": dry_run}

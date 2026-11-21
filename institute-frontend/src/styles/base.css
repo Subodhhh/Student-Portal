@@ -1373,3 +1373,19 @@ button.chip {
 .recognition-completeness { width: 100%; margin: 0; }
 .question-picture { margin: 4px 0; }
 .question-picture img { max-width: min(100%, 520px); height: auto; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }
+
+/* Bulk question import (pages/BulkImportPage.tsx, components/bulkImportPreview.tsx) */
+.selected-file { padding: 8px 12px; border: 1px solid var(--c-border); border-radius: 6px; }
+.upload-progress progress { width: min(100%, 360px); vertical-align: middle; }
+.import-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.import-row { border: 1px solid var(--c-border); border-left: 4px solid var(--c-border); border-radius: 6px; padding: 10px 12px; }
+.import-row.problem { border-left-color: var(--c-danger, #b42318); }
+.import-row.duplicate { border-left-color: var(--c-warn, #b54708); }
+.import-row p { margin: 6px 0; }
+.import-options { margin: 4px 0; padding-left: 22px; }
+.import-options li.correct { font-weight: 650; }
+.import-thumb { display: block; max-width: min(100%, 260px); max-height: 160px; margin: 4px 0; border: 1px solid var(--c-border); border-radius: 4px; background: #fff; }
+.import-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.import-issues li { border-top: 1px solid var(--c-border); padding-top: 10px; }
+.error-list { color: var(--c-danger, #b42318); margin: 4px 0; }
+.row.wrap { flex-wrap: wrap; align-items: flex-end; }

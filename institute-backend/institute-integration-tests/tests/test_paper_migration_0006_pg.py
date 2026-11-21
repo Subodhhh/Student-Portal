@@ -26,7 +26,7 @@ STUDENT_SCHEMA = BACKEND.parent / "tests" / "e2e" / "student_chain_schema.sql"
 COMMON = BACKEND / "institute-common"
 BEFORE_PAPER = ("identity", "organization", "academics", "enrollment")          # the order the deployments and the E2E harness use
 AFTER_PAPER = ("exam", "operations")
-PAPER_HEAD = "0009_picture_recognition_jobs"                                             # the latest paper revision
+PAPER_HEAD = "0015_question_types"                                                                 # the latest paper revision
 
 
 @pytest.fixture()

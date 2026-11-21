@@ -20,6 +20,7 @@ import { ResultDetailPage, ResultsPage } from "./pages/ResultsPages";
 import { AuditPage, BillingPage, NotificationsPage, SettingsPage, SupportPage } from "./pages/OpsPages";
 import { PaperDetailPage } from "./pages/PapersPage";
 import QuestionBankPage from "./pages/QuestionBankPage";
+import BulkImportPage, { BulkImportJobPage } from "./pages/BulkImportPage";
 import { BranchDetailPage, ProviderDetailPage, ProvidersPage } from "./pages/ProvidersPage";
 import RoleManagementPage, { RoleCategoryPage } from "./pages/StaffPage";
 import StudentsPage from "./pages/StudentsPage";
@@ -61,6 +62,10 @@ export function AppRoutes() {
           <Route element={<ProtectedRoute perm="batch.manage" />}><Route path="batches" element={<BatchesPage />} /></Route>
           {/* old address of the combined subjects/batches page */}
           <Route path="academics" element={<Navigate to="/subjects" replace />} />
+          <Route element={<ProtectedRoute perm="question.manage" />}>
+            <Route path="papers/bulk-import" element={<BulkImportPage />} />
+            <Route path="papers/bulk-import/:jobId" element={<BulkImportJobPage />} />
+          </Route>
           <Route element={<ProtectedRoute perm="paper.read" />}>
             <Route path="papers" element={<QuestionBankPage />} />
             <Route path="papers/:versionId" element={<PaperDetailPage />} />

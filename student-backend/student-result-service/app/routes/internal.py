@@ -5,6 +5,7 @@ and calls this with a service key; this service only returns the stored, already
 rows. No writes, no answer content."""
 import hmac
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -14,10 +15,11 @@ from sqlalchemy.orm import Session
 from app.services.official import official
 from app.config import settings
 from app.database import get_db
+from app.marks import Marks, jsonable, marks_to_json
 from app.models.result_history import ResultHistory
 from app.models.test_result import TestResult
 from app.repositories.result_repository import get_questions_with_answers
-from app.services import global_results, reevaluation
+from app.services import global_results, reevaluation, scoring
 
 MAX_ROWS = 5000
 
@@ -38,7 +40,7 @@ def exam_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
     # official results only: one per student (an authorized retake replaces its original once evaluated)
     rows = db.scalars(select(TestResult).where(TestResult.test_id == test_id, official).order_by(TestResult.obtained_marks.desc()).limit(MAX_ROWS)).all()
     return [
-        {"student_id": r.student_id, "total_marks": r.total_marks, "obtained_marks": r.obtained_marks,
+        {"student_id": r.student_id, "total_marks": marks_to_json(r.total_marks), "obtained_marks": marks_to_json(r.obtained_marks),
          "attempted_questions": r.attempted_questions, "correct_answers": r.correct_answers,
          "incorrect_answers": r.incorrect_answers, "unanswered_questions": r.unanswered_questions,
          "accuracy": r.accuracy, "submitted_at": r.created_at.isoformat()}
@@ -59,17 +61,47 @@ def exam_subject_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
         by_subject: dict[str, list] = {}
         for q in get_questions_with_answers(db=db, attempt_id=r.attempt_id):
             by_subject.setdefault(q["subject"] or "Other", []).append(q)
-        subjects = [{"subject": name, **reevaluation.score(qs)} for name, qs in by_subject.items()]
+        subjects = [{"subject": name, **reevaluation.score(qs)} for name, qs in by_subject.items()]     # marks stay Decimal until jsonable()
         row = {"student_id": r.student_id, "submitted_at": r.created_at.isoformat(), "subjects": subjects}
         if global_test:
             # each subject's paper (None without paper choice) and attributed adjustment (included in its obtained_marks); an
             # unattributed adjustment is reported on its own, never spread over subjects
             snap, deltas = global_results.snapshot(db, r.attempt_id), global_results.deltas(db, r.result_id, r.subject_adjustments)
             for x in subjects:
-                x["paper_id"], x["adjustment"] = snap.get(x["subject"]), (deltas or {}).get(x["subject"], 0)
+                x["paper_id"], x["adjustment"] = snap.get(x["subject"]), (deltas or {}).get(x["subject"], Decimal(0))
                 x["obtained_marks"] += x["adjustment"]
-            row["unattributed_adjustment"] = r.obtained_marks - sum(x["obtained_marks"] for x in subjects) if deltas is None else None
-        out.append(row)
+            row["unattributed_adjustment"] = r.obtained_marks - sum((x["obtained_marks"] for x in subjects), Decimal(0)) if deltas is None else None
+        out.append(jsonable(row))
+    return out
+
+
+@router.get("/tests/{test_id}/results/questions")
+def exam_question_results(test_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Per question of the exam (in order), over the official results: how many students answered it correctly, incorrectly or not at
+    all, the average marks, and which options were chosen (MCQ / MSQ; an MSQ counts every option a student ticked). Scored with the
+    one scorer (scoring.outcome) from the stored answers and the current key, so it always agrees with the results. No answer texts."""
+    stats: dict[str, dict] = {}
+    # shortcut: one answers query per evaluated attempt (as /results/subjects); batch it if exams reach thousands of students.
+    for r in db.scalars(select(TestResult).where(TestResult.test_id == test_id, official).limit(MAX_ROWS)):
+        for q in get_questions_with_answers(db=db, attempt_id=r.attempt_id):
+            status, marks = scoring.outcome(q)
+            qtype = scoring.question_type(q)
+            s = stats.setdefault(str(q["question_id"]), {
+                "question_id": str(q["question_id"]), "question_order": q["question_order"], "question_type": qtype,
+                "subject": q.get("subject"), "CORRECT": 0, "INCORRECT": 0, "UNANSWERED": 0, "marks": Decimal(0), "choices": {}})
+            s[status] += 1
+            s["marks"] += marks
+            answer = q.get("selected_answer")
+            if answer and qtype != "NUMERICAL":
+                for letter in answer.split(","):
+                    s["choices"][letter] = s["choices"].get(letter, 0) + 1
+    out = []
+    for s in sorted(stats.values(), key=lambda x: x["question_order"]):
+        seen = s["CORRECT"] + s["INCORRECT"] + s["UNANSWERED"]
+        out.append(jsonable({"question_id": s["question_id"], "question_order": s["question_order"], "question_type": s["question_type"],
+                             "subject": s["subject"], "correct": s["CORRECT"], "incorrect": s["INCORRECT"], "unanswered": s["UNANSWERED"],
+                             "average_marks": (s["marks"] / seen).quantize(Decimal("0.01")) if seen else None,
+                             "choices": s["choices"] or None}))
     return out
 
 
@@ -79,13 +111,13 @@ def _sections(db: Session, test_id):
 
 class SubjectMarksIn(BaseModel):
     subject: str = Field(min_length=1, max_length=100)
-    obtained_marks: int
+    obtained_marks: Marks       # may be negative (a net penalty), at most 2 decimals; checked against the subject's total below
 
 
 class AdjustIn(BaseModel):
     test_id: uuid.UUID
     student_id: str = Field(min_length=1, max_length=20)
-    obtained_marks: int
+    obtained_marks: Marks
     reason: str = Field(min_length=5, max_length=1000)
     actor: str = Field(min_length=1, max_length=100)
     correction_ref: str = Field(min_length=8, max_length=100)
@@ -121,7 +153,8 @@ def adjust_marks(body: AdjustIn, db: Session = Depends(get_db)):
         new["subject_adjustments"] = _attribution(db, result, body)
     elif body.subjects is not None:
         raise HTTPException(status_code=422, detail="Subject marks apply only to Global Tests")
-    if body.obtained_marks == result.obtained_marks and new.get("subject_adjustments", result.subject_adjustments) == result.subject_adjustments:
+    current = global_results.as_decimals(result.subject_adjustments)      # compared as exact Decimals, not as stored JSON numbers
+    if body.obtained_marks == result.obtained_marks and new.get("subject_adjustments", current) == current:
         raise HTTPException(status_code=409, detail="Marks are already that value")
     row = reevaluation.apply(db, result, new, kind="MARKS_ADJUSTMENT", correction_ref=body.correction_ref,
                              reason=body.reason, actor=body.actor)

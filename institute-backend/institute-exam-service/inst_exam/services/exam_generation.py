@@ -23,11 +23,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import String, cast, literal, null, select, union_all
+from sqlalchemy import String, cast, func, literal, null, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from institute_common.config import settings
 from institute_common.core import audit
+from institute_common.core import question_types as qtypes
 from institute_common.database import utcnow
 from institute_common.models.exams import (
     ExamPlanBranch,
@@ -38,7 +40,8 @@ from institute_common.models.exams import (
 from institute_common.models.org import Batch, Branch, Enrollment, EnrollmentBatch
 from institute_common.core.class_levels import class_target
 from institute_common.models.academics import BatchSubject, EnrollmentAcademicProfile, EnrollmentBatchSubject, Subject
-from institute_common.models.papers import Paper, PaperShare, PaperVersion
+from institute_common.core.marking import MarkingRuleMissing, marking_settings, paper_total
+from institute_common.models.papers import Paper, PaperShare, PaperVersion, PaperVersionQuestion, Question, QuestionVersion
 from inst_exam.services.notify import notify, responsible_staff
 
 USABLE_FOR_EXPLICIT = {"APPROVED", "PUBLISHED", "SUPERSEDED"}
@@ -50,6 +53,58 @@ class Resolved:
     slot: ExamPlanSubject
     version: PaperVersion
     paper: Paper
+
+
+class ExamMarkingError(Exception):
+    """The papers cannot be marked under the plan's marking. Generation stops (the job FAILS with this message) rather than guess."""
+
+
+def question_type_counts(db: Session, paper_version_id: UUID) -> dict[str, int]:
+    """How many questions of each type one paper version holds (RULES marks depend on the question type)."""
+    rows = db.execute(select(Question.question_type, func.count())
+                      .select_from(PaperVersionQuestion)
+                      .join(QuestionVersion, QuestionVersion.question_version_id == PaperVersionQuestion.question_version_id)
+                      .join(Question, Question.question_id == QuestionVersion.question_id)
+                      .where(PaperVersionQuestion.paper_version_id == paper_version_id)
+                      .group_by(Question.question_type))
+    return {question_type: count for question_type, count in rows}
+
+
+def check_question_types(db: Session, r: "Resolved") -> None:
+    """Generation refuses a paper with a question type this environment does not deliver yet (settings.student_question_types; MCQ
+    only by default), and re-checks every MSQ / NAT question with the shared rulebook, so a damaged stored key never reaches students."""
+    enabled = {t.strip() for t in settings.student_question_types.split(",") if t.strip()}
+    for qtype, count in question_type_counts(db, r.version.paper_version_id).items():
+        if qtype not in enabled:
+            raise ExamMarkingError(f"'{r.paper.title}' has {count} {qtypes.LABEL.get(qtype, qtype)} question(s); this portal delivers "
+                                   f"only {', '.join(qtypes.LABEL.get(t, t) for t in sorted(enabled))} questions to students for now.")
+    typed = db.scalars(select(QuestionVersion).join(
+        PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+        .where(PaperVersionQuestion.paper_version_id == r.version.paper_version_id, QuestionVersion.question_type != qtypes.MCQ))
+    for v in typed:
+        try:
+            qtypes.validate(v.question_type, v.content, v.answer_key)
+        except qtypes.QuestionTypeError as exc:
+            raise ExamMarkingError(f"'{r.paper.title}' has a {qtypes.LABEL[v.question_type]} question that is not valid "
+                                   f"({exc.message}); correct it in the Question Bank.") from exc
+
+
+def paper_marks_total(db: Session, plan: ExamPlan, r: "Resolved") -> Decimal:
+    """Maximum marks of one resolved paper under the plan's marking (stored on exam_version_papers.total_marks).
+
+    PER_QUESTION uses each question's own marks, so every question must have marks. UNIFORM keeps the paper's own total as it always
+    did (the exam total uses the uniform marks), or the uniform total for a paper without marks. RULES applies the creator's rules."""
+    if plan.marking_mode == "RULES":
+        try:
+            return paper_total(plan.marking_rules, r.slot.subject_id, question_type_counts(db, r.version.paper_version_id))
+        except MarkingRuleMissing as exc:
+            raise ExamMarkingError(str(exc)) from exc
+    if r.version.total_marks is not None:
+        return r.version.total_marks
+    if plan.marking_mode == "UNIFORM":
+        return Decimal(plan.marks_correct) * r.version.question_count
+    raise ExamMarkingError(f"'{r.paper.title}' has questions without marks; this test uses each question's own marks. "
+                           "Use uniform or rules-based marking, or choose a paper whose questions have marks.")
 
 
 @dataclass
@@ -71,9 +126,8 @@ FIXED_POLICIES = {
 
 
 def plan_settings(plan: ExamPlan) -> dict:
-    marking = {"mode": plan.marking_mode}
-    if plan.marking_mode == "UNIFORM":
-        marking.update(correct=plan.marks_correct, wrong=plan.marks_wrong)
+    # frozen with the exam: later edits of the plan never change the marks of an exam already generated
+    marking = marking_settings(plan.marking_mode, plan.marks_correct, plan.marks_wrong, plan.marking_rules)
     # Shuffle Questions: frozen with the exam; the Student services give each student their own fixed order of the same questions
     policies = {**FIXED_POLICIES, "shuffle": "PER_STUDENT"} if plan.shuffle_questions else FIXED_POLICIES
     return {"marking": marking, "policies": policies, "shuffle_questions": plan.shuffle_questions, "audience_type": plan.audience_type,
@@ -537,6 +591,16 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
             db.commit()
             _notify_failure(db, plan, job, class_problem)
             return job
+        try:
+            for r in res.resolved:
+                check_question_types(db, r)
+            paper_totals = [paper_marks_total(db, plan, r) for r in res.resolved]
+        except ExamMarkingError as exc:     # never generate an exam whose marks are unknown
+            job.status, job.error, job.finished_at = "FAILED", str(exc), utcnow()
+            _event(db, job, "FAILED", {"reason": str(exc)})
+            db.commit()
+            _notify_failure(db, plan, job, str(exc))
+            return job
         require_published_global_test(db, plan, lock=True)   # withdrawal racing this generation waits for the row lock
         audience: dict = {}
         students = eligible_students(db, plan, audience)
@@ -555,18 +619,18 @@ def generate(db: Session, plan_id: UUID, run_key: str | None = None, *, actor: U
         if plan.marking_mode == "UNIFORM":
             total_m = Decimal(plan.marks_correct) * total_q          # every question carries the exam-level marks
         else:
-            total_m = sum((r.version.total_marks for r in res.resolved), Decimal(0))
+            total_m = sum(paper_totals, Decimal(0))
         ev = ExamVersion(exam_id=exam.exam_id, version_no=1, duration_minutes=plan.duration_minutes, start_at=start, end_at=end,
                          total_questions=total_q, total_marks=total_m, missing_subjects=res.missing or None,
                          settings={**plan_settings(plan), "skipped_duplicates": len(duplicates), **({"sections": layout} if layout else {})},
                          generation_job_id=job.job_id, published_at=utcnow() if plan.auto_publish else None)
         db.add(ev)
         db.flush()
-        for pos, r in enumerate(res.resolved, start=1):
+        for pos, (r, paper_marks) in enumerate(zip(res.resolved, paper_totals, strict=True), start=1):
             db.add(ExamVersionPaper(exam_version_id=ev.exam_version_id, position=pos, subject_id=r.slot.subject_id,
                                     paper_version_id=r.version.paper_version_id, source_provider_id=r.paper.provider_id,
                                     source_submission_id=r.slot.source_submission_id,
-                                    question_count=r.version.question_count, total_marks=r.version.total_marks))
+                                    question_count=r.version.question_count, total_marks=paper_marks))
         for sid, eid, bid in students:
             db.add(StudentExamAssignment(exam_id=exam.exam_id, exam_version_id=ev.exam_version_id, student_id=sid,
                                          enrollment_id=eid, batch_id=bid))

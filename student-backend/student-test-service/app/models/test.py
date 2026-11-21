@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,8 +70,8 @@ class Test(Base):
         nullable=False,
     )
 
-    total_marks: Mapped[int] = mapped_column(
-        Integer,
+    total_marks: Mapped[Decimal] = mapped_column(
+        Numeric(8, 2),
         nullable=False,
     )
 

@@ -51,6 +51,7 @@ _ALL = {
     "subject.manage", "batch.manage", "enrollment.manage",
     "enrollment.transfer_request", "enrollment.transfer_approve", "teaching.assign",
     "question.read", "question.manage",
+    "taxonomy.manage",       # create/rename/retire chapters, topics, subtopics and approve aliases for a provider
     "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
     "paper.override_status",
     "examplan.manage", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
@@ -74,7 +75,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
         "student.read", "student.create", "student.link",
         "subject.manage", "batch.manage", "enrollment.manage",
         "enrollment.transfer_request", "enrollment.transfer_approve", "teaching.assign",
-        "question.read", "question.manage",
+        "question.read", "question.manage", "taxonomy.manage",
         "paper.upload", "paper.create", "paper.approve", "paper.publish", "paper.read",
         "examplan.manage", "test.create", "exam.read", "exam.generate", "exam.schedule", "exam.publish",
         "result.read", "result.correct.own", "analytics.read", "notification.manage", "notification.read",

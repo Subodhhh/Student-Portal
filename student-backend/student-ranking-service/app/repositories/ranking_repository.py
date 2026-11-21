@@ -97,7 +97,7 @@ def get_occurrence_subject_scores(
     is unattributed is left out (its official overall marks still rank in the overall ranking)."""
     query = text(f"""
         WITH scored AS (
-            SELECT r.student_id, r.attempt_id, r.test_id, r.subject_adjustments
+            SELECT r.result_id, r.student_id, r.attempt_id, r.test_id, r.subject_adjustments
             FROM test_results r
             JOIN tests t
                 ON t.test_id = r.test_id
@@ -127,12 +127,14 @@ def get_occurrence_subject_scores(
             q.subject,
             SUM(COALESCE(q.marks, 0)) AS max_marks,
             SUM(
-                CASE
+                -- the marks the result service's ONE scorer stored for the question (MCQ, MSQ, NAT: test_result_questions); a result
+                -- evaluated before that table existed has no rows and only MCQ questions, scored here with the same MCQ rule
+                COALESCE(trq.marks_obtained, CASE
                     WHEN COALESCE(la.selected_answer, '') = '' THEN 0
                     WHEN UPPER(TRIM(la.selected_answer)) = UPPER(TRIM(q.correct_answer)) THEN COALESCE(q.marks, 0)
                     ELSE -COALESCE(q.negative_marks, 0)
-                END
-            ) + COALESCE(MAX((sc.subject_adjustments ->> q.subject)::int), 0) AS obtained_marks
+                END)
+            ) + COALESCE(MAX((sc.subject_adjustments ->> q.subject)::numeric), 0) AS obtained_marks
         FROM scored sc
         JOIN questions q
             ON q.test_id = sc.test_id
@@ -142,6 +144,9 @@ def get_occurrence_subject_scores(
         LEFT JOIN latest_answers la
             ON la.attempt_id = sc.attempt_id
             AND la.question_id = q.question_id
+        LEFT JOIN test_result_questions trq
+            ON trq.result_id = sc.result_id
+            AND trq.question_id = q.question_id
         GROUP BY
             sc.student_id,
             q.subject

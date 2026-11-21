@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, UUID
+from sqlalchemy import JSON, UUID, DateTime, Float, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,8 +43,8 @@ class TestResult(Base):
     incorrect_answers: Mapped[int] = mapped_column(Integer, nullable=False)
     unanswered_questions: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    total_marks: Mapped[int] = mapped_column(Integer, nullable=False)
-    obtained_marks: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    obtained_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
 
     accuracy: Mapped[float] = mapped_column(Float, nullable=False)
 

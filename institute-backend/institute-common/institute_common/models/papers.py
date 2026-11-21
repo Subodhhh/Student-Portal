@@ -4,6 +4,8 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, deferred, mapped_column
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 
 from institute_common.core.taxonomy import DIFFICULTIES, PATTERNS, QUESTION_TYPES, sql_in
 from institute_common.database import Base, IPAddress, JSONType, UTCDateTime, utcnow
@@ -29,19 +31,25 @@ class StoredFile(Base):
 class QuestionImageAsset(Base):
     """One picture used by questions or options, stored once per provider (deduplicated by its SHA-256) and referenced by asset id.
 
-    `storage` names where the bytes live. Today it is always "db": the bytes are in `image_data` (BYTEA). A future object store adds a
-    new storage kind with a key, without changing the question tables that reference assets. `image_data` is deferred: listing
-    or loading questions never reads picture bytes. Bytes are served only by the authorised image endpoints."""
+    `storage` names where the bytes live: "db" (the bytes are in `image_data`, BYTEA - every picture stored before object storage, and
+    the existing upload path), or "local" / "s3" (an object store, institute_common.objectstore, at `storage_key`; `image_data` NULL).
+    The question tables reference asset ids only, so where the bytes live never changes them. `image_data` is deferred: listing or
+    loading questions never reads picture bytes. Bytes are served only by the authorised image endpoints."""
 
     __tablename__ = "question_image_assets"
     __table_args__ = (
         UniqueConstraint("provider_id", "checksum", name="uq_question_image_assets_provider_checksum"),
-        CheckConstraint("storage IN ('db')", name="question_image_assets_storage_check"),
+        # platform pictures (provider_id NULL, GLOBAL imports): one per checksum too (NULLs never collide in the constraint above)
+        Index("uq_question_image_assets_platform_checksum", "checksum", unique=True,
+              postgresql_where=text("provider_id IS NULL"), sqlite_where=text("provider_id IS NULL")),
+        CheckConstraint("storage IN ('db','local','s3')", name="question_image_assets_storage_check"),
+        # "db" pictures have no key; object-stored pictures always have one
+        CheckConstraint("(storage = 'db') = (storage_key IS NULL)", name="question_image_assets_storage_key_check"),
         CheckConstraint("file_size > 0", name="question_image_assets_size_check"),
     )
 
     asset_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False, index=True)
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"), index=True)   # NULL = platform picture
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(50), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -50,6 +58,7 @@ class QuestionImageAsset(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)                 # SHA-256 of the original bytes
     storage: Mapped[str] = mapped_column(String(10), nullable=False, default="db", server_default="db")
     image_data: Mapped[bytes | None] = deferred(mapped_column(LargeBinary))
+    storage_key: Mapped[str | None] = mapped_column(String(300))       # object key (never a public URL); NULL for "db"
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     created_ip: Mapped[str | None] = mapped_column(IPAddress)
@@ -89,6 +98,68 @@ IMAGE_FIELD_COLUMNS = {"question": "stem_image_id", "A": "option_a_image_id", "B
                        "D": "option_d_image_id"}
 
 
+class QuestionTaxonomyNode(Base):
+    """One canonical Chapter, Topic or Subtopic of a provider's subject: Subject -> Chapter -> Topic -> Subtopic.
+
+    A chapter has no parent; a topic's parent is a chapter and a subtopic's a topic (same provider and subject). Names are unique per
+    parent, compared by `name_key` (core.taxonomy.label_key: case, spacing and Unicode width ignored), so labels that differ only in
+    capitalisation or spacing are the same record. Records are never deleted: `status` RETIRED hides one from new classification
+    while questions already linked to it keep the link."""
+
+    __tablename__ = "question_taxonomy_nodes"
+    __table_args__ = (
+        CheckConstraint("level IN ('CHAPTER','TOPIC','SUBTOPIC')", name="question_taxonomy_nodes_level_check"),
+        CheckConstraint("(level = 'CHAPTER') = (parent_id IS NULL)", name="question_taxonomy_nodes_parent_check"),
+        CheckConstraint("status IN ('ACTIVE','RETIRED')", name="question_taxonomy_nodes_status_check"),
+        # one name per place in the tree: chapters per (provider, subject), topics/subtopics per parent
+        Index("uq_question_taxonomy_chapter_name", "provider_id", "subject_id", "name_key", unique=True,
+              postgresql_where=text("parent_id IS NULL"), sqlite_where=text("parent_id IS NULL")),
+        Index("uq_question_taxonomy_child_name", "parent_id", "name_key", unique=True,
+              postgresql_where=text("parent_id IS NOT NULL"), sqlite_where=text("parent_id IS NOT NULL")),
+        Index("ix_question_taxonomy_nodes_scope", "provider_id", "subject_id", "level"),
+    )
+
+    node_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"), index=True)
+    level: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)               # as shown (and copied into question labels)
+    name_key: Mapped[str] = mapped_column(String(200), nullable=False)           # core.taxonomy.label_key(name)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    created_by: Mapped[UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    created_ip: Mapped[str | None] = mapped_column(IPAddress)
+    updated_by: Mapped[UUID | None] = mapped_column()
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, onupdate=utcnow)
+
+
+class QuestionTaxonomyAlias(Base):
+    """Another spelling an authorised administrator approved for a taxonomy record ("Newton Laws" -> "Laws of Motion"). Future imports
+    and question edits that use the alias are linked to the record. An alias is unique among the aliases of the same place in the tree
+    (same provider, subject, level and parent); the service also refuses an alias that equals another record's name there."""
+
+    __tablename__ = "question_taxonomy_aliases"
+    __table_args__ = (
+        Index("uq_question_taxonomy_chapter_alias", "provider_id", "subject_id", "alias_key", unique=True,
+              postgresql_where=text("parent_id IS NULL"), sqlite_where=text("parent_id IS NULL")),
+        Index("uq_question_taxonomy_child_alias", "parent_id", "alias_key", unique=True,
+              postgresql_where=text("parent_id IS NOT NULL"), sqlite_where=text("parent_id IS NOT NULL")),
+    )
+
+    alias_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    node_id: Mapped[UUID] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"), nullable=False, index=True)
+    # copied from the record so uniqueness can be enforced per place in the tree without a join
+    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
+    alias: Mapped[str] = mapped_column(String(200), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(200), nullable=False)          # core.taxonomy.label_key(alias)
+    approved_by: Mapped[UUID] = mapped_column(nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    approved_ip: Mapped[str | None] = mapped_column(IPAddress)
+
+
 class Question(Base):
     """Question-bank identity. Content lives in immutable question_versions.
 
@@ -97,15 +168,17 @@ class Question(Base):
 
     __tablename__ = "bank_questions"
     __table_args__ = (
-        # GLOBAL questions belong to the platform catalogue (no provider/branch); PROVIDER questions to one provider's branch.
+        # GLOBAL questions belong to the platform catalogue (no provider/branch). PROVIDER questions belong to one provider and are
+        # shared with ALL its branches: branch_id is the originating branch, NULL for a provider-wide question (services/bank_access.py).
         CheckConstraint("(scope = 'GLOBAL' AND provider_id IS NULL AND branch_id IS NULL) OR "
-                        "(scope = 'PROVIDER' AND provider_id IS NOT NULL AND branch_id IS NOT NULL)", name="bank_questions_scope_check"),
+                        "(scope = 'PROVIDER' AND provider_id IS NOT NULL)", name="bank_questions_scope_check"),
         CheckConstraint(f"difficulty IS NULL OR difficulty IN ({sql_in(DIFFICULTIES)})", name="bank_questions_difficulty_check"),
         CheckConstraint(f"pattern IN ({sql_in(PATTERNS)})", name="bank_questions_pattern_check"),
         CheckConstraint(f"question_type IN ({sql_in(QUESTION_TYPES)})", name="bank_questions_type_check"),
         Index("ix_bank_questions_catalogue", "scope", "subject_id", "status"),
         Index("ix_bank_questions_taxonomy", "subject_id", "exam_type", "target_class", "chapter"),
         Index("ix_bank_questions_branch_id", "branch_id"),
+        Index("ix_bank_questions_provider_subject", "provider_id", "subject_id", "status"),
     )
 
     question_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -123,6 +196,11 @@ class Question(Base):
     chapter: Mapped[str | None] = mapped_column(String(80))
     topic: Mapped[str | None] = mapped_column(String(200))
     subtopic: Mapped[str | None] = mapped_column(String(80))
+    # Canonical taxonomy records of chapter/topic/subtopic (question_taxonomy_nodes). NULL while a label matches no record yet (or for
+    # GLOBAL questions); the text labels above stay the readable copy every existing API returns.
+    chapter_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
+    topic_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
+    subtopic_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
     difficulty: Mapped[str | None] = mapped_column(String(10))
     pattern: Mapped[str] = mapped_column(String(30), nullable=False, default="SINGLE_CORRECT", server_default="SINGLE_CORRECT")
     subtype: Mapped[str | None] = mapped_column(String(80))
@@ -131,12 +209,32 @@ class Question(Base):
     updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, onupdate=utcnow)
 
 
+# Python None is SQL NULL here (not JSON 'null'), so the shape CHECK's `content IS NULL` holds for every MCQ.
+NULLABLE_JSON = JSONB(none_as_null=True).with_variant(JSON(none_as_null=True), "sqlite")
+
+
 class QuestionVersion(Base):
     __tablename__ = "question_versions"
     __table_args__ = (
         UniqueConstraint("question_id", "version_no", name="uq_question_version"),
-        CheckConstraint("correct_option IN ('A','B','C','D')", name="question_versions_correct_check"),
-        CheckConstraint("marks_positive > 0 AND marks_negative >= 0", name="question_versions_marks_check"),
+        # The shape follows the version's type (core/question_types.py): an MCQ keeps the columns it always had (four options, the
+        # correct letter); an MSQ or NAT keeps its options / number format in `content` and its key in `answer_key`, its four
+        # option columns empty and without pictures, and no correct letter.
+        CheckConstraint("(question_type = 'MCQ_SINGLE' AND correct_option IS NOT NULL AND correct_option IN ('A','B','C','D') AND content IS NULL AND answer_key IS NULL) OR "
+                        "(question_type IN ('MCQ_MULTI','NUMERICAL') AND correct_option IS NULL AND content IS NOT NULL AND "
+                        "answer_key IS NOT NULL AND schema_version IS NOT NULL AND option_a = '' AND option_b = '' AND option_c = '' AND "
+                        "option_d = '' AND option_a_image_id IS NULL AND option_b_image_id IS NULL AND option_c_image_id IS NULL AND "
+                        "option_d_image_id IS NULL)", name="question_versions_shape_check"),
+        # MSQ is all-or-nothing and never loses marks (R5): own marks, when given, have no negative part
+        CheckConstraint("question_type <> 'MCQ_MULTI' OR marks_negative IS NULL OR marks_negative = 0",
+                        name="question_versions_msq_negative_check"),
+        CheckConstraint(f"question_type IN ({sql_in(QUESTION_TYPES)})", name="question_versions_type_check"),
+        # Marks are optional (they belong to the test): a version has both marks or neither. Versions made before this rule all
+        # have marks, which stay unchanged.
+        # The IS NOT NULLs matter: a CHECK whose condition is NULL passes, so "marks_positive > 0" alone would let one mark be NULL.
+        CheckConstraint("(marks_positive IS NULL AND marks_negative IS NULL) OR "
+                        "(marks_positive IS NOT NULL AND marks_negative IS NOT NULL AND marks_positive > 0 AND marks_negative >= 0)",
+                        name="question_versions_marks_check"),
     )
 
     question_version_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -147,11 +245,18 @@ class QuestionVersion(Base):
     option_b: Mapped[str] = mapped_column(Text, nullable=False)
     option_c: Mapped[str] = mapped_column(Text, nullable=False)
     option_d: Mapped[str] = mapped_column(Text, nullable=False)
-    correct_option: Mapped[str] = mapped_column(String(1), nullable=False)
+    correct_option: Mapped[str | None] = mapped_column(String(1))           # MCQ only; NULL for MSQ and NAT (their key: answer_key)
+    # the type is copied onto every immutable version (decision D2) so the shape check above can see it; it never changes within a
+    # question (the API refuses a version of another type)
+    question_type: Mapped[str] = mapped_column(String(20), nullable=False, default="MCQ_SINGLE", server_default="MCQ_SINGLE")
+    content: Mapped[dict | None] = mapped_column(NULLABLE_JSON)          # MSQ options / NAT number format (shown to students)
+    answer_key: Mapped[dict | None] = mapped_column(NULLABLE_JSON)       # MSQ correct set / NAT value + tolerance (never shown before review)
+    schema_version: Mapped[int | None] = mapped_column(Integer)     # core/question_types.SCHEMA_VERSION of content + answer_key
     explanation: Mapped[str | None] = mapped_column(Text)
     topic: Mapped[str | None] = mapped_column(String(200))
-    marks_positive: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
-    marks_negative: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=0, server_default="0")
+    # NULL when the question carries no marks of its own; a test using RULES or UNIFORM marking then decides its marks.
+    marks_positive: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    marks_negative: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
     # pictures (question_image_assets); a field may have text, a picture or (the question) both. Text columns stay NOT NULL: a
     # picture-only option stores "" as its text.
     stem_image_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_image_assets.asset_id"))
@@ -161,6 +266,17 @@ class QuestionVersion(Base):
     option_d_image_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_image_assets.asset_id"))
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class QuestionVersionAsset(Base):
+    """A picture referenced INSIDE a version's `content` (an MSQ option picture, roles option_a .. option_h). MCQ pictures keep their
+    columns on question_versions. The link keeps the reference a real foreign key and lets the picture rules (who may see a
+    picture) find every use of an asset."""
+    __tablename__ = "question_version_assets"
+
+    question_version_id: Mapped[UUID] = mapped_column(ForeignKey("question_versions.question_version_id"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(20), primary_key=True)
+    asset_id: Mapped[UUID] = mapped_column(ForeignKey("question_image_assets.asset_id"), nullable=False, index=True)
 
 
 class PaperUpload(Base):
@@ -225,7 +341,8 @@ class PaperVersion(Base):
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDATED", server_default="VALIDATED")
     question_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    total_marks: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    # Sum of its questions' own marks; NULL when any question has no marks (the test that uses the paper decides them).
+    total_marks: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))

@@ -39,6 +39,7 @@ from institute_common.core import audit
 from institute_common.core.roles import Role
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.core.taxonomy import Label
+from institute_common.core.marking import MarkingRulesIn, check_marking_choice, marking_settings, rules_problem
 from institute_common.core.class_levels import TargetClass, normalize_class
 from institute_common.database import get_db, utcnow
 from institute_common.models.academics import ProviderSubject, Subject
@@ -95,9 +96,10 @@ class TestDraftIn(Strict):
     duration_minutes: int = Field(gt=0, le=720)
     start_at: AwareDatetime
     end_at: AwareDatetime
-    marking_mode: str = Field(default="UNIFORM", pattern="^(UNIFORM|PER_QUESTION)$")
+    marking_mode: str = Field(default="UNIFORM", pattern="^(UNIFORM|PER_QUESTION|RULES)$")
     marks_correct: int | None = Field(default=None, ge=1, le=100)
     marks_wrong: int | None = Field(default=None, ge=0, le=100)
+    marking_rules: MarkingRulesIn | None = None      # RULES: the creator's marks per question type and subject (decimals allowed)
     exam_type: Label = None
     target_class: TargetClass = None
     shuffle_questions: bool = False      # Yes: each student gets their own fixed question order (the paper itself never changes)
@@ -118,6 +120,11 @@ class TestDraftIn(Strict):
             raise ValueError("the window must close in the future")
         if len({s.subject_id for s in self.subjects}) != len(self.subjects):
             raise ValueError("a subject is selected twice")
+        check_marking_choice(self.marking_mode, self.marks_correct, self.marks_wrong, self.marking_rules)
+        if self.marking_rules is not None:
+            problem = rules_problem(self.marking_rules.to_storage(), [s.subject_id for s in self.subjects])
+            if problem:
+                raise ValueError(problem)
         if self.marking_mode == "UNIFORM" and (self.marks_correct is None or self.marks_wrong is None):
             raise ValueError("uniform marking needs marks for a correct and for a wrong answer")
         if self.marking_mode == "PER_QUESTION" and (self.marks_correct is not None or self.marks_wrong is not None):
@@ -506,7 +513,7 @@ def publish_test(body: TestDraftIn, idempotency_key: str = Header(min_length=8, 
         plan = ExamPlan(provider_id=a.provider_id, branch_id=a.branch_ids[0], name=body.name, description=body.description,
                         duration_minutes=body.duration_minutes, start_at=body.start_at, end_at=body.end_at, auto_publish=False, status="ACTIVE",
                         audience_type="TARGETED", marking_mode=body.marking_mode, marks_correct=body.marks_correct, marks_wrong=body.marks_wrong,
-                        exam_type=body.exam_type, target_class=body.target_class, shuffle_questions=body.shuffle_questions,
+                        marking_rules=body.marking_rules.to_storage() if body.marking_rules else None, exam_type=body.exam_type, target_class=body.target_class, shuffle_questions=body.shuffle_questions,
                         client_request_id=idempotency_key, created_by=p.staff_id)
         db.add(plan)
         try:
@@ -657,7 +664,7 @@ def _date_summaries(db: Session, dates: list[tuple[GlobalTestOccurrence, GlobalT
     for occ, test in dates:
         state = ("CANCELLED" if occ.status == "CANCELLED" else "GENERATION_FAILED" if occ.generation_failed_at
                  else "NO_EXAM" if occ.generated_at else "SCHEDULED")
-        marking = {"mode": test.marking_mode, **({"correct": test.marks_correct, "wrong": test.marks_wrong} if test.marking_mode == "UNIFORM" else {})}
+        marking = marking_settings(test.marking_mode, test.marks_correct, test.marks_wrong, test.marking_rules)
         out[occ.occurrence_id] = {
             "plan_id": None, "occurrence_id": occ.occurrence_id, "test_type": "GLOBAL", "series_id": None, "global_test_id": test.test_id,
             "exam_id": None, "exam_version_id": None, "name": test.name, "state": state, "plan_status": None, "exam_status": None,
@@ -694,5 +701,5 @@ def test_papers(provider_id: UUID, subject_id: UUID, p: Principal = Depends(get_
                       "source": "Platform" if paper.scope == "GLOBAL" else "Own" if paper.provider_id == provider_id else "Shared",
                       "published_version": None if not latest else {
                           "paper_version_id": latest.paper_version_id, "version_no": latest.version_no,
-                          "question_count": latest.question_count, "total_marks": str(latest.total_marks)}})
+                          "question_count": latest.question_count, "total_marks": None if latest.total_marks is None else str(latest.total_marks)}})
     return {"items": items[:200], "total": len(items)}

@@ -7,15 +7,17 @@ import { useAction, useApi, useReference } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { subjectsOf } from "../services/globalSchedule";
 import { Alert, Button, ConfirmDialog, DataTable, EmptyState, Field, Modal, Pagination, SelectField, Spinner, StatusBadge, TextAreaField } from "./ui";
+import { MarkingRulesEditor } from "./markingRules";
+import { emptyRules, rulesPayload, rulesProblem, type MarkingRule } from "./markingRulesModel";
 
 export type GlobalSection = { position: number; subject_id: string; subject: string | null; paper_id: string; paper_title: string; paper_version_id: string;
-  version_no: number; version_status: string; question_count: number; total_marks: string };
+  version_no: number; version_status: string; question_count: number; total_marks: string | null };
 export type GlobalTest = { test_id: string; name: string; description: string | null; exam_type: string | null; target_class: string | null; duration_minutes: number;
   status: string; derived_from_test_id: string | null; created_at: string; published_at: string | null; publisher: string | null; question_count: number;
-  total_marks: string; sections: GlobalSection[];
+  total_marks: string | null; sections: GlobalSection[];
   // SCHEDULE: subjects + central dates, providers submit papers. SECTIONS: earlier tests built from platform papers.
   kind: "SCHEDULE" | "SECTIONS"; subjects: { subject_id: string; subject: string | null }[]; marking_mode: string; marks_correct: number | null;
-  marks_wrong: number | null; generate_lead_minutes: number; occurrences: Record<string, number>; next_occurrence_at: string | null };
+  marks_wrong: number | null; marking_rules?: { rules: MarkingRule[] } | null; generate_lead_minutes: number; occurrences: Record<string, number>; next_occurrence_at: string | null };
 type PaperRow = { paper_id: string; subject_id: string; title: string; latest_version: { paper_version_id: string; version_no: number; status: string; question_count: number; total_marks: string } | null };
 type Subject = { subject_id: string; name: string };
 
@@ -111,7 +113,9 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
   const subjects = useReference<Page<Subject & { status?: string }>>("/api/v1/subjects?page_size=200");
   const [f, setF] = useState({ name: test?.name ?? "", description: test?.description ?? "", exam_type: test?.exam_type ?? "", target_class: test?.target_class ?? "",
     duration: String(test?.duration_minutes ?? 60), marking: test?.marking_mode ?? "UNIFORM", correct: String(test?.marks_correct ?? 4),
-    wrong: String(test?.marks_wrong ?? 1), leadHours: String((test?.generate_lead_minutes ?? 120) / 60) });
+    wrong: String(test?.marks_wrong ?? 1), leadHours: String((test?.generate_lead_minutes ?? 120) / 60),
+    // an edited draft shows its saved rules; a new test starts with empty rules (no preset marks)
+    rules: test?.marking_rules ? test.marking_rules.rules.map((r) => ({ subject_id: r.subject_id, correct: r.correct, wrong: r.wrong })) : emptyRules() });
   const [picked, setPicked] = useState<string[]>(test?.subjects.map((s) => s.subject_id) ?? []);
   const { busy, error, run } = useAction();
   const uniform = f.marking === "UNIFORM";
@@ -121,6 +125,7 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
   const incomplete = f.name.trim().length < 3 ? "Enter a name (at least 3 characters)." : picked.length === 0 ? "Choose at least one subject."
     : !(Number(f.duration) > 0 && Number(f.duration) <= 720) ? "Duration must be 1 to 720 minutes."
       : uniform && !(Number(f.correct) >= 1 && Number(f.wrong) >= 0) ? "Enter the marks for correct and wrong answers."
+        : f.marking === "RULES" && rulesProblem(f.rules, picked) ? rulesProblem(f.rules, picked)
         : !(lead >= 0 && lead <= 10080) ? "The paper deadline must be 0 to 168 hours before the test." : null;
   return (
     <Modal title={test ? `Edit draft: ${test.name}` : "New Global Test"} onClose={onClose}>
@@ -142,10 +147,13 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
       <div className="grid cols-3">
         <SelectField label="Marking" value={f.marking} onChange={(e) => setF({ ...f, marking: e.target.value })}>
           <option value="UNIFORM">Same marks for every question</option><option value="PER_QUESTION">Marks from each paper</option>
+          <option value="RULES">Marks per subject (decimals allowed)</option>
         </SelectField>
         {uniform && <Field label="Marks for a correct answer" type="number" min={1} max={100} value={f.correct} onChange={(e) => setF({ ...f, correct: e.target.value })} />}
         {uniform && <Field label="Marks deducted for a wrong answer" type="number" min={0} max={100} value={f.wrong} onChange={(e) => setF({ ...f, wrong: e.target.value })} />}
       </div>
+      {f.marking === "RULES" && <MarkingRulesEditor rows={f.rules} onChange={(rules) => setF({ ...f, rules })}
+        subjects={active.filter((s) => picked.includes(s.subject_id)).map((s) => ({ subject_id: s.subject_id, name: s.name }))} />}
       <Field label="Paper deadline (hours before each test opens)" type="number" min={0} max={168} step="0.5" value={f.leadHours}
         onChange={(e) => setF({ ...f, leadHours: e.target.value })} hint="Providers submit papers until then; the exams are generated at that moment and never change afterwards." />
       <div className="modal-actions">
@@ -154,7 +162,8 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
         <Button busy={busy} disabled={!!incomplete} onClick={() => void run(async () => {
           const body = { name: f.name.trim(), description: f.description.trim() || null, exam_type: f.exam_type.trim() || null, target_class: f.target_class.trim() || null,
             duration_minutes: Number(f.duration), subject_ids: picked, marking_mode: f.marking, marks_correct: uniform ? Number(f.correct) : null,
-            marks_wrong: uniform ? Number(f.wrong) : null, generate_lead_minutes: lead };
+            marks_wrong: uniform ? Number(f.wrong) : null, generate_lead_minutes: lead,
+            ...(f.marking === "RULES" ? { marking_rules: rulesPayload(f.rules) } : {}) };
           onDone(await api<GlobalTest>(test ? `/api/v1/global-tests/${test.test_id}` : "/api/v1/global-tests", { method: test ? "PUT" : "POST", body }));
         })}>Save draft</Button>
       </div>

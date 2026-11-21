@@ -12,6 +12,7 @@ import { ApiError, api, type Page } from "../services/api";
 import { audienceBody, audienceReady, emptyAudience, newRequestKey, type AudienceState, type CheckError, type ScopeResponse } from "../services/createTest";
 import { audienceText, fmtDate, markingOf, subjectsOf, type Occurrence, type OccurrenceDetail, type SubmittablePaper, type Submission } from "../services/globalSchedule";
 import { StudentCount } from "../components/StudentCount";
+import { snapshotSummary } from "../components/markingRulesModel";
 
 // Global Tests with a central schedule. The platform plans and publishes the dates; provider staff open a date and submit their own paper
 // for each subject and audience. Every rule (who may plan, submit, see what; overlaps; the deadline) is enforced by the API.
@@ -265,7 +266,7 @@ export function GlobalOccurrencePage() {
     <div className="stack">
       <PageHeader crumbs={[<Link key="g" to="/tests/global">Global Tests</Link>, <Link key="t" to={`/tests/global/${o.test_id}`}>{o.test_name}</Link>, fmtDate(o.start_at)]}
         title={`${o.test_name}: ${fmtDate(o.start_at)}`}
-        subtitle={`Open until ${fmtDate(o.end_at)} · ${o.duration_minutes} min · ${o.marking.mode === "UNIFORM" ? `+${o.marking.correct} / −${o.marking.wrong}` : "each paper's own marks"}`}
+        subtitle={`Open until ${fmtDate(o.end_at)} · ${o.duration_minutes} min · ${o.marking.mode === "PER_QUESTION" ? "each paper's own marks" : snapshotSummary(o.marking)}`}
         actions={<DateState o={o} />} />
       {notice && <Alert kind="success">{notice}</Alert>}
       {act.error && !withdraw && <Alert kind="error">{act.error}</Alert>}

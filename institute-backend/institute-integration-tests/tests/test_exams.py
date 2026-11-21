@@ -60,7 +60,7 @@ def make_paper(db_factory, provider, branch, subject, title, status, n=3, marks=
             db.add(paper)
             db.flush()
         pv = PaperVersion(paper_id=paper.paper_id, version_no=version_no, status=status, question_count=n,
-                          total_marks=Decimal(marks) * n, content_hash=hashlib.sha256(f"{title}{version_no}{uuid4()}".encode()).hexdigest(),
+                          total_marks=Decimal(marks) * n if marks is not None else None, content_hash=hashlib.sha256(f"{title}{version_no}{uuid4()}".encode()).hexdigest(),
                           created_by=uuid4())
         db.add(pv)
         db.flush()
@@ -70,8 +70,10 @@ def make_paper(db_factory, provider, branch, subject, title, status, n=3, marks=
             db.flush()
             # question_versions is append-only: any field a test needs (e.g. picture ids) is set here, at creation
             qv = QuestionVersion(**{"question_id": q.question_id, "version_no": 1, "stem": f"{title} Q{i}", "option_a": "a", "option_b": "b",
-                                    "option_c": "c", "option_d": "d", "correct_option": "A", "marks_positive": Decimal(marks),
-                                    "marks_negative": Decimal(neg), "created_by": uuid4(), **question})
+                                    "option_c": "c", "option_d": "d", "correct_option": "A",
+                                    # marks=None: a question without marks of its own (the test decides them)
+                                    "marks_positive": None if marks is None else Decimal(marks),
+                                    "marks_negative": None if marks is None else Decimal(neg), "created_by": uuid4(), **question})
             db.add(qv)
             db.flush()
             db.add(PaperVersionQuestion(paper_version_id=pv.paper_version_id, position=i, question_version_id=qv.question_version_id))

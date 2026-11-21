@@ -6,6 +6,8 @@ import { useAction, useApi } from "../hooks/useApi";
 import { api, type Page } from "../services/api";
 import { IntegrityCard } from "./ExamIntegrity";
 import { StudentCount } from "../components/StudentCount";
+import { TypeBadge } from "../components/questionBank";
+import { numberProblem, type QuestionType } from "../services/questions";
 
 // Results: submitted attempts and evaluated performance, per exam. Exams and their lifecycle are on the Exams page. Every number comes from
 // the existing results API, which scopes rows to the viewer (platform: all; provider/branch admins: their students; teachers: their
@@ -90,6 +92,7 @@ export function ResultDetailPage() {
                 { header: "Accuracy", render: (x) => `${x.accuracy.toFixed(1)}%` }]} />
           </Card>
         )}
+        {r && !r.subject_view && <QuestionAnalysisCard examId={examId} />}
         {e.status === "PUBLISHED" && can("result.read") && <IntegrityCard examId={examId} />}
         {e.status === "PUBLISHED" && (can("result.correct") || (r?.global_test && can("result.correct.own"))) && (
           <CorrectionsCard examId={examId} platform={can("result.correct")} globalTest={Boolean(r?.global_test)} rows={r?.results ?? []}
@@ -132,13 +135,23 @@ export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged,
   const [reason, setReason] = useState("");
   const [order, setOrder] = useState("");
   const [option, setOption] = useState("A");
+  const [keyType, setKeyType] = useState<QuestionType>("MCQ_SINGLE");
+  const [letters, setLetters] = useState<string[]>([]);
+  const [nat, setNat] = useState({ value: "", kind: "EXACT", amount: "", min: "", max: "" });
   const [keyReason, setKeyReason] = useState("");
   // a Global Test: the corrected marks are given per subject of that student's attempt
   const subjects = globalTest ? (rows.find((x) => x.student_id === student)?.subjects ?? []) : [];
   const perSubject = subjects.length > 0;
   const subjectTotal = subjects.reduce((sum, x) => sum + Number(subjectMarks[x.subject] ?? ""), 0);
   const adjustKey = useCorrectionKey(`${student}|${marks}|${reason}|${JSON.stringify(subjectMarks)}`);
-  const keyKey = useCorrectionKey(`${order}|${option}|${keyReason}`);
+  const keyKey = useCorrectionKey(`${order}|${keyType}|${option}|${letters.join()}|${JSON.stringify(nat)}|${keyReason}`);
+  // the corrected key in the shape of the question's type; the Student test service checks it against the delivered question
+  const natReady = !numberProblem(nat.value) && (nat.kind !== "ABS" || !numberProblem(nat.amount))
+    && (nat.kind !== "RANGE" || (!numberProblem(nat.min) && !numberProblem(nat.max)));
+  const change = keyType === "MCQ_SINGLE" ? { correct_option: option } : keyType === "MCQ_MULTI" ? { key: { correct: letters } }
+    : { key: { value: nat.value.trim(), tolerance: nat.kind === "ABS" ? { kind: "ABS", amount: nat.amount.trim() }
+      : nat.kind === "RANGE" ? { kind: "RANGE", min: nat.min.trim(), max: nat.max.trim() } : { kind: "EXACT" } } };
+  const keyReady = keyType === "MCQ_SINGLE" || (keyType === "MCQ_MULTI" ? letters.length > 0 : natReady);
   const done = () => { list.reload(); onChanged(); };
   return (
     <Card>
@@ -171,11 +184,30 @@ export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged,
                 adjustKey.renew(); setStudent(""); setMarks(""); setSubjectMarks({}); setReason(""); done(); })}>Apply correction</Button></div>}
           <div className="stack"><h3>Correct an answer key and re-evaluate</h3>
             <Field label="Question number" type="number" min={1} value={order} onChange={(e) => setOrder(e.target.value)} />
-            <SelectField label="Correct option" value={option} onChange={(e) => setOption(e.target.value)}>{["A", "B", "C", "D"].map((o) => <option key={o}>{o}</option>)}</SelectField>
+            <SelectField label="Question type" value={keyType} onChange={(e) => setKeyType(e.target.value as QuestionType)}>
+              <option value="MCQ_SINGLE">MCQ (one correct option)</option><option value="MCQ_MULTI">MSQ (one or more correct options)</option><option value="NUMERICAL">NAT (a number)</option>
+            </SelectField>
+            {keyType === "MCQ_SINGLE" && <SelectField label="Correct option" value={option} onChange={(e) => setOption(e.target.value)}>{["A", "B", "C", "D"].map((o) => <option key={o}>{o}</option>)}</SelectField>}
+            {keyType === "MCQ_MULTI" && (
+              <fieldset className="field"><legend>Correct options</legend><div className="row">
+                {"ABCDEFGH".split("").map((x) => <label key={x} className="row checkbox-field"><input type="checkbox" checked={letters.includes(x)}
+                  onChange={() => setLetters(letters.includes(x) ? letters.filter((y) => y !== x) : [...letters, x].sort())} /> {x}</label>)}
+              </div></fieldset>
+            )}
+            {keyType === "NUMERICAL" && (
+              <div className="grid cols-2">
+                <Field label="Correct answer" value={nat.value} onChange={(e) => setNat({ ...nat, value: e.target.value })} inputMode="decimal" error={nat.value ? numberProblem(nat.value) ?? undefined : undefined} />
+                <SelectField label="Accept" value={nat.kind} onChange={(e) => setNat({ ...nat, kind: e.target.value })}>
+                  <option value="EXACT">Only this number</option><option value="ABS">± a tolerance</option><option value="RANGE">A range</option></SelectField>
+                {nat.kind === "ABS" && <Field label="Tolerance (±)" value={nat.amount} onChange={(e) => setNat({ ...nat, amount: e.target.value })} inputMode="decimal" />}
+                {nat.kind === "RANGE" && <><Field label="Minimum" value={nat.min} onChange={(e) => setNat({ ...nat, min: e.target.value })} inputMode="decimal" />
+                  <Field label="Maximum" value={nat.max} onChange={(e) => setNat({ ...nat, max: e.target.value })} inputMode="decimal" /></>}
+              </div>
+            )}
             <TextAreaField label="Reason (required)" value={keyReason} onChange={(e) => setKeyReason(e.target.value)} />
             <p className="muted small">Results a person adjusted by hand are not re-scored; they are listed below as skipped.</p>
-            <Button variant="danger" busy={act.busy} disabled={!order || keyReason.trim().length < 5}
-              onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/answer-key-corrections`, { method: "POST", body: { changes: [{ question_order: Number(order), correct_option: option }], reason: keyReason }, headers: { "Idempotency-Key": keyKey.key } }); keyKey.renew(); setOrder(""); setKeyReason(""); done(); })}>Correct key and re-evaluate</Button></div>
+            <Button variant="danger" busy={act.busy} disabled={!order || keyReason.trim().length < 5 || !keyReady}
+              onClick={() => void act.run(async () => { await api(`/api/v1/exams/${examId}/answer-key-corrections`, { method: "POST", body: { changes: [{ question_order: Number(order), ...change }], reason: keyReason }, headers: { "Idempotency-Key": keyKey.key } }); keyKey.renew(); setOrder(""); setKeyReason(""); done(); })}>Correct key and re-evaluate</Button></div>
       </div>
       {platform && <h3>History</h3>}
       {platform && <DataTable rows={list.data ?? []} rowKey={(c) => c.correction_id} empty={<EmptyState title="No corrections yet" />}
@@ -188,3 +220,27 @@ export function CorrectionsCard({ examId, platform, globalTest, rows, onChanged,
   );
 }
 
+
+type QuestionStat = { question_order: number; question_type: QuestionType; subject: string | null; correct: number; incorrect: number; unanswered: number;
+  average_marks: string | null; choices: Record<string, number> | null };
+
+/** Question-level analysis (every type): how each question was answered. Only readers who see every student get it (the server decides). */
+function QuestionAnalysisCard({ examId }: { examId: string }) {
+  const d = useApi<{ questions: QuestionStat[] }>(`/api/v1/exams/${examId}/results/questions`);
+  if (d.error) return null;                                   // not available to this reader: the results above are enough
+  return (
+    <Card>
+      <h2>Question analysis</h2>
+      <p className="muted small">How each question was answered across all submitted attempts. An MSQ counts as correct only when exactly the correct options were chosen; its option counts include every option students ticked.</p>
+      {d.loading && !d.data ? <Spinner /> : (
+        <DataTable rows={d.data?.questions ?? []} rowKey={(x) => String(x.question_order)} empty={<EmptyState title="No submissions yet" />}
+          columns={[{ header: "Q", render: (x) => x.question_order }, { header: "Type", render: (x) => <TypeBadge type={x.question_type} /> },
+            { header: "Subject", render: (x) => x.subject ?? "—" },
+            { header: "Correct", render: (x) => x.correct }, { header: "Incorrect", render: (x) => x.incorrect }, { header: "Unanswered", render: (x) => x.unanswered },
+            { header: "Correct %", render: (x) => { const n = x.correct + x.incorrect + x.unanswered; return n ? `${Math.round((100 * x.correct) / n)}%` : "—"; } },
+            { header: "Average marks", render: (x) => x.average_marks ?? "—" },
+            { header: "Options chosen", render: (x) => (x.choices ? Object.entries(x.choices).sort().map(([k, n]) => `${k}: ${n}`).join(" · ") : "—") }]} />
+      )}
+    </Card>
+  );
+}

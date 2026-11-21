@@ -1,10 +1,13 @@
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useScope } from "../auth/ScopeContext";
 import { isGlobalRole } from "../auth/roles";
 import { useAction, useApi, useReference } from "../hooks/useApi";
-import { api, type Page } from "../services/api";
-import { PATTERN_LABEL, buildPapers, groupBySubject, type BankQuestion, type BuiltPaper, type QuestionVersion, type Source } from "../services/questions";
+import { API_URL, api, type Page } from "../services/api";
+import { MSQ_LETTERS, PATTERN_LABEL, TYPE_LABEL, TYPE_NAME, buildPapers, describeKey, marksText, groupBySubject, numberProblem, reviewPapers,
+  type BankQuestion, type BuiltPaper, type MsqContent, type MsqKey, type NatContent, type NatKey, type QuestionType, type QuestionVersion, type Source,
+  type SubjectReview } from "../services/questions";
 import { Alert, Button, DataTable, EmptyState, Field, Modal, Pagination, SearchField, SelectField, Spinner, StatusBadge, TextAreaField } from "./ui";
 import { MathText } from "./MathText";
 
@@ -22,8 +25,10 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
 }) {
   const { me } = useAuth();
   const platform = isGlobalRole(me?.primary_role) || !!me?.assignments.some((a) => isGlobalRole(a.role));
-  const [f, setF] = useState({ q: "", subject_id: "", exam_type: "", target_class: "", chapter: "", topic: "", subtopic: "", difficulty: "", pattern: "", status: "ACTIVE" });
+  const [f, setF] = useState({ q: "", subject_id: "", exam_type: "", target_class: "", chapter: "", topic: "", subtopic: "", difficulty: "", pattern: "", question_type: "", status: "ACTIVE" });
   const [includeUsed, setIncludeUsed] = useState(true);
+  const [origin, setOrigin] = useState("");            // "" | PROVIDER_WIDE | BRANCH | a branch id: where provider questions were created
+  const { branches } = useScope();
   const [page, setPage] = useState(1);
   const [preview, setPreview] = useState<string | null>(null);
   const [editing, setEditing] = useState<BankQuestion | null>(null);
@@ -38,6 +43,7 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
   Object.entries(f).forEach(([k, v]) => { if (v && k !== "q") params.set(k, v); });
   if (f.q.trim().length >= 2) params.set("q", f.q.trim());
   if (!includeUsed) params.set("include_used", "false");
+  if (origin && source !== "GLOBAL") params.set(origin === "PROVIDER_WIDE" || origin === "BRANCH" ? "origin" : "origin_branch_id", origin);
   params.set("page", String(page));
   params.set("page_size", "20");
   const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
@@ -65,8 +71,16 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
         <SelectField label="Topic" value={f.topic} onChange={set("topic")}><option value="">Any</option>{opts(fa?.topic)}</SelectField>
         <SelectField label="Subtopic" value={f.subtopic} onChange={set("subtopic")}><option value="">Any</option>{opts(fa?.subtopic)}</SelectField>
         <SelectField label="Difficulty" value={f.difficulty} onChange={set("difficulty")}><option value="">Any</option>{opts(fa?.difficulty, (v) => DIFFICULTY_LABEL[v] ?? v)}</SelectField>
+        <SelectField label="Question type" value={f.question_type} onChange={set("question_type")}><option value="">Any</option>
+          {(Object.keys(TYPE_NAME) as QuestionType[]).map((t) => <option key={t} value={t}>{TYPE_NAME[t]}</option>)}</SelectField>
         <SelectField label="Pattern" value={f.pattern} onChange={set("pattern")}><option value="">Any</option>{opts(fa?.pattern, (v) => PATTERN_LABEL[v] ?? v)}</SelectField>
         <SelectField label="Status" value={f.status} onChange={set("status")}><option value="ACTIVE">Active</option><option value="ARCHIVED">Archived</option><option value="ALL">All</option></SelectField>
+        {source !== "GLOBAL" && (
+          <SelectField label="Origin" value={origin} onChange={(e) => { setOrigin(e.target.value); setPage(1); }}>
+            <option value="">Any</option><option value="PROVIDER_WIDE">Provider-wide</option><option value="BRANCH">Uploaded by a branch</option>
+            {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>Uploaded by {b.name}</option>)}
+          </SelectField>
+        )}
         <label className="row checkbox-field"><input type="checkbox" checked={includeUsed} onChange={(e) => { setIncludeUsed(e.target.checked); setPage(1); }} /> Include questions already used in papers</label>
       </div>
       {act.error && <Alert kind="error">{act.error}</Alert>}
@@ -83,12 +97,16 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
                   title={!platform && q.reserved_for_global_test ? "Part of a Global Test: schedule that test instead" : undefined} onChange={() => onToggle?.(q)} />
               ) }] : []),
               { header: "Question", render: (q) => <button className="link-btn left" onClick={() => setPreview(q.question_id)}>{shorten(q.latest.stem)}</button> },
+              { header: "Type", render: (q) => <TypeBadge type={q.question_type as QuestionType} /> },
               { header: "Subject", render: (q) => sName(q.subject_id) },
               { header: "Chapter / topic", render: (q) => [q.chapter, q.topic, q.subtopic].filter(Boolean).join(" › ") || "—" },
               { header: "Exam / class", render: (q) => [q.exam_type, q.target_class].filter(Boolean).join(" · ") || "—" },
               { header: "Difficulty", render: (q) => (q.difficulty ? DIFFICULTY_LABEL[q.difficulty] : "—") },
-              { header: "Marks", render: (q) => `+${Number(q.latest.marks_positive)} / −${Number(q.latest.marks_negative)}` },
+              { header: "Marks", render: (q) => marksText(q.latest) },
               { header: "Source", render: (q) => <StatusBadge status={q.scope === "GLOBAL" ? "GLOBAL" : "PROVIDER"} /> },
+              // every provider question is shared with all the provider's branches; the origin only says where it was created
+              { header: "Origin", render: (q) => (q.scope === "GLOBAL" ? "Platform" : !q.branch_id ? "Provider-wide"
+                : q.origin_branch_name ?? branches.find((b) => b.branch_id === q.branch_id)?.name ?? "A branch") },
               { header: "Used", render: (q) => q.usage_count },
               { header: "Actions", render: (q) => (
                 <div className="row nowrap">
@@ -109,6 +127,14 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
   );
 }
 
+/** A question or option picture from the authorised endpoint (the session cookie goes with the request; never a storage URL). */
+function QuestionPicture({ assetId, alt }: { assetId: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <span className="muted small"> (picture unavailable)</span>;
+  return <div className="question-picture"><img src={`${API_URL}/api/v1/question-images/${encodeURIComponent(assetId)}`} alt={alt}
+    loading="lazy" onError={() => setFailed(true)} /></div>;
+}
+
 function QuestionPreview({ questionId, subjectName, onClose }: { questionId: string; subjectName: (id: string) => string; onClose: () => void }) {
   const d = useApi<{ question: BankQuestion; versions: QuestionVersion[]; usage: { paper_id: string; title: string; paper_version_id: string; version_no: number; status: string; question_version_no: number }[]; usage_elsewhere: number }>(
     `/api/v1/questions/${questionId}`);
@@ -123,13 +149,12 @@ function QuestionPreview({ questionId, subjectName, onClose }: { questionId: str
             {subjectName(q.subject_id)} · {[q.exam_type, q.target_class, q.chapter, q.topic, q.subtopic].filter(Boolean).join(" › ") || "unclassified"} ·{" "}
             {PATTERN_LABEL[q.pattern] ?? q.pattern}{q.difficulty ? ` · ${DIFFICULTY_LABEL[q.difficulty]}` : ""} · {q.scope === "GLOBAL" ? "Platform question" : "Provider question"} · version {v.version_no}
           </p>
-          <MathText as="p" className="question-stem" text={v.stem} />
-          <ol type="A" className="options">
-            {[v.option_a, v.option_b, v.option_c, v.option_d].map((o, i) => (
-              <li key={i} className={v.correct_option === "ABCD"[i] ? "correct" : undefined}><MathText text={o} />{v.correct_option === "ABCD"[i] && <span className="sr-only"> (correct answer)</span>}</li>
-            ))}
-          </ol>
-          <p className="small">Marks: +{Number(v.marks_positive)} for a correct answer, −{Number(v.marks_negative)} for a wrong one, 0 if unanswered.</p>
+          {v.stem && <MathText as="p" className="question-stem" text={v.stem} />}
+          {v.stem_image_id && <QuestionPicture assetId={v.stem_image_id} alt="Question picture" />}
+          <TypedAnswerView v={v} />
+          <p className="small">{v.marks_positive === null ? "Marks: set by each test that uses this question."
+            : v.question_type === "MCQ_MULTI" ? `Marks: +${Number(v.marks_positive)} when exactly the correct options are chosen, otherwise 0 (never negative).`
+            : `Marks: +${Number(v.marks_positive)} for a correct answer, −${Number(v.marks_negative)} for a wrong one, 0 if unanswered.`}</p>
           {v.explanation && <p className="small muted">Explanation: <MathText text={v.explanation} /></p>}
           {v.answers_hidden && <Alert kind="info">This platform question is part of a Global Test. Its answer and explanation are hidden until your students' review window opens.</Alert>}
           {q.forked_from_question_id && <p className="small muted">Your provider's corrected copy of a question it does not own; the original is unchanged.</p>}
@@ -192,40 +217,222 @@ function ClassifyQuestion({ question, facets, onClose, onDone }: { question: Ban
   );
 }
 
-type ContentFields = { stem: string; option_a: string; option_b: string; option_c: string; option_d: string; correct_option: string; marks_positive: string; marks_negative: string; explanation: string };
+/** The question's type as a short badge (MCQ / MSQ / NAT), named in full for screen readers. */
+export function TypeBadge({ type }: { type?: QuestionType }) {
+  const t = type ?? "MCQ_SINGLE";
+  return <span className={`badge type-${TYPE_LABEL[t].toLowerCase()}`} title={TYPE_NAME[t]}>{TYPE_LABEL[t]}<span className="sr-only"> ({TYPE_NAME[t]})</span></span>;
+}
 
-function ContentFieldsForm({ value, onChange }: { value: ContentFields; onChange: (v: ContentFields) => void }) {
-  const set = (k: keyof ContentFields) => (e: { target: { value: string } }) => onChange({ ...value, [k]: e.target.value });
+/** Options (MCQ, MSQ) with the correct ones marked, or a NAT's accepted answer; nothing of the key when it is hidden. */
+export function TypedAnswerView({ v }: { v: QuestionVersion }) {
+  const type = v.question_type ?? "MCQ_SINGLE";
+  if (type === "NUMERICAL") {
+    const c = v.content as NatContent | null;
+    return (
+      <p className="small">Answer type: {c?.format === "INTEGER" ? "a whole number" : `a number (up to ${c?.decimals ?? 6} decimal places)`}{c?.unit ? `, in ${c.unit}` : ""}.
+        {v.answer_key && <> Accepted answer: <strong>{describeKey(type, v)}</strong>{c?.unit ? ` ${c.unit}` : ""}.</>}</p>
+    );
+  }
+  const options = type === "MCQ_MULTI" ? ((v.content as MsqContent | null)?.options ?? []).map((o) => ({ id: o.id, text: o.text, image: o.image ?? null }))
+    : [v.option_a, v.option_b, v.option_c, v.option_d].map((text, i) => ({ id: "ABCD"[i], text,
+      image: [v.option_a_image_id, v.option_b_image_id, v.option_c_image_id, v.option_d_image_id][i] ?? null }));
+  const correct = new Set(type === "MCQ_MULTI" ? (v.answer_key as MsqKey | null)?.correct ?? [] : v.correct_option ? [v.correct_option] : []);
   return (
     <>
+      {type === "MCQ_MULTI" && <p className="small muted">One or more options are correct; a student must choose exactly those.</p>}
+      <ol type="A" className="options">
+        {options.map((o) => (
+          <li key={o.id} className={correct.has(o.id) ? "correct" : undefined}>
+            {o.text && <MathText text={o.text} />}{o.image && <QuestionPicture assetId={o.image} alt={`Option ${o.id} picture`} />}
+            {correct.has(o.id) && <span className="sr-only"> (correct answer)</span>}
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+type ContentFields = {
+  question_type: QuestionType; stem: string; option_a: string; option_b: string; option_c: string; option_d: string; correct_option: string;
+  marks_positive: string; marks_negative: string; explanation: string;
+  msq: { text: string; image: string | null }[]; msq_correct: string[];                       // MSQ: options A.. and the correct ones
+  nat_answer: string; nat_kind: "EXACT" | "ABS" | "RANGE"; nat_amount: string; nat_min: string; nat_max: string;   // NAT
+  nat_format: "INTEGER" | "DECIMAL"; nat_decimals: string; nat_unit: string;
+};
+const EMPTY_CONTENT: ContentFields = { question_type: "MCQ_SINGLE", stem: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A",
+  marks_positive: "", marks_negative: "", explanation: "", msq: [0, 1, 2, 3].map(() => ({ text: "", image: null })), msq_correct: [],
+  nat_answer: "", nat_kind: "EXACT", nat_amount: "", nat_min: "", nat_max: "", nat_format: "DECIMAL", nat_decimals: "2", nat_unit: "" };
+
+function fromVersion(v: QuestionVersion): ContentFields {
+  const marks = (x: string | null) => (x === null ? "" : String(Number(x)));
+  const c: ContentFields = { ...EMPTY_CONTENT, question_type: v.question_type ?? "MCQ_SINGLE", stem: v.stem, option_a: v.option_a, option_b: v.option_b,
+    option_c: v.option_c, option_d: v.option_d, correct_option: v.correct_option ?? "A", marks_positive: marks(v.marks_positive),
+    marks_negative: marks(v.marks_negative), explanation: v.explanation ?? "" };
+  if (c.question_type === "MCQ_MULTI") {
+    c.msq = ((v.content as MsqContent | null)?.options ?? []).map((o) => ({ text: o.text ?? "", image: o.image ?? null }));
+    c.msq_correct = (v.answer_key as MsqKey | null)?.correct ?? [];
+  } else if (c.question_type === "NUMERICAL") {
+    const n = v.content as NatContent | null, k = v.answer_key as NatKey | null;
+    Object.assign(c, { nat_format: n?.format ?? "DECIMAL", nat_decimals: String(n?.decimals ?? 2), nat_unit: n?.unit ?? "",
+      nat_answer: k?.value ?? "", nat_kind: k?.tolerance.kind ?? "EXACT", nat_amount: k?.tolerance.amount ?? "", nat_min: k?.tolerance.min ?? "",
+      nat_max: k?.tolerance.max ?? "" });
+  }
+  return c;
+}
+
+/** Why a NAT's answer fields cannot be saved yet ({field: message}); empty when they can. Mirrors the server's rulebook. */
+function natProblems(c: ContentFields): Record<string, string> {
+  const out: Record<string, string> = {};
+  const integer = c.nat_format === "INTEGER";
+  const decimals = integer ? 0 : Number(c.nat_decimals || "6");
+  if (!integer && !(/^[0-6]$/.test(c.nat_decimals.trim()) || !c.nat_decimals.trim())) out.nat_decimals = "From 0 to 6.";
+  const check = (k: keyof ContentFields, text: string, places = decimals, asInteger = integer) => {
+    const p = text.trim() ? numberProblem(text, places, asInteger) : "Required.";
+    if (p) out[k] = p;
+  };
+  check("nat_answer", c.nat_answer);
+  if (c.nat_kind === "ABS") {
+    check("nat_amount", c.nat_amount, 6, false);
+    if (!out.nat_amount && c.nat_amount.trim().startsWith("-")) out.nat_amount = "The tolerance cannot be negative.";
+  }
+  if (c.nat_kind === "RANGE") {
+    check("nat_min", c.nat_min);
+    check("nat_max", c.nat_max);
+    if (!out.nat_min && !out.nat_max && !out.nat_answer) {
+      const [lo, hi, v] = [Number(c.nat_min), Number(c.nat_max), Number(c.nat_answer)];
+      if (lo > hi) out.nat_min = "The minimum must not be more than the maximum.";
+      else if (v < lo || v > hi) out.nat_answer = "The answer must lie between the minimum and the maximum.";
+    }
+  }
+  if (c.nat_unit.length > 30) out.nat_unit = "At most 30 characters.";
+  return out;
+}
+
+function ContentFieldsForm({ value, onChange, typeLocked }: { value: ContentFields; onChange: (v: ContentFields) => void; typeLocked?: boolean }) {
+  const set = (k: keyof ContentFields) => (e: { target: { value: string } }) => onChange({ ...value, [k]: e.target.value });
+  const type = value.question_type;
+  const nat = type === "NUMERICAL" ? natProblems(value) : {};
+  const shown = (k: string, text: string) => (text.trim() ? nat[k] : undefined);       // no error on a field not typed in yet
+  const setOption = (i: number, text: string) => onChange({ ...value, msq: value.msq.map((o, j) => (j === i ? { ...o, text } : o)) });
+  const toggle = (id: string) => onChange({ ...value, msq_correct: value.msq_correct.includes(id) ? value.msq_correct.filter((x) => x !== id) : [...value.msq_correct, id].sort() });
+  const removeLast = () => {
+    const gone = MSQ_LETTERS[value.msq.length - 1];
+    onChange({ ...value, msq: value.msq.slice(0, -1), msq_correct: value.msq_correct.filter((x) => x !== gone) });
+  };
+  return (
+    <>
+      {typeLocked ? <p className="small">Question type: <TypeBadge type={type} /> {TYPE_NAME[type]} <span className="muted">(a question keeps its type)</span></p> : (
+        <fieldset className="field">
+          <legend>Question type</legend>
+          <div className="row">
+            {(Object.keys(TYPE_NAME) as QuestionType[]).map((t) => (
+              <label key={t} className="row checkbox-field"><input type="radio" name="question-type" value={t} checked={type === t}
+                onChange={() => onChange({ ...value, question_type: t })} /> {TYPE_NAME[t]}</label>
+            ))}
+          </div>
+        </fieldset>
+      )}
       <TextAreaField label="Question" value={value.stem} onChange={set("stem")} required />
-      <div className="grid cols-2">
-        {(["option_a", "option_b", "option_c", "option_d"] as const).map((k) => <Field key={k} label={`Option ${k.slice(-1).toUpperCase()}`} value={value[k]} onChange={set(k)} required />)}
-      </div>
+      {type === "MCQ_SINGLE" && (
+        <div className="grid cols-2">
+          {(["option_a", "option_b", "option_c", "option_d"] as const).map((k) => <Field key={k} label={`Option ${k.slice(-1).toUpperCase()}`} value={value[k]} onChange={set(k)} required />)}
+        </div>
+      )}
+      {type === "MCQ_MULTI" && (
+        <fieldset className="field">
+          <legend>Options (2 to 8) - tick every correct option</legend>
+          <div className="stack">
+            {value.msq.map((o, i) => {
+              const id = MSQ_LETTERS[i];
+              return (
+                <div key={id} className="row">
+                  <label className="row checkbox-field"><input type="checkbox" checked={value.msq_correct.includes(id)} onChange={() => toggle(id)}
+                    aria-label={`Option ${id} is correct`} /> Correct</label>
+                  {o.image ? <span className="small">Option {id}: <QuestionPicture assetId={o.image} alt={`Option ${id} picture`} /></span>
+                    : <Field label={`Option ${id}`} value={o.text} onChange={(e) => setOption(i, e.target.value)} required />}
+                </div>
+              );
+            })}
+            <div className="row">
+              <Button small variant="secondary" disabled={value.msq.length >= 8} onClick={() => onChange({ ...value, msq: [...value.msq, { text: "", image: null }] })}>Add option</Button>
+              <Button small variant="secondary" disabled={value.msq.length <= 2} onClick={removeLast}>Remove option {MSQ_LETTERS[value.msq.length - 1]}</Button>
+            </div>
+          </div>
+        </fieldset>
+      )}
+      {type === "NUMERICAL" && (
+        <>
+          <div className="grid cols-3">
+            <SelectField label="Answer format" value={value.nat_format} onChange={set("nat_format")}><option value="INTEGER">Whole number</option><option value="DECIMAL">Decimal</option></SelectField>
+            {value.nat_format === "DECIMAL" && <Field label="Decimal places (0 to 6)" value={value.nat_decimals} onChange={set("nat_decimals")} inputMode="numeric" error={nat.nat_decimals} />}
+            <Field label="Unit (optional, shown to students)" value={value.nat_unit} onChange={set("nat_unit")} placeholder="m/s²" error={nat.nat_unit} />
+          </div>
+          <div className="grid cols-3">
+            <Field label="Correct answer" value={value.nat_answer} onChange={set("nat_answer")} inputMode="decimal" required error={shown("nat_answer", value.nat_answer)}
+              hint="Digits only: no commas, units or exponents" />
+            <SelectField label="Accept" value={value.nat_kind} onChange={set("nat_kind")}>
+              <option value="EXACT">Only this number</option><option value="ABS">This number ± a tolerance</option><option value="RANGE">Any number in a range</option>
+            </SelectField>
+            {value.nat_kind === "ABS" && <Field label="Tolerance (±)" value={value.nat_amount} onChange={set("nat_amount")} inputMode="decimal" required error={shown("nat_amount", value.nat_amount)} hint="The limits count as correct" />}
+          </div>
+          {value.nat_kind === "RANGE" && (
+            <div className="grid cols-2">
+              <Field label="Minimum (accepted)" value={value.nat_min} onChange={set("nat_min")} inputMode="decimal" required error={shown("nat_min", value.nat_min)} />
+              <Field label="Maximum (accepted)" value={value.nat_max} onChange={set("nat_max")} inputMode="decimal" required error={shown("nat_max", value.nat_max)} />
+            </div>
+          )}
+        </>
+      )}
       <div className="grid cols-3">
-        <SelectField label="Correct answer" value={value.correct_option} onChange={set("correct_option")}>{["A", "B", "C", "D"].map((o) => <option key={o}>{o}</option>)}</SelectField>
-        <Field label="Marks (correct)" value={value.marks_positive} onChange={set("marks_positive")} inputMode="numeric" hint="Whole number" />
-        <Field label="Negative marks (wrong)" value={value.marks_negative} onChange={set("marks_negative")} inputMode="numeric" hint="Deducted; 0 for none" />
+        {type === "MCQ_SINGLE" && <SelectField label="Correct answer" value={value.correct_option} onChange={set("correct_option")}>{["A", "B", "C", "D"].map((o) => <option key={o}>{o}</option>)}</SelectField>}
+        <Field label="Marks (correct, optional)" value={value.marks_positive} onChange={set("marks_positive")} inputMode="decimal"
+          hint="Leave empty: each test sets the marks" />
+        {type === "MCQ_MULTI" ? <Field label="Negative marks" value="0" disabled hint="MSQ is all-or-nothing: a wrong choice scores 0, never negative" />
+          : <Field label="Negative marks (wrong, optional)" value={value.marks_negative} onChange={set("marks_negative")} inputMode="decimal"
+            hint="Deducted; empty or 0 for none" />}
       </div>
       <TextAreaField label="Explanation (optional, shown at result review)" value={value.explanation} onChange={set("explanation")} />
     </>
   );
 }
 
-const contentReady = (c: ContentFields) => c.stem.trim().length >= 3 && [c.option_a, c.option_b, c.option_c, c.option_d].every((o) => o.trim())
-  && /^\d+$/.test(c.marks_positive) && Number(c.marks_positive) > 0 && /^\d+$/.test(c.marks_negative);
-const contentBody = (c: ContentFields) => ({ ...c, explanation: c.explanation.trim() || null });
+// A question's own marks are optional (marks belong to the test). When given: up to 2 decimal places, correct > 0; the server checks
+// the same rules again.
+const MARK = /^\d{1,4}(\.\d{1,2})?$/;
+const marksReady = (c: ContentFields) => (!c.marks_positive.trim() && (c.question_type === "MCQ_MULTI" || !c.marks_negative.trim()))
+  || (MARK.test(c.marks_positive.trim()) && Number(c.marks_positive) > 0
+    && (c.question_type === "MCQ_MULTI" || !c.marks_negative.trim() || MARK.test(c.marks_negative.trim())));
+const contentReady = (c: ContentFields) => (c.stem.trim().length >= 3 || (c.question_type !== "MCQ_SINGLE" && !!c.stem.trim())) && marksReady(c) && (
+  c.question_type === "MCQ_SINGLE" ? [c.option_a, c.option_b, c.option_c, c.option_d].every((o) => o.trim())
+    : c.question_type === "MCQ_MULTI" ? c.msq.length >= 2 && c.msq.every((o) => o.text.trim() || o.image) && c.msq_correct.length > 0
+      : Object.keys(natProblems(c)).length === 0);
+const contentBody = (c: ContentFields) => {
+  const common = { stem: c.stem, explanation: c.explanation.trim() || null, marks_positive: c.marks_positive.trim() || null };
+  if (c.question_type === "MCQ_SINGLE") {
+    return { ...common, option_a: c.option_a, option_b: c.option_b, option_c: c.option_c, option_d: c.option_d, correct_option: c.correct_option,
+      marks_negative: c.marks_negative.trim() || null };
+  }
+  if (c.question_type === "MCQ_MULTI") {
+    return { ...common, question_type: c.question_type, marks_negative: common.marks_positive ? "0" : null,
+      content: { options: c.msq.map((o, i) => ({ id: MSQ_LETTERS[i], text: o.image ? null : o.text.trim(), image: o.image })) },
+      answer_key: { correct: c.msq_correct } };
+  }
+  const tolerance = c.nat_kind === "ABS" ? { kind: "ABS", amount: c.nat_amount.trim() }
+    : c.nat_kind === "RANGE" ? { kind: "RANGE", min: c.nat_min.trim(), max: c.nat_max.trim() } : { kind: "EXACT" };
+  return { ...common, question_type: c.question_type, marks_negative: c.marks_negative.trim() || (common.marks_positive ? "0" : null),
+    content: { format: c.nat_format, decimals: c.nat_format === "INTEGER" ? 0 : Number(c.nat_decimals || "6"), unit: c.nat_unit.trim() || null },
+    answer_key: { value: c.nat_answer.trim(), tolerance } };
+};
 
 function NewQuestionVersion({ question, onClose, onDone }: { question: BankQuestion; onClose: () => void; onDone: () => void }) {
   const v = question.latest;
-  const [c, setC] = useState<ContentFields>({ stem: v.stem, option_a: v.option_a, option_b: v.option_b, option_c: v.option_c, option_d: v.option_d,
-    correct_option: v.correct_option ?? "A", marks_positive: String(Number(v.marks_positive)), marks_negative: String(Number(v.marks_negative)), explanation: v.explanation ?? "" });
+  const [c, setC] = useState<ContentFields>(() => fromVersion({ ...v, question_type: (v.question_type ?? question.question_type) as QuestionType }));
   const { busy, error, run } = useAction();
   return (
     <Modal title={`New version of the question (now v${v.version_no})`} onClose={onClose}>
       <Alert kind="info">Saving creates version {v.version_no + 1}. Papers and scheduled exams keep the version they already use{question.usage_count ? ` (${question.usage_count} paper version(s))` : ""}.</Alert>
       {error && <Alert kind="error">{error}</Alert>}
-      <ContentFieldsForm value={c} onChange={setC} />
+      <ContentFieldsForm value={c} onChange={setC} typeLocked />
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button busy={busy} disabled={!contentReady(c)} onClick={() => void run(async () => { await api(`/api/v1/questions/${question.question_id}/versions`, { method: "POST", body: contentBody(c) }); onDone(); })}>Save as new version</Button>
@@ -236,17 +443,27 @@ function NewQuestionVersion({ question, onClose, onDone }: { question: BankQuest
 
 /** Add a question to the platform bank (GLOBAL, platform roles) or to a provider branch's bank. */
 export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { scope: "GLOBAL" | "PROVIDER"; branchId?: string; providerId?: string; onClose: () => void; onDone: () => void }) {
+  const { me } = useAuth();
+  // provider-wide questions are the Provider Admin's (the server decides; this only decides whether to offer the choice)
+  const mayAddProviderWide = scope === "PROVIDER" && !!providerId && !!me?.assignments.some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId);
+  const [providerWide, setProviderWide] = useState(false);
   const catalogue = useReference<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null);
   const offered = useReference<Subject[]>(scope === "PROVIDER" && providerId ? `/api/v1/providers/${providerId}/subjects` : null);
   const subjects = scope === "GLOBAL" ? catalogue.data?.items ?? [] : offered.data ?? [];
   const [subjectId, setSubjectId] = useState("");
   const facets = useApi<Facets>(`/api/v1/question-taxonomy?scope=${scope}${branchId && scope === "PROVIDER" ? `&branch_id=${branchId}` : ""}${subjectId ? `&subject_id=${subjectId}` : ""}`);
   const [k, setK] = useState<ClassFields>({ exam_type: "", target_class: "", chapter: "", topic: "", subtopic: "", difficulty: "", pattern: "SINGLE_CORRECT", subtype: "" });
-  const [c, setC] = useState<ContentFields>({ stem: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A", marks_positive: "4", marks_negative: "1", explanation: "" });
+  const [c, setC] = useState<ContentFields>(EMPTY_CONTENT);
   const { busy, error, run } = useAction();
   return (
     <Modal title={scope === "GLOBAL" ? "Add a platform question" : "Add a question"} onClose={onClose}>
       {error && <Alert kind="error">{error}</Alert>}
+      {mayAddProviderWide && (
+        <label className="row checkbox-field"><input type="checkbox" checked={providerWide} onChange={(e) => setProviderWide(e.target.checked)} />
+          Provider-wide (not tied to this branch)</label>
+      )}
+      <p className="muted small">{scope === "GLOBAL" ? "Platform questions are available to every institute."
+        : "The question is shared with every branch of the institute; only its own branch and the provider administrators can change it."}</p>
       <SelectField label="Subject" value={subjectId} onChange={(e) => setSubjectId(e.target.value)} required>
         <option value="">Select…</option>{subjects.map((s) => <option key={s.subject_id} value={s.subject_id}>{s.name}</option>)}
       </SelectField>
@@ -255,11 +472,36 @@ export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { 
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button busy={busy} disabled={!subjectId || !contentReady(c)} onClick={() => void run(async () => {
-          await api("/api/v1/questions", { method: "POST", body: { scope, ...(scope === "PROVIDER" ? { branch_id: branchId } : {}), subject_id: subjectId, ...nullIfEmpty(k), pattern: k.pattern, ...contentBody(c) } });
+          const where = scope === "GLOBAL" ? {} : providerWide && mayAddProviderWide ? { provider_id: providerId } : { branch_id: branchId };
+          await api("/api/v1/questions", { method: "POST", body: { scope, ...where, subject_id: subjectId, ...nullIfEmpty(k), pattern: k.pattern, ...contentBody(c) } });
           onDone();
         })}>Add question</Button>
       </div>
     </Modal>
+  );
+}
+
+/** The possible duplicates of the papers about to be built, named by their question text; never blocking. */
+export function ReviewFlags({ reviews, stemOf, subjectName }: { reviews: SubjectReview[]; stemOf: (questionId: string) => string; subjectName: (id: string) => string }) {
+  const blocking = reviews.flatMap((r) => r.blocking.map((f) => ({ r, f })));
+  const flags = reviews.flatMap((r) => r.flags.map((f) => ({ r, f })));
+  const list = (items: typeof flags) => (
+    <ul className="small duplicate-list">
+      {items.map(({ r, f }) => (
+        <li key={`${r.subject_id}-${f.positions.join("-")}`}><strong>{subjectName(r.subject_id)}</strong>: {f.reason}
+          <ul>{f.positions.map((pos) => <li key={pos}>Question {pos} of your selection: “{shorten(stemOf(r.question_ids[pos - 1]), 90)}”</li>)}</ul></li>
+      ))}
+    </ul>
+  );
+  return (
+    <>
+      {blocking.length > 0 && (
+        <Alert kind="error"><p>The same question is selected twice. Unselect one question of each pair below, then create the paper.</p>{list(blocking)}</Alert>
+      )}
+      {flags.length > 0 && (
+        <Alert kind="warn"><p>These questions may be the same question. Check them, then create anyway or change the selection.</p>{list(flags)}</Alert>
+      )}
+    </>
   );
 }
 
@@ -269,6 +511,7 @@ export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }
   const groups = groupBySubject(selected);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [meta, setMeta] = useState({ exam_type: "", target_class: "" });
+  const [reviews, setReviews] = useState<SubjectReview[] | null>(null);    // shown once; "Create anyway" then builds
   const { busy, error, run } = useAction();
   const { can } = useAuth();
   const sName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
@@ -278,6 +521,7 @@ export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }
       <p className="muted small">{selected.size} question(s) in {groups.length} subject(s). {groups.length > 1 ? "One paper is created per subject; combine them in a test." : ""}
         {" "}The new version starts as a draft (VALIDATED){can("paper.approve") ? ", ready for you to approve and publish" : " for approval"}.</p>
       {error && <Alert kind="error">{error}</Alert>}
+      {reviews && <ReviewFlags reviews={reviews} stemOf={(id) => selected.get(id)?.latest.stem ?? ""} subjectName={sName} />}
       {groups.map((g) => (
         <Field key={g.subject_id} label={`${sName(g.subject_id)} paper title (${g.question_ids.length} questions)`} value={titles[g.subject_id] ?? ""}
           onChange={(e) => setTitles((t) => ({ ...t, [g.subject_id]: e.target.value }))} />
@@ -288,9 +532,14 @@ export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }
       </div>
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button busy={busy} disabled={!ready || groups.length === 0} onClick={() => void run(async () => {
-          onDone(await buildPapers(scope, branchId, groups.map((g) => ({ ...g, title: titles[g.subject_id].trim() })), meta));
-        })}>Create {groups.length > 1 ? `${groups.length} papers` : "paper"}</Button>
+        <Button busy={busy} disabled={!ready || groups.length === 0 || !!reviews?.some((r) => r.blocking.length)} onClick={() => void run(async () => {
+          const named = groups.map((g) => ({ ...g, title: titles[g.subject_id].trim() }));
+          if (!reviews) {
+            const found = await reviewPapers(scope, branchId, named, meta);
+            if (found.length) { setReviews(found); return; }
+          }
+          onDone(await buildPapers(scope, branchId, named, meta));
+        })}>{reviews && !reviews.some((r) => r.blocking.length) ? "Create anyway" : `Create ${groups.length > 1 ? `${groups.length} papers` : "paper"}`}</Button>
       </div>
     </Modal>
   );

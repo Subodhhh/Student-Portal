@@ -6,14 +6,18 @@ a whole), and the re-evaluation then reaches only the attempts that sat a correc
 stored first (immutable), then applied through the Student services, which keep the immutable result history. A retry
 with the same key finishes an interrupted correction using the same correction reference, so nothing is applied twice."""
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header
-from pydantic import Field, field_validator
+import json
+
+from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from institute_common.core import audit
+from institute_common.core.marking import json_safe, wire_mark
 from institute_common.core.roles import Role
 from institute_common.core.security import Principal, api_error, get_principal
 from institute_common.database import get_db, utcnow
@@ -29,28 +33,46 @@ from inst_exam.services.student_notifications import enqueue as enqueue_student_
 router = APIRouter(prefix="/api/v1", tags=["Result corrections"])
 
 
+# Obtained marks may be decimals (rules-based marking allows marks such as 0.25) and negative (negative marking), with at most 2
+# decimal places like every stored mark. Never float: exact Decimal end to end.
+ObtainedMarks = Annotated[Decimal, Field(ge=-100000, le=100000, decimal_places=2, allow_inf_nan=False)]
+
+
 class SubjectMarks(Strict):
     subject: str = Field(min_length=1, max_length=100)
-    obtained_marks: int
+    obtained_marks: ObtainedMarks
 
 
 class AdjustIn(Strict):
-    obtained_marks: int
+    obtained_marks: ObtainedMarks
     reason: str = Field(max_length=1000)
     subjects: list[SubjectMarks] | None = Field(default=None, max_length=100)   # a Global Test: the marks per subject
 
 
 class KeyChange(Strict):
+    """An MCQ: `correct_option` (A-D, as before). An MSQ / NAT: `key` - {"correct": ["A", "C"]} or {"value": "9.8", "tolerance": {...}};
+    the Student test service checks it against the delivered question's type with the shared rulebook."""
     question_order: int = Field(ge=1, le=10000)
-    correct_option: str
+    correct_option: str | None = None
+    key: dict | None = None
 
     @field_validator("correct_option")
     @classmethod
-    def letter(cls, v: str) -> str:
+    def letter(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         v = v.strip().upper()
         if v not in {"A", "B", "C", "D"}:
             raise ValueError("correct_option must be A, B, C or D")
         return v
+
+    @model_validator(mode="after")
+    def one_key(self):
+        if (self.correct_option is None) == (self.key is None):
+            raise ValueError("give correct_option (MCQ) or key (MSQ / NAT), not both")
+        if self.key is not None and len(json.dumps(self.key)) > 2000:
+            raise ValueError("key is too large")
+        return self
 
 
 class KeyCorrectionIn(Strict):
@@ -91,10 +113,15 @@ def _published(e: Exam, ev: ExamVersion | None) -> ExamVersion:
     return ev
 
 
+def _as_mark(value):
+    """A stored mark (int, or an exact decimal string such as "2.5") as a JSON number: ints stay ints, fractions become Decimal."""
+    return Decimal(value) if isinstance(value, str) else value
+
+
 def _out(c: ResultCorrection, actor_code: str | None = None) -> dict:
     o = c.outcome or {}
-    prev = (o.get("previous") or {}).get("obtained_marks")
-    new = (o.get("new") or {}).get("obtained_marks")
+    # stored in the exact wire form (int, or a decimal string for fractions); returned as a number, never a string
+    prev, new = _as_mark((o.get("previous") or {}).get("obtained_marks")), _as_mark((o.get("new") or {}).get("obtained_marks"))
     return {"correction_id": str(c.correction_id), "exam_id": str(c.exam_id), "kind": c.kind, "status": c.status, "student_id": c.student_id,
             "reason": c.reason, "actor": actor_code or str(c.actor_staff_id), "created_at": c.created_at.isoformat(),
             "applied_at": c.applied_at.isoformat() if c.applied_at else None, "error": c.error,
@@ -169,8 +196,10 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
     key = _key(idempotency_key)
     reason = need_reason(body.reason)
     ev = _published(e, ev)
-    request = {"student_id": student_id, "obtained_marks": body.obtained_marks}
-    subjects = [x.model_dump() for x in body.subjects] if body.subjects is not None else None
+    # JSON-safe exact form (whole marks stay integers, as before): stored with the correction and sent to the result service
+    request = {"student_id": student_id, "obtained_marks": wire_mark(body.obtained_marks)}
+    subjects = ([{"subject": x.subject, "obtained_marks": wire_mark(x.obtained_marks)} for x in body.subjects]
+                if body.subjects is not None else None)
     if subjects is not None:
         if not unified.is_unified_exam(db, e.exam_id):
             raise api_error(422, "SUBJECT_MARKS_NOT_SUPPORTED", "Marks per subject apply only to Global Tests.")
@@ -180,7 +209,7 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
         if not db.scalar(select(StudentExamAssignment.assignment_id).where(StudentExamAssignment.exam_version_id == ev.exam_version_id,
                                                                            StudentExamAssignment.student_id == student_id)):
             raise api_error(404, "NOT_ASSIGNED", "That student is not assigned to this exam.")
-        if abs(Decimal(body.obtained_marks)) > ev.total_marks:
+        if abs(body.obtained_marks) > ev.total_marks:
             raise api_error(422, "INVALID_MARKS", f"Marks must be between -{ev.total_marks} and {ev.total_marks}.")
         try:
             row = next((r for r in rc.exam_results(str(ev.exam_version_id)) if r["student_id"] == student_id), None)
@@ -195,13 +224,13 @@ def adjust_result(exam_id: UUID, student_id: str, body: AdjustIn, idempotency_ke
         return _out(c, _staff_code(db, p))
     actor = _staff_code(db, p)
     try:
-        outcome = rc.adjust(test_id=str(ev.exam_version_id), student_id=student_id, obtained_marks=body.obtained_marks, reason=c.reason,
+        outcome = rc.adjust(test_id=str(ev.exam_version_id), student_id=student_id, obtained_marks=request["obtained_marks"], reason=c.reason,
                             actor=actor, correction_ref=str(c.correction_id), **({"subjects": subjects} if subjects is not None else {}))
     except ResultRejected as exc:
         raise _rejected(db, c, exc)
     except ResultServiceError as exc:
         raise _unavailable(db, c, exc)
-    c.outcome = {"previous": outcome.get("previous"), "new": outcome.get("new")}
+    c.outcome = json_safe({"previous": outcome.get("previous"), "new": outcome.get("new")})   # exact decimals in JSON
     _finish(db, c, p, e, [student_id], "Your result was updated")
     return _out(c, actor)
 
@@ -239,7 +268,8 @@ def correct_answer_key(exam_id: UUID, body: KeyCorrectionIn, idempotency_key: st
     key = _key(idempotency_key)
     reason = need_reason(body.reason)
     ev = _published(e, ev)
-    changes = sorted(({"question_order": c.question_order, "correct": c.correct_option} for c in body.changes), key=lambda c: c["question_order"])
+    changes = sorted(({"question_order": c.question_order, "correct": c.correct_option} if c.key is None else
+                      {"question_order": c.question_order, "key": c.key} for c in body.changes), key=lambda c: c["question_order"])
     request = {"changes": changes}
     c = _existing(db, key, exam_id, "ANSWER_KEY", request)
     if c is None:
@@ -265,7 +295,7 @@ def correct_answer_key(exam_id: UUID, body: KeyCorrectionIn, idempotency_key: st
         raise _rejected(db, c, exc)
     except ResultServiceError as exc:
         raise _unavailable(db, c, exc)
-    c.outcome = {**outcome, "reevaluation": re}
+    c.outcome = json_safe({**outcome, "reevaluation": re})
     _finish(db, c, p, e, list(re.get("changed", [])), "Your result was updated")
     return _out(c, actor)
 

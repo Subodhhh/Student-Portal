@@ -241,3 +241,67 @@ def test_secure_host_prefixed_cookie_is_cleared_with_secure_and_root_path(monkey
     attrs = _cookie_attrs(cleared)
     assert {"secure", "httponly", "path=/", "samesite=strict"} <= attrs and not any(a.startswith("domain") for a in attrs)
     assert attrs == _cookie_attrs(set_header)
+
+
+def _request(origin: str | None):
+    from starlette.requests import Request
+    headers = [(b"origin", origin.encode())] if origin else []
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": headers})
+
+
+def test_local_http_mode_gives_localhost_a_plain_cookie_and_everyone_else_the_secure_one(monkeypatch):
+    """Development on plain http://localhost (Chrome refuses a __Host- cookie there): only requests from a localhost http Origin get
+    the unprefixed "inst_sid" cookie - still Secure - and only with SESSION_COOKIE_LOCAL_HTTP; everyone else keeps __Host-."""
+    from starlette.responses import Response
+
+    from institute_common.config import settings
+    from institute_common.core.security import clear_session_cookie, session_id, set_session_cookie
+
+    monkeypatch.setattr(settings, "session_cookie_secure", True)
+    for enabled, origin, name, secure in ((True, "http://localhost:8081", "inst_sid=", True),
+                                          (True, "https://institute-portal-demo.pages.dev", "__Host-inst_sid=", True),
+                                          (True, None, "__Host-inst_sid=", True),
+                                          (False, "http://localhost:8081", "__Host-inst_sid=", True)):
+        monkeypatch.setattr(settings, "session_cookie_local_http", enabled)
+        resp, cleared = Response(), Response()
+        set_session_cookie(resp, "sid-value", 3600, _request(origin))
+        clear_session_cookie(cleared, _request(origin))
+        header = resp.headers["set-cookie"]
+        assert header.startswith(name) and cleared.headers["set-cookie"].startswith(name), (enabled, origin, header)
+        assert ("secure" in _cookie_attrs(header)) is secure and _cookie_attrs(header) == _cookie_attrs(cleared.headers["set-cookie"])
+
+    def sent(cookies: str):
+        from starlette.requests import Request
+        return Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"cookie", cookies.encode())]})
+    monkeypatch.setattr(settings, "session_cookie_local_http", False)
+    assert session_id(sent("inst_sid=plain")) is None                      # the plain cookie is ignored unless the dev mode is on
+    monkeypatch.setattr(settings, "session_cookie_local_http", True)
+    assert session_id(sent("inst_sid=plain")) == "plain"
+    assert session_id(sent("__Host-inst_sid=stale; inst_sid=current")) == "current"     # a cookie left from before the mode is ignored
+    assert session_id(sent("__Host-inst_sid=secure")) == "secure"                       # https hosts never get the unprefixed one
+
+
+def test_local_http_mode_is_refused_outside_development():
+    import pytest as _pytest
+
+    from institute_common.config import Settings
+    with _pytest.raises(ValueError, match="SESSION_COOKIE_LOCAL_HTTP is dev-only"):
+        Settings(database_url="sqlite://", app_env="prod", session_cookie_local_http=True, cors_origins="https://x.example",
+                 email_backend="smtp")
+
+
+def test_signing_in_from_local_http_sets_the_plain_cookie_and_the_session_works(client, world, make_staff, monkeypatch):
+    from institute_common.config import settings
+    monkeypatch.setattr(settings, "session_cookie_secure", True)
+    monkeypatch.setattr(settings, "session_cookie_local_http", True)
+    _, code = make_staff([(Role.TEACHER, world["p1"], None)])
+    local = ORIGIN                                      # the test client's own origin: plain http on localhost
+    r = client.post("/api/v1/auth/login", json={"staff_code": code, "password": PASSWORD}, headers=local)
+    assert r.status_code == 200 and r.json()["status"] == "AUTHENTICATED", r.text
+    assert r.headers["set-cookie"].startswith("inst_sid=") and {"secure", "httponly"} <= _cookie_attrs(r.headers["set-cookie"])
+    # the test client (like any non-browser client) does not send a Secure cookie over http: send it as a browser on localhost does
+    sent = {**local, "Cookie": "inst_sid=" + r.headers["set-cookie"].split(";")[0].split("=", 1)[1]}
+    assert client.get("/api/v1/auth/me", headers=sent).status_code == 200             # the unprefixed cookie carries the session
+    out = client.post("/api/v1/auth/logout", headers={**sent, "X-CSRF-Token": r.json()["me"]["csrf_token"]})
+    assert out.status_code == 200 and out.headers["set-cookie"].startswith("inst_sid=")
+    assert client.get("/api/v1/auth/me", headers=sent).status_code == 401

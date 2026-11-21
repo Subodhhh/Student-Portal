@@ -1,13 +1,15 @@
 """Question bank and the paper workflow: upload -> extraction -> validation -> approval ->
 publication, with immutable versions and a full status history."""
+import json
 import hashlib
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import and_, distinct, false, func, or_, select, true
 from sqlalchemy.orm import Session
@@ -22,13 +24,17 @@ from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.org import Branch
 from institute_common.models.papers import (
     Paper, PaperShare, PaperUpload, PaperVersion, PaperVersionEvent, PaperVersionQuestion,
-    IMAGE_FIELD_COLUMNS, Question, QuestionImageAsset, QuestionVersion, StoredFile,
+    IMAGE_FIELD_COLUMNS, Question, QuestionImageAsset, QuestionVersion, QuestionVersionAsset, StoredFile,
 )
+from institute_common.objectstore import ObjectStoreError, store_named
 from institute_common.util import escape_like, need_reason, paginate
 from institute_common.util import Strict
 from institute_common.schemas.common import Page
-from inst_paper.services import extraction, image_assets, isolation, paper_pdf, recognition
+from institute_common.core import question_types as qtypes
+from inst_paper.services import bank_access, extraction, image_assets, isolation, paper_pdf, recognition, taxonomy
 from inst_paper.services.math import domain_of_subject_id, markers, recognise
+from inst_paper.services.bulk_validation import version_hash, version_key
+from inst_paper.services.extraction import same_text_key
 from inst_paper.services.filestore import get_store
 
 router = APIRouter(prefix="/api/v1", tags=["Questions & Papers"])
@@ -63,27 +69,91 @@ class Classification(Strict):
     subtype: Label = None
 
 
-class QuestionIn(Classification):
+# A question's own marks are optional: marks belong to the test (RULES / UNIFORM marking). When given they are exact decimals with at
+# most 2 places, the precision of question_versions.marks_* (NUMERIC(6,2)).
+OptionalMarks = Annotated[Decimal | None, Field(lt=10000, decimal_places=2, allow_inf_nan=False)]
+
+
+def fill_marks_pair(body) -> None:
+    """A question has both marks or neither (the database checks the same rule). Giving only the positive marks keeps the earlier
+    API behaviour: no negative marking (0)."""
+    if body.marks_positive is None and body.marks_negative is not None:
+        raise ValueError("marks_negative needs marks_positive (or leave both empty: the test decides the marks)")
+    if body.marks_positive is not None and body.marks_negative is None:
+        body.marks_negative = Decimal(0)
+
+
+def _mark_text(value: Decimal | None) -> str:
+    """A mark as the validator reads it ("" = no marks of its own)."""
+    return "" if value is None else str(value)
+
+
+def paper_total(positive_marks: list[Decimal | None]) -> Decimal | None:
+    """A paper's maximum marks from its questions' own positive marks; None when any question has no marks (the test decides them)."""
+    if any(marks is None for marks in positive_marks):
+        return None
+    return sum((Decimal(marks) for marks in positive_marks), Decimal(0))
+
+
+class TypedQuestion(Strict):
+    """The type of a question and, for MSQ / NAT, its typed fields (institute_common.core.question_types: one rulebook for every
+    path). MCQ (the default; every body sent before MSQ/NAT existed): the four options and the correct letter, exactly as before.
+    MSQ / NAT: `content` (MSQ options / NAT number format) and `answer_key`; the four options and the letter stay empty."""
+    question_type: Literal["MCQ_SINGLE", "MCQ_MULTI", "NUMERICAL"] = "MCQ_SINGLE"
+    content: dict | None = None
+    answer_key: dict | None = None
+
+    def typed_rule(self, *, option_min: int):
+        if self.question_type == qtypes.MCQ:
+            if self.content is not None or self.answer_key is not None:
+                raise ValueError("an MCQ has options and a correct option, not content or answer_key")
+            if self.correct_option is None:
+                raise ValueError("an MCQ needs its correct option (A-D)")
+            if any(len(getattr(self, f"option_{x}")) < option_min for x in "abcd"):
+                raise ValueError("an MCQ needs its four options")
+            return self
+        if self.correct_option is not None or any(getattr(self, f"option_{x}") for x in "abcd"):
+            raise ValueError("MSQ and NAT questions keep their options and key in content / answer_key, not option_a-d / correct_option")
+        self.content, self.answer_key = qtypes.validate(self.question_type, self.content, self.answer_key)
+        if self.question_type == qtypes.MSQ and self.marks_negative not in (None, 0):
+            raise ValueError("MSQ questions are scored all-or-nothing and never lose marks: leave negative marks at 0")
+        return self
+
+
+class QuestionIn(Classification, TypedQuestion):
     scope: Literal["PROVIDER", "GLOBAL"] = "PROVIDER"
-    branch_id: UUID | None = None       # required for PROVIDER questions; GLOBAL questions belong to the platform catalogue
+    # PROVIDER: branch_id (a branch question) or provider_id alone (provider-wide, Provider Admin); GLOBAL: neither (platform catalogue)
+    branch_id: UUID | None = None
+    provider_id: UUID | None = None
     subject_id: UUID
     stem: str = Field(min_length=3, max_length=5000)
-    option_a: str = Field(min_length=1, max_length=5000)
-    option_b: str = Field(min_length=1, max_length=5000)
-    option_c: str = Field(min_length=1, max_length=5000)
-    option_d: str = Field(min_length=1, max_length=5000)
-    correct_option: str = Field(pattern="^[ABCD]$")
-    marks_positive: Decimal = Field(gt=0, lt=10000)
-    marks_negative: Decimal = Field(ge=0, lt=10000, default=Decimal(0))
+    option_a: str = Field(default="", max_length=5000)      # MCQ: required (typed_rule); MSQ / NAT: empty
+    option_b: str = Field(default="", max_length=5000)
+    option_c: str = Field(default="", max_length=5000)
+    option_d: str = Field(default="", max_length=5000)
+    correct_option: str | None = Field(default=None, pattern="^[ABCD]$")
+    marks_positive: OptionalMarks = Field(default=None, gt=0)
+    marks_negative: OptionalMarks = Field(default=None, ge=0)
     explanation: str | None = Field(default=None, max_length=5000)
     topic: TopicLabel = None
 
     @model_validator(mode="after")
+    def marks_rule(self):
+        fill_marks_pair(self)
+        return self
+
+    @model_validator(mode="after")
+    def type_rule(self):
+        return self.typed_rule(option_min=1)
+
+    @model_validator(mode="after")
     def scope_rule(self):
-        if self.scope == "PROVIDER" and not self.branch_id:
-            raise ValueError("a provider question needs branch_id")
-        if self.scope == "GLOBAL" and self.branch_id:
-            raise ValueError("a global question has no branch")
+        if self.scope == "PROVIDER" and not (self.branch_id or self.provider_id):
+            raise ValueError("a provider question needs branch_id (branch) or provider_id (provider-wide)")
+        if self.scope == "PROVIDER" and self.branch_id and self.provider_id:
+            raise ValueError("give branch_id for a branch question or provider_id for a provider-wide question, not both")
+        if self.scope == "GLOBAL" and (self.branch_id or self.provider_id):
+            raise ValueError("a global question has no provider or branch")
         return self
 
 
@@ -94,18 +164,27 @@ class QuestionPatch(Classification):
     status: str | None = Field(default=None, pattern="^(ACTIVE|ARCHIVED)$")
 
 
-class QuestionVersionIn(Strict):
+class QuestionVersionIn(TypedQuestion):
     # a text may be empty only where the question keeps a picture for that field (checked by _picture_rule)
     stem: str = Field(max_length=5000)
-    option_a: str = Field(max_length=5000)
-    option_b: str = Field(max_length=5000)
-    option_c: str = Field(max_length=5000)
-    option_d: str = Field(max_length=5000)
-    correct_option: str = Field(pattern="^[ABCD]$")
-    marks_positive: Decimal = Field(gt=0, lt=10000)
-    marks_negative: Decimal = Field(ge=0, lt=10000, default=Decimal(0))
+    option_a: str = Field(default="", max_length=5000)
+    option_b: str = Field(default="", max_length=5000)
+    option_c: str = Field(default="", max_length=5000)
+    option_d: str = Field(default="", max_length=5000)
+    correct_option: str | None = Field(default=None, pattern="^[ABCD]$")
+    marks_positive: OptionalMarks = Field(default=None, gt=0)
+    marks_negative: OptionalMarks = Field(default=None, ge=0)
     explanation: str | None = Field(default=None, max_length=5000)
     topic: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def marks_rule(self):
+        fill_marks_pair(self)
+        return self
+
+    @model_validator(mode="after")
+    def type_rule(self):
+        return self.typed_rule(option_min=0)        # an option text may be empty where the question keeps its picture
 
 
 class QuestionVersionOut(BaseModel):
@@ -118,12 +197,15 @@ class QuestionVersionOut(BaseModel):
     option_b: str
     option_c: str
     option_d: str
-    correct_option: str | None          # None when withheld (answers_hidden)
+    correct_option: str | None          # None when withheld (answers_hidden), and for MSQ / NAT (their key: answer_key)
     explanation: str | None
     answers_hidden: bool = False
+    question_type: str = "MCQ_SINGLE"
+    content: dict | None = None         # MSQ options / NAT number format
+    answer_key: dict | None = None      # MSQ correct set / NAT value + tolerance; None when withheld (answers_hidden)
     topic: str | None
-    marks_positive: Decimal
-    marks_negative: Decimal
+    marks_positive: Decimal | None      # None: the question has no marks of its own (the test decides them)
+    marks_negative: Decimal | None
     # pictures (GET /question-images/{id}); None: the field has no picture
     stem_image_id: UUID | None = None
     option_a_image_id: UUID | None = None
@@ -138,6 +220,9 @@ class BankQuestionOut(BaseModel):
     scope: str
     provider_id: UUID | None
     branch_id: UUID | None
+    # the name of the branch that created a branch question (shown to everyone who may see the question: its provider's staff and
+    # platform roles); None for platform and provider-wide questions
+    origin_branch_name: str | None = None
     subject_id: UUID
     status: str
     exam_type: str | None
@@ -145,6 +230,10 @@ class BankQuestionOut(BaseModel):
     chapter: str | None
     topic: str | None
     subtopic: str | None
+    # canonical taxonomy records the labels are linked to (None: the label matches no record yet)
+    chapter_id: UUID | None = None
+    topic_id: UUID | None = None
+    subtopic_id: UUID | None = None
     difficulty: str | None
     pattern: str
     subtype: str | None
@@ -165,7 +254,7 @@ class PaperVersionOut(BaseModel):
     version_no: int
     status: str
     question_count: int
-    total_marks: Decimal
+    total_marks: Decimal | None         # None: some question has no marks of its own
     content_hash: str
     created_by: UUID
     created_at: datetime
@@ -355,6 +444,14 @@ def _hash_questions(items: list[tuple]) -> str:
     return h.hexdigest()
 
 
+def _typed_parts(qtype: str | None, content, key) -> tuple:
+    """What an MSQ / NAT question adds to a paper's identity (its content and key); nothing for an MCQ, so MCQ paper hashes stay
+    exactly as they were."""
+    if (qtype or qtypes.MCQ) == qtypes.MCQ:
+        return ()
+    return (qtype, json.dumps(content, sort_keys=True), json.dumps(key, sort_keys=True))
+
+
 def _latest(db: Session, paper_id: UUID) -> PaperVersion | None:
     return db.scalar(select(PaperVersion).where(PaperVersion.paper_id == paper_id).order_by(PaperVersion.version_no.desc()).limit(1))
 
@@ -367,18 +464,30 @@ CLASSIFICATION = ("exam_type", "target_class", "chapter", "topic", "subtopic", "
 @router.post("/questions", response_model=QuestionVersionOut, status_code=201)
 def create_question(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     content = body.model_dump(include={"stem", "option_a", "option_b", "option_c", "option_d", "correct_option", "marks_positive",
-                                       "marks_negative", "explanation", "topic"})
-    meta = body.model_dump(include=set(CLASSIFICATION))
+                                       "marks_negative", "explanation", "topic", "question_type", "content", "answer_key"})
+    if body.question_type != qtypes.MCQ:
+        if any(o.get("image") for o in (body.content or {}).get("options", [])):
+            raise api_error(422, "PICTURE_NOT_ALLOWED", "Option pictures come with a bulk import; a question added here has text options.")
+        content["schema_version"] = qtypes.SCHEMA_VERSION
+    meta = {**body.model_dump(include=set(CLASSIFICATION)), "question_type": body.question_type}
     if body.scope == "GLOBAL":
         _scope_global(p, "question.manage", db)
         _active_subject(db, body.subject_id)
         q = Question(scope="GLOBAL", subject_id=body.subject_id, owner_staff_id=p.staff_id, **meta)
         provider_id = branch_id = None
+    elif body.provider_id:                  # provider-wide: the provider's own Provider Admin only (not platform roles)
+        if not bank_access.is_provider_admin(p, body.provider_id):
+            bank_access.deny(db, p, "question.manage", body.provider_id, reason="provider_wide_needs_provider_admin")
+        _check_subject(db, body.provider_id, body.subject_id)
+        q = Question(provider_id=body.provider_id, branch_id=None, subject_id=body.subject_id, owner_staff_id=p.staff_id, **meta)
+        taxonomy.link_question(db, q)
+        provider_id, branch_id = body.provider_id, None
     else:
         br = _branch(db, body.branch_id)
         p.require(db, "question.manage", provider_id=br.provider_id, branch_id=br.branch_id, subject_id=body.subject_id)
         _check_subject(db, br.provider_id, body.subject_id)
         q = Question(provider_id=br.provider_id, branch_id=br.branch_id, subject_id=body.subject_id, owner_staff_id=p.staff_id, **meta)
+        taxonomy.link_question(db, q)        # labels that name a canonical record get linked to it (nothing is created)
         provider_id, branch_id = br.provider_id, br.branch_id
     db.add(q)
     db.flush()
@@ -386,7 +495,7 @@ def create_question(body: QuestionIn, p: Principal = Depends(get_principal), db:
     db.add(v)
     db.commit()
     audit.record(db, "question.create", "SUCCESS", actor=p.staff_id, target_type="question", target_id=q.question_id,
-                 provider_id=provider_id, branch_id=branch_id, ip=p.ip, details={"scope": q.scope})
+                 provider_id=provider_id, branch_id=branch_id, ip=p.ip, details={"scope": q.scope, "question_type": q.question_type})
     return v
 
 
@@ -424,14 +533,37 @@ def new_question_version(question_id: UUID, body: QuestionVersionIn, p: Principa
     q = db.get(Question, question_id)
     if not q:
         raise api_error(404, "NOT_FOUND", "Question not found.")
-    _scope(p, "question.manage", q, db, owner_only_for_teachers=True)
+    bank_access.require_manage_question(db, p, q)
     last = db.scalar(select(func.max(QuestionVersion.version_no)).where(QuestionVersion.question_id == question_id)) or 0
     previous = db.scalar(select(QuestionVersion).where(QuestionVersion.question_id == question_id, QuestionVersion.version_no == last))
+    if body.question_type != q.question_type:
+        raise api_error(409, "TYPE_LOCKED", "A question keeps its type: create a new question for another type.")
     pictures = _pictures_of(previous)                       # a new version keeps the question's pictures
     content = body.model_dump()
-    _picture_rule(content, pictures)
+    links = {}
+    if q.question_type == qtypes.MCQ:
+        _picture_rule(content, pictures)
+    else:
+        content["schema_version"] = qtypes.SCHEMA_VERSION
+        # an MSQ option picture can only be one the question already has (no other provider's picture can be pulled in)
+        kept = dict(db.execute(select(QuestionVersionAsset.asset_id, QuestionVersionAsset.role)
+                               .where(QuestionVersionAsset.question_version_id == previous.question_version_id)).all()) if previous else {}
+        for option in (content["content"] or {}).get("options", []):
+            if option.get("image"):
+                try:
+                    asset = UUID(str(option["image"]))
+                except ValueError:
+                    asset = None
+                if asset not in kept:
+                    raise api_error(422, "PICTURE_NOT_ALLOWED", f"Option {option['id']} names a picture this question does not have.")
+                links[f"option_{option['id'].lower()}"] = asset
+                option["image"] = str(asset)
+        if not (content["stem"] or "").strip() and "stem_image_id" not in pictures:
+            raise api_error(422, "QUESTION_EMPTY", "The question needs its text or its picture.")
     v = QuestionVersion(question_id=question_id, version_no=last + 1, created_by=p.staff_id, **content, **pictures)
     db.add(v)
+    db.flush()
+    db.add_all([QuestionVersionAsset(question_version_id=v.question_version_id, role=role, asset_id=asset) for role, asset in links.items()])
     db.commit()  # earlier versions (and any paper that used them) are untouched
     audit.record(db, "question.new_version", "SUCCESS", actor=p.staff_id, target_type="question", target_id=question_id,
                  provider_id=q.provider_id, branch_id=q.branch_id, ip=p.ip)
@@ -468,35 +600,35 @@ def _usage_counts():
 
 
 def _question_visibility(p: Principal, db: Session, scope: str, provider_id: UUID | None, branch_id: UUID | None):
-    """SQL condition for the questions `p` may read. GLOBAL questions: anyone holding question.read. PROVIDER questions: a platform
-    role may look at any provider (optionally narrowed by provider/branch); everyone else must name a branch they can read, and
-    teachers then see only the subjects they teach there."""
+    """SQL condition for the questions `p` may read. GLOBAL questions: anyone holding question.read. PROVIDER questions: one
+    provider's whole bank (every branch's questions and the provider-wide ones are shared with all its branches; services/bank_access.py):
+    `branch_id` only names the branch the caller works in, i.e. its provider. A platform role without provider/branch sees every
+    provider; everyone else sees their provider (named, or their only one), teachers only the subjects they teach."""
     conds = []
     if scope in ("GLOBAL", "ALL") and p.has_perm("question.read"):
         conds.append(Question.scope == "GLOBAL")
     if scope in ("PROVIDER", "ALL"):
-        if p.is_global and p.has_perm("question.read") and not branch_id:
-            conds.append(and_(Question.scope == "PROVIDER", Question.provider_id == provider_id) if provider_id else Question.scope == "PROVIDER")
-        elif branch_id:
+        if branch_id:
             br = _branch(db, branch_id)
-            p.require(db, "question.read", provider_id=br.provider_id, branch_id=branch_id)
-            cond = and_(Question.scope == "PROVIDER", Question.branch_id == branch_id)
-            if not p.can("question.read", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
-                taught = {t.subject_id for t in p.teaching if t.branch_id == branch_id}
-                cond = and_(cond, Question.subject_id.in_(taught)) if taught else false()
-            conds.append(cond)
+            if provider_id and provider_id != br.provider_id:
+                raise api_error(422, "BRANCH_MISMATCH", "The branch does not belong to this provider.")
+            provider_id = br.provider_id
+        if provider_id:                                    # asked for explicitly: refused (403, audited) when not allowed
+            conds.append(bank_access.provider_condition(provider_id, bank_access.require_provider_read(db, p, provider_id)))
+        elif p.is_global and p.has_perm("question.read"):
+            conds.append(Question.scope == "PROVIDER")
+        elif (own := bank_access.single_provider(p)) is not None:
+            subjects = bank_access.readable_subjects(p, own)
+            if subjects is None or subjects:               # implied: a teacher who teaches nothing simply sees no provider questions
+                conds.append(bank_access.provider_condition(own, subjects))
         elif scope == "PROVIDER":
-            raise api_error(422, "BRANCH_REQUIRED", "Choose a branch to list its questions.")
+            raise api_error(422, "BRANCH_REQUIRED", "Choose a branch or provider to list its questions.")
     if not conds:
         p.require(db, "question.read")   # nothing visible at all: same answer as any other missing permission
     return or_(*conds)
 
 
-def _can_edit_question(p: Principal, q: Question) -> bool:
-    if q.scope == "GLOBAL":
-        return p.is_global and p.has_perm("question.manage")
-    kw = dict(provider_id=q.provider_id, branch_id=q.branch_id, subject_id=q.subject_id)
-    return p.can("question.manage", exclude_roles=(Role.TEACHER,), **kw) or (p.can("question.manage", **kw) and q.owner_staff_id == p.staff_id)
+_can_edit_question = bank_access.can_manage_question
 
 
 # ---------------------------------------------------------------- Global Test answer protection
@@ -550,16 +682,23 @@ class AnswerPolicy:
     def version_out(self, v: QuestionVersion) -> QuestionVersionOut:
         out = QuestionVersionOut.model_validate(v)
         if v.question_id in self.hidden:
-            out = out.model_copy(update={"correct_option": None, "explanation": None, "answers_hidden": True})
+            out = out.model_copy(update={"correct_option": None, "explanation": None, "answer_key": None, "answers_hidden": True})
         return out
 
 
-def _bank_out(p: Principal, q: Question, v: QuestionVersion, uses: int, policy: AnswerPolicy) -> BankQuestionOut:
+def _branch_names(db: Session, questions) -> dict:
+    ids = {q.branch_id for q in questions if q.branch_id}
+    return dict(db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(ids))).all()) if ids else {}
+
+
+def _bank_out(p: Principal, q: Question, v: QuestionVersion, uses: int, policy: AnswerPolicy, names: dict | None = None) -> BankQuestionOut:
     return BankQuestionOut(**{c: getattr(q, c) for c in ("question_id", "scope", "provider_id", "branch_id", "subject_id", "status", "exam_type",
-                                                         "target_class", "chapter", "topic", "subtopic", "difficulty", "pattern", "subtype",
+                                                         "target_class", "chapter", "topic", "subtopic", "chapter_id", "topic_id", "subtopic_id",
+                                                         "difficulty", "pattern", "subtype",
                                                          "question_type", "owner_staff_id", "forked_from_question_id", "created_at")},
                            latest=policy.version_out(v), usage_count=uses or 0, can_edit=_can_edit_question(p, q),
-                           reserved_for_global_test=q.question_id in policy.reserved)
+                           reserved_for_global_test=q.question_id in policy.reserved,
+                           origin_branch_name=(names or {}).get(q.branch_id))
 
 
 @router.get("/questions", response_model=Page[BankQuestionOut])
@@ -571,12 +710,15 @@ def search_questions(
     chapter: list[str] | None = Query(default=None, max_length=30), topic: str | None = Query(default=None, max_length=80),
     subtopic: str | None = Query(default=None, max_length=80),
     difficulty: list[str] | None = Query(default=None, max_length=3), pattern: str | None = Query(default=None, max_length=30),
+    question_type: str | None = Query(default=None, pattern="^(MCQ_SINGLE|MCQ_MULTI|NUMERICAL)$"),
     include_used: bool = True, status: str = Query(default="ACTIVE", pattern="^(ACTIVE|ARCHIVED|ALL)$"),
     q: str | None = Query(default=None, max_length=200), page: int = 1, page_size: int = 25,
+    origin: str | None = Query(default=None, pattern="^(PROVIDER_WIDE|BRANCH)$"), origin_branch_id: UUID | None = None,
     p: Principal = Depends(get_principal), db: Session = Depends(get_db),
 ):
     """The question bank: reusable questions with their latest version, filtered along the taxonomy. Only staff use this API; the
-    Student services receive questions solely through exam delivery, and answers there are revealed only at result review."""
+    Student services receive questions solely through exam delivery, and answers there are revealed only at result review.
+    `origin` / `origin_branch_id` narrow PROVIDER questions by where they were created (they never widen what is visible)."""
     latest, uses = _latest_versions(), _usage_counts()
     stmt = (select(Question, QuestionVersion, uses.c.uses)
             .join(latest, latest.c.question_id == Question.question_id)
@@ -585,10 +727,16 @@ def search_questions(
             .where(_question_visibility(p, db, scope, provider_id, branch_id)))
     if status != "ALL":
         stmt = stmt.where(Question.status == status)
+    if origin == "PROVIDER_WIDE":
+        stmt = stmt.where(Question.scope == "PROVIDER", Question.branch_id.is_(None))
+    elif origin == "BRANCH":
+        stmt = stmt.where(Question.scope == "PROVIDER", Question.branch_id.is_not(None))
+    if origin_branch_id:
+        stmt = stmt.where(Question.branch_id == origin_branch_id)
     if subject_id:
         stmt = stmt.where(Question.subject_id.in_(subject_id))
     for col, val in ((Question.exam_type, exam_type), (Question.target_class, target_class), (Question.topic, topic),
-                     (Question.subtopic, subtopic), (Question.pattern, pattern)):
+                     (Question.subtopic, subtopic), (Question.pattern, pattern), (Question.question_type, question_type)):
         if val:
             stmt = stmt.where(col == val)
     if chapter:
@@ -603,7 +751,8 @@ def search_questions(
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = db.execute(stmt.order_by(Question.created_at.desc(), Question.question_id).limit(page_size).offset((max(page, 1) - 1) * page_size)).all()
     policy = AnswerPolicy(db, p, [qq for qq, _, _ in rows])
-    return {"items": [_bank_out(p, qq, v, n, policy) for qq, v, n in rows], "total": total, "page": max(page, 1), "page_size": page_size}
+    names = _branch_names(db, [qq for qq, _, _ in rows])
+    return {"items": [_bank_out(p, qq, v, n, policy, names) for qq, v, n in rows], "total": total, "page": max(page, 1), "page_size": page_size}
 
 
 def _question(db: Session, question_id: UUID) -> Question:
@@ -617,7 +766,7 @@ def _question(db: Session, question_id: UUID) -> Question:
 def get_question(question_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """One question: every content version (immutable) and the papers that use it, limited to papers the caller may read."""
     q = _question(db, question_id)
-    _scope(p, "question.read", q, db)
+    bank_access.require_read_question(db, p, q)
     versions = db.scalars(select(QuestionVersion).where(QuestionVersion.question_id == question_id).order_by(QuestionVersion.version_no.desc())).all()
     used = db.execute(
         select(Paper, PaperVersion, QuestionVersion.version_no)
@@ -637,7 +786,7 @@ def get_question(question_id: UUID, p: Principal = Depends(get_principal), db: S
     latest_uses = db.scalar(select(func.count(distinct(PaperVersionQuestion.paper_version_id))).join(
         QuestionVersion, QuestionVersion.question_version_id == PaperVersionQuestion.question_version_id).where(QuestionVersion.question_id == question_id)) or 0
     policy = AnswerPolicy(db, p, [q])
-    return {"question": _bank_out(p, q, versions[0], latest_uses, policy), "versions": [policy.version_out(v) for v in versions],
+    return {"question": _bank_out(p, q, versions[0], latest_uses, policy, _branch_names(db, [q])), "versions": [policy.version_out(v) for v in versions],
             "usage": usage, "usage_elsewhere": hidden}
 
 
@@ -646,12 +795,14 @@ def update_question(question_id: UUID, body: QuestionPatch, p: Principal = Depen
     """Re-classify or archive/restore. Archiving hides the question from the bank; papers and exams that already use one of its
     versions are unaffected (they reference the exact version)."""
     q = _question(db, question_id)
-    _scope(p, "question.manage", q, db, owner_only_for_teachers=True)
+    bank_access.require_manage_question(db, p, q)
     changes = body.model_dump(exclude_unset=True)
     if "pattern" in changes and changes["pattern"] is None:
         changes.pop("pattern")
     for k, v in changes.items():
         setattr(q, k, v)
+    if {"chapter", "topic", "subtopic"} & changes.keys():
+        taxonomy.link_question(db, q)        # re-classified: follow the new labels to their canonical records
     db.commit()
     audit.record(db, "question.archive" if changes.get("status") == "ARCHIVED" else "question.update", "SUCCESS", actor=p.staff_id,
                  target_type="question", target_id=question_id, provider_id=q.provider_id, branch_id=q.branch_id, ip=p.ip,
@@ -659,7 +810,7 @@ def update_question(question_id: UUID, body: QuestionPatch, p: Principal = Depen
     v = db.scalar(select(QuestionVersion).where(QuestionVersion.question_id == question_id).order_by(QuestionVersion.version_no.desc()).limit(1))
     uses = db.scalar(select(func.count(distinct(PaperVersionQuestion.paper_version_id))).join(
         QuestionVersion, QuestionVersion.question_version_id == PaperVersionQuestion.question_version_id).where(QuestionVersion.question_id == question_id)) or 0
-    return _bank_out(p, q, v, uses, AnswerPolicy(db, p, [q]))
+    return _bank_out(p, q, v, uses, AnswerPolicy(db, p, [q]), _branch_names(db, [q]))
 
 
 @router.get("/question-taxonomy")
@@ -896,6 +1047,7 @@ def persist_validated_paper(db: Session, p: Principal, br: Branch, title: str, e
         bank.topic = (q.topic or None) and q.topic[:200]
         bank.chapter = (q.chapter or None) and q.chapter[:80]
         bank.subtopic = (q.sub_topic or None) and q.sub_topic[:80]
+        taxonomy.link_question(db, bank)
         qv = QuestionVersion(question_id=bank.question_id, version_no=1, stem=q.stem, option_a=q.options["A"], option_b=q.options["B"],
                              option_c=q.options["C"], option_d=q.options["D"], correct_option=q.correct, explanation=q.explanation,
                              topic=q.topic, marks_positive=q.marks, marks_negative=q.negative, created_by=p.staff_id,
@@ -959,18 +1111,40 @@ IMAGE_HEADERS = {
 }
 
 
+def _used_by_platform_question(db: Session, asset_id: UUID) -> bool:
+    in_columns = db.scalar(select(QuestionVersion.question_version_id).join(Question, Question.question_id == QuestionVersion.question_id)
+                           .where(Question.scope == "GLOBAL", or_(*(getattr(QuestionVersion, c) == asset_id for c in IMAGE_FIELD_COLUMNS.values())))
+                           .limit(1)) is not None
+    # an MSQ option picture (question_version_assets) of a platform question is platform content too
+    return in_columns or db.scalar(select(QuestionVersionAsset.question_version_id)
+                                   .join(QuestionVersion, QuestionVersion.question_version_id == QuestionVersionAsset.question_version_id)
+                                   .join(Question, Question.question_id == QuestionVersion.question_id)
+                                   .where(Question.scope == "GLOBAL", QuestionVersionAsset.asset_id == asset_id).limit(1)) is not None
+
+
 @router.get("/question-images/{asset_id}")
 def question_image(asset_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """A question or option picture, for staff of the provider that uploaded it. Any other request gets the same 404 as a missing
-    picture, so asset ids of other providers cannot be probed."""
+    """A question or option picture: a provider's picture for that provider's staff (all its branches), a platform picture
+    (provider_id NULL) for all staff, like the platform questions it belongs to. A provider picture that a PLATFORM question uses
+    (a provider paper copied into the platform keeps its pictures) is platform content too. Any other request gets the same 404 as a
+    missing picture, so asset ids of other providers cannot be probed."""
     from institute_common.core.security import can_see_provider
     asset = db.get(QuestionImageAsset, asset_id)
-    if asset is None or not p.has_perm("paper.read") or not can_see_provider(p, asset.provider_id):
+    if asset is None or not p.has_perm("paper.read") or not (
+            asset.provider_id is None or can_see_provider(p, asset.provider_id) or _used_by_platform_question(db, asset_id)):
         raise api_error(404, "NOT_FOUND", "Picture not found.")
     try:
+        if asset.storage != "db":
+            # Object-stored picture: a store that can sign (S3/R2) gets a short-lived URL, AFTER the authorisation above; the bucket
+            # itself stays private. The redirect is not cached, so an expired URL is never reused.
+            url = store_named(asset.storage).signed_url(asset.storage_key, asset.mime_type)
+            if url:
+                return RedirectResponse(url, status_code=307, headers={"Cache-Control": "private, no-store"})
         body = image_assets.image_bytes(asset)
     except LookupError:
         raise api_error(404, "FILE_MISSING", "The stored picture is unavailable.")
+    except ObjectStoreError:
+        raise api_error(503, "STORE_UNAVAILABLE", "Pictures are temporarily unavailable. Try again shortly.")
     return Response(body, media_type=asset.mime_type, headers=IMAGE_HEADERS)
 
 
@@ -1006,14 +1180,14 @@ def build_paper(body: PaperBuildIn, p: Principal = Depends(get_principal), db: S
     """Assemble a paper version from bank questions. Each question contributes its exact latest version by reference, so nothing
     is duplicated and later edits to a question (new versions) never change this paper. The version starts as VALIDATED and goes
     through the normal approve -> publish workflow; earlier versions of the paper are untouched."""
-    provider_id, branch_id, existing, versions, content_hash = _check_build(body, p, db)
+    provider_id, branch_id, existing, versions, content_hash, review = _check_build(body, p, db)
     paper = existing or Paper(scope=body.scope, provider_id=provider_id, branch_id=branch_id, subject_id=body.subject_id, title=body.title,
                               exam_type=body.exam_type, target_class=body.target_class, created_by=p.staff_id)
     if not existing:
         db.add(paper)
         db.flush()
     version_no = (db.scalar(select(func.max(PaperVersion.version_no)).where(PaperVersion.paper_id == paper.paper_id)) or 0) + 1
-    total = sum((Decimal(v.marks_positive) for v in versions), Decimal(0))
+    total = paper_total([v.marks_positive for v in versions])
     pv = PaperVersion(paper_id=paper.paper_id, version_no=version_no, status="VALIDATED", created_by=p.staff_id,
                       question_count=len(versions), total_marks=total, content_hash=content_hash)
     db.add(pv)
@@ -1023,16 +1197,19 @@ def build_paper(body: PaperBuildIn, p: Principal = Depends(get_principal), db: S
     _event(db, pv, "VALIDATED", p.staff_id, None, "VALIDATED", "Built from the question bank")
     db.commit()
     audit.record(db, "paper.build", "SUCCESS", actor=p.staff_id, target_type="paper_version", target_id=pv.paper_version_id,
-                 provider_id=provider_id, branch_id=branch_id, ip=p.ip, details={"questions": len(versions), "scope": body.scope})
+                 provider_id=provider_id, branch_id=branch_id, ip=p.ip, details={"questions": len(versions), "scope": body.scope,
+                                                                                **({"review": review} if review else {})})
     return {"paper_id": str(paper.paper_id), "paper_version_id": str(pv.paper_version_id), "version_no": version_no, "status": pv.status,
-            "question_count": pv.question_count, "total_marks": f"{total:.2f}"}
+            "question_count": pv.question_count, "total_marks": None if total is None else f"{total:.2f}", "review": review}
 
 
 @router.post("/papers/check")
 def check_paper_build(body: PaperBuildIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Dry run of POST /papers: the same authorisation and validation, nothing is written (used before multi-paper workflows)."""
-    _, _, _, versions, _ = _check_build(body, p, db)
-    return {"ok": True, "question_count": len(versions), "total_marks": str(sum((Decimal(v.marks_positive) for v in versions), Decimal(0)))}
+    """Dry run of POST /papers: the same authorisation and validation, nothing is written (used before multi-paper workflows).
+    `review` lists possible duplicates worth a look (never blocking; see _content_review)."""
+    _, _, _, versions, _, review = _check_build(body, p, db)
+    total = paper_total([v.marks_positive for v in versions])
+    return {"ok": True, "question_count": len(versions), "total_marks": None if total is None else str(total), "review": review}
 
 
 def _check_build(body: PaperBuildIn, p: Principal, db: Session):
@@ -1069,9 +1246,8 @@ def _check_build(body: PaperBuildIn, p: Principal, db: Session):
             usable = qq.scope == "GLOBAL"                 # platform papers use platform questions only
         elif qq.scope == "GLOBAL":
             usable = p.has_perm("question.read")          # any provider may reuse platform questions
-        else:                                             # own provider's questions, in branches the caller can read
-            usable = qq.provider_id == provider_id and p.can("question.read", provider_id=qq.provider_id, branch_id=qq.branch_id,
-                                                             subject_id=qq.subject_id)
+        else:                                             # own provider's questions: shared by all its branches (bank_access)
+            usable = qq.provider_id == provider_id and bank_access.can_read_question(p, qq)
         if not usable:
             problems.append({"position": pos, "message": "Question not found."})   # same answer as missing: no cross-provider probing
         elif body.scope == "PROVIDER" and qq.question_id in reserved:
@@ -1080,7 +1256,8 @@ def _check_build(body: PaperBuildIn, p: Principal, db: Session):
             problems.append({"position": pos, "message": "Question is archived."})
         elif qq.subject_id != body.subject_id:
             problems.append({"position": pos, "message": "Question belongs to a different subject."})
-        elif Decimal(v.marks_positive) != Decimal(v.marks_positive).to_integral_value() or Decimal(v.marks_negative) != Decimal(v.marks_negative).to_integral_value():
+        elif v.marks_positive is not None and (Decimal(v.marks_positive) != Decimal(v.marks_positive).to_integral_value()
+                                                or Decimal(v.marks_negative) != Decimal(v.marks_negative).to_integral_value()):
             problems.append({"position": pos, "message": "Student delivery needs whole-number marks; correct this question first."})
     if problems:
         # All or nothing, like uploads: one bad question rejects the whole paper.
@@ -1088,14 +1265,64 @@ def _check_build(body: PaperBuildIn, p: Principal, db: Session):
     versions = [rows[qid][1] for qid in body.question_ids]
     if len(versions) > settings.max_paper_questions:
         raise api_error(422, "TOO_MANY_QUESTIONS", f"A paper may have at most {settings.max_paper_questions} questions.")
-    content_hash = _hash_questions([(v.stem, v.option_a, v.option_b, v.option_c, v.option_d, v.correct_option, v.marks_positive, v.marks_negative)
-                                    for v in versions])
+    duplicates, review = _content_review(db, versions)
+    if duplicates:
+        raise api_error_detail(422, "INVALID_QUESTIONS", "The paper was not created: fix the listed questions.", errors=duplicates[:200])
+    content_hash = _hash_questions([(v.stem, v.option_a, v.option_b, v.option_c, v.option_d, v.correct_option, v.marks_positive, v.marks_negative,
+                                     *_typed_parts(v.question_type, v.content, v.answer_key)) for v in versions])
     dup = db.scalar(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
         Paper.scope == body.scope, Paper.branch_id == branch_id if branch_id else Paper.branch_id.is_(None),
         Paper.subject_id == body.subject_id, PaperVersion.content_hash == content_hash, PaperVersion.status != "WITHDRAWN"))
     if dup:
         raise api_error_detail(409, "DUPLICATE_PAPER", "An identical paper already exists for this subject.", paper_version_id=str(dup.paper_version_id))
-    return provider_id, branch_id, existing, versions, content_hash
+    return provider_id, branch_id, existing, versions, content_hash, review
+
+
+REVIEW_MIN_TEXT = 25    # shorter question texts without a picture ("Find x.") are too generic to flag as possibly the same question
+
+
+def _content_review(db: Session, versions: list[QuestionVersion]) -> tuple[list[dict], list[dict]]:
+    """Duplicates by CONTENT among the chosen questions (different bank questions can hold the same content, e.g. a platform and a
+    provider copy). Content = normalised text + picture checksums of the question and each option, in order (the bulk import's
+    content_hash), never the text alone:
+      * identical content            -> a problem (blocks the build): "Same question as position N.";
+      * same question text/picture with the same options in another order, or (text >= REVIEW_MIN_TEXT or a picture) with other
+        options -> a review flag (never blocks)."""
+    asset_ids = {getattr(v, c) for v in versions for c in IMAGE_FIELD_COLUMNS.values() if getattr(v, c)}
+    asset_ids |= {UUID(str(o["image"])) for v in versions for o in (v.content or {}).get("options", []) if o.get("image")}
+    checksums = dict(db.execute(select(QuestionImageAsset.asset_id, QuestionImageAsset.checksum)
+                                .where(QuestionImageAsset.asset_id.in_(asset_ids))).all()) if asset_ids else {}
+    pic = lambda v, field: checksums.get(getattr(v, IMAGE_FIELD_COLUMNS[field]))     # noqa: E731
+    first: dict[str, tuple[int, str]] = {}
+    by_stem: dict[tuple, list[tuple[int, str, tuple]]] = {}
+    problems, review = [], []
+    for pos, v in enumerate(versions, start=1):
+        qtype = v.question_type or qtypes.MCQ
+        h, key = version_hash(v, checksums.get), version_key(v)        # type-aware content identity and the key (D11)
+        if h in first:
+            if first[h][1] == key:
+                problems.append({"position": pos, "message": f"Same question as position {first[h][0]}."})
+            else:
+                review.append({"positions": [first[h][0], pos], "reason": "Same question with a different answer key."})
+            continue
+        first[h] = (pos, key)
+        if qtype == qtypes.MCQ:
+            options = [(getattr(v, f"option_{x}"), pic(v, x.upper())) for x in "abcd"]
+        else:
+            options = [(o.get("text"), checksums.get(UUID(str(o["image"]))) if o.get("image") else None)
+                       for o in (v.content or {}).get("options", [])]
+        stem = (qtype, same_text_key(v.stem or ""), pic(v, "question"))
+        by_stem.setdefault(stem, []).append((pos, h, tuple(sorted((same_text_key(t or ""), c or "") for t, c in options))))
+    for (_qtype, stem_text, stem_pic), group in by_stem.items():
+        if len(group) < 2:
+            continue
+        positions = [pos for pos, _, _ in group]
+        if len({opts for _, _, opts in group}) == 1 and any(opts for _, _, opts in group):
+            review.append({"positions": positions, "reason": "Same question with its options in a different order."})
+        elif stem_pic or len(stem_text) >= REVIEW_MIN_TEXT:
+            review.append({"positions": positions, "reason": "Same question text with different options." if group[0][2] else
+                           "Same question text with a different answer format or unit."})
+    return problems, review
 
 
 
@@ -1289,6 +1516,16 @@ def _marking(tests) -> tuple[tuple[Decimal, Decimal] | None, list[str]]:
                   "(uniform marking of that test)." for t in uniform]
 
 
+def _subject_marking(name: str, marks: list[tuple]) -> dict:
+    """One row of a PDF's marking scheme from the (positive, negative) marks of a subject's questions. When any question has no marks
+    of its own, the subject's marks are decided by the test (None: the PDF prints "Set by the test")."""
+    if any(positive is None for positive, _negative in marks):
+        return {"subject": name, "questions": len(marks), "max_marks": None, "correct": None, "incorrect": None}
+    positives, negatives = [x for x, _y in marks], [y for _x, y in marks]
+    return {"subject": name, "questions": len(marks), "max_marks": sum(positives), "correct": (min(positives), max(positives)),
+            "incorrect": (min(negatives), max(negatives))}
+
+
 def _pdf_papers(db: Session, p: Principal, items: list[tuple[Paper, PaperVersion]], rows, with_answers: bool) -> list[dict]:
     """What a PDF shows of each (paper, version): names instead of ids, each paper's OWN provider and branch (never the provider that
     used it in a test), its Global Tests, the subject-wise marking scheme and its questions in paper order. Correct answers and
@@ -1309,18 +1546,29 @@ def _pdf_papers(db: Session, p: Principal, items: list[tuple[Paper, PaperVersion
         questions, per_subject = [], {}
         for qv, subject_id in by_version.get(v.paper_version_id, []):
             pos, neg = uniform or (qv.marks_positive, qv.marks_negative)
-            q = {"stem": qv.stem, "options": [qv.option_a, qv.option_b, qv.option_c, qv.option_d], "marks_positive": pos, "marks_negative": neg}
+            qtype = qv.question_type or qtypes.MCQ
+            if qtype == qtypes.MCQ:
+                q = {"type": qtype, "stem": qv.stem, "options": [qv.option_a, qv.option_b, qv.option_c, qv.option_d],
+                     "letters": "ABCD", "marks_positive": pos, "marks_negative": neg}
+            else:
+                options = (qv.content or {}).get("options", [])
+                q = {"type": qtype, "stem": qv.stem, "options": [o.get("text") or "(picture)" for o in options],
+                     "letters": "".join(o["id"] for o in options), "unit": (qv.content or {}).get("unit"),
+                     "marks_positive": pos, "marks_negative": Decimal(0) if qtype == qtypes.MSQ and pos is not None else neg}
             if with_answers:
-                q.update(answer=qv.correct_option, explanation=qv.explanation)
+                key = qv.correct_option if qtype == qtypes.MCQ else qv.answer_key
+                q.update(answer=qtypes.describe_key(qtype, key), correct=set(key["correct"]) if qtype == qtypes.MSQ else {key} if qtype == qtypes.MCQ else set(),
+                         explanation=qv.explanation)
             questions.append(q)
             per_subject.setdefault(subjects.get(subject_id) or subjects.get(paper.subject_id, ""), []).append((pos, neg))
-        marking = [{"subject": name, "questions": len(m), "max_marks": sum(x for x, _y in m), "correct": (min(x for x, _y in m), max(x for x, _y in m)),
-                    "incorrect": (min(y for _x, y in m), max(y for _x, y in m))} for name, m in per_subject.items()]
+        marking = [_subject_marking(name, m) for name, m in per_subject.items()]
         out.append({"title": paper.title, "version_no": v.version_no, "subject": subjects.get(paper.subject_id, ""),
                     "provider": "Platform paper" if paper.scope == "GLOBAL" else providers.get(paper.provider_id),
                     "branch": None if paper.scope == "GLOBAL" else branches.get(paper.branch_id),
                     "global_tests": [t.name for t in linked], "exam_type": paper.exam_type, "target_class": paper.target_class,
-                    "total_questions": len(questions), "total_marks": sum(m["max_marks"] for m in marking), "marking": marking,
+                    "total_questions": len(questions),
+                    "total_marks": None if any(m["max_marks"] is None for m in marking) else sum(m["max_marks"] for m in marking),
+                    "marking": marking,
                     "marking_notes": notes, "questions": questions})
     return out
 
@@ -1379,8 +1627,9 @@ def recognition_preview_for_correction(pv_id: UUID, body: RecognitionPreviewIn, 
 def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Correct questions of a version (preview -> correct -> approve/publish). Versions are immutable, so a correction creates the NEXT
     version: untouched questions are shared with the source version. A corrected question becomes a new version of the same bank
-    question only when that question belongs to this paper's own scope and the caller may manage it; a platform question, another
-    branch's question or another teacher's question is never re-versioned from someone else's paper - the correction becomes a NEW
+    question only when that question belongs to this paper's own platform/provider and the caller may change it (owns_for_versioning); a
+    platform question, or a question of the provider the caller may only use (another branch's, the provider's, another teacher's) is
+    never re-versioned from someone else's paper - the correction becomes a NEW
     question owned by this paper's scope, linked to the original (forked_from_question_id), and the original stays exactly as it is.
     The whole resulting paper is validated again; any problem rejects the correction and nothing is created."""
     reason = need_reason(body.reason)
@@ -1396,16 +1645,24 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
     unknown = sorted(set(edits) - set(current))
     if unknown:
         raise api_error_detail(422, "INVALID_POSITION", f"This paper has no question {unknown[0]}.", positions=unknown)
+    typed = sorted(pos for pos in edits if (current[pos].question_type or qtypes.MCQ) != qtypes.MCQ)
+    if typed:
+        raise api_error_detail(422, "TYPED_QUESTION_EDIT", f"Question {typed[0]} is an MSQ or NAT question: correct it in the Question "
+                               "Bank (a new version), then build the paper again.", positions=typed)
 
     merged: dict[int, dict] = {}
+    typed_of: dict[int, tuple] = {}          # what an MSQ / NAT position adds to the paper's identity (never edited here)
     changed: set[int] = set()
     for pos, qv in current.items():
         m = {"stem": qv.stem, "option_a": qv.option_a, "option_b": qv.option_b, "option_c": qv.option_c, "option_d": qv.option_d,
              "correct_option": qv.correct_option, "marks_positive": qv.marks_positive, "marks_negative": qv.marks_negative,
              "explanation": qv.explanation, "topic": qv.topic,
              **{c: getattr(qv, c) for c in IMAGE_FIELD_COLUMNS.values()}}      # pictures are kept by a correction
+        typed_of[pos] = _typed_parts(qv.question_type, qv.content, qv.answer_key)
         if pos in edits:
             new = {**m, **edits[pos].changes()}
+            if new["marks_positive"] is not None and new["marks_negative"] is None:
+                new["marks_negative"] = Decimal(0)        # marks given to a question that had none: no negative marking unless set
             if any(new[k] != m[k] for k in m):
                 changed.add(pos)
             m = new
@@ -1432,9 +1689,9 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
 
     check = extraction.validate_paper(
         [(pos + 1, {"question": m["stem"], "option_a": m["option_a"], "option_b": m["option_b"], "option_c": m["option_c"], "option_d": m["option_d"],
-                    "correct": m["correct_option"], "marks": str(m["marks_positive"]), "negative_marks": str(m["marks_negative"]),
-                    "explanation": m["explanation"] or "", "topic": m["topic"] or ""}) for pos, m in merged.items()],
-        settings.max_paper_questions, {pos + 1: _stored_pictures(m) for pos, m in merged.items()})
+                    "correct": m["correct_option"], "marks": _mark_text(m["marks_positive"]), "negative_marks": _mark_text(m["marks_negative"]),
+                    "explanation": m["explanation"] or "", "topic": m["topic"] or ""}) for pos, m in merged.items() if not typed_of[pos]],
+        settings.max_paper_questions, {pos + 1: _stored_pictures(m) for pos, m in merged.items() if not typed_of[pos]}, marks_optional=True)
     if not check.ok:
         # error rows are spreadsheet-style (position + 1); report the question position
         errors = [{**e, "row": (e["row"] - 1) if e.get("row") else None} for e in check.errors]
@@ -1442,7 +1699,7 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
 
     content_hash = _hash_questions([(m["stem"], m["option_a"], m["option_b"], m["option_c"], m["option_d"], m["correct_option"],
                                      m["marks_positive"], m["marks_negative"],
-                                     *(str(m[c]) for c in IMAGE_FIELD_COLUMNS.values() if m[c])) for m in merged.values()])
+                                     *(str(m[c]) for c in IMAGE_FIELD_COLUMNS.values() if m[c]), *typed_of[pos]) for pos, m in merged.items()])
     same = db.scalars(select(PaperVersion).join(Paper, Paper.paper_id == PaperVersion.paper_id).where(
         Paper.scope == paper.scope, Paper.branch_id == paper.branch_id if paper.branch_id else Paper.branch_id.is_(None),
         Paper.subject_id == paper.subject_id, PaperVersion.content_hash == content_hash, PaperVersion.status != "WITHDRAWN")).all()
@@ -1464,7 +1721,7 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
                                paper_version_id=str(dup.paper_version_id))
 
     version_no = (db.scalar(select(func.max(PaperVersion.version_no)).where(PaperVersion.paper_id == paper.paper_id)) or 0) + 1
-    total = sum((m["marks_positive"] for m in merged.values()), Decimal(0))
+    total = paper_total([m["marks_positive"] for m in merged.values()])
     nv = PaperVersion(paper_id=paper.paper_id, version_no=version_no, status="VALIDATED", created_by=p.staff_id,
                       question_count=len(merged), total_marks=total, content_hash=content_hash)
     db.add(nv)
@@ -1481,6 +1738,7 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
                 copy = Question(scope=paper.scope, provider_id=paper.provider_id, branch_id=paper.branch_id, subject_id=paper.subject_id,
                                 owner_staff_id=p.staff_id, forked_from_question_id=source.question_id,
                                 **{k: getattr(source, k) for k in CLASSIFICATION})
+                taxonomy.link_question(db, copy)
                 db.add(copy)
                 db.flush()
                 qv = QuestionVersion(question_id=copy.question_id, version_no=1, created_by=p.staff_id, **m)
@@ -1505,10 +1763,12 @@ def revise_paper(pv_id: UUID, body: RevisionIn, p: Principal = Depends(get_princ
 
 
 def owns_for_versioning(p: Principal, q: Question, paper: Paper) -> bool:
-    """May a correction made in `paper` become the next version of bank question `q`? Only if `q` belongs to the paper's own scope
-    (same platform/provider and branch) and the caller may manage `q` itself (teachers: their own questions)."""
-    same_scope = (q.scope, q.provider_id, q.branch_id) == (paper.scope, paper.provider_id, paper.branch_id)
-    return same_scope and _can_edit_question(p, q)
+    """May a correction made in `paper` become the next version of bank question `q`? Only if `q` belongs to the paper's own platform
+    or provider - a provider's questions are shared by all its branches, so the branch does not matter here - and the caller may
+    change `q` itself (bank_access.can_manage_question: the Provider Admin, the origin branch's admin, the owning teacher). Anyone
+    else's correction becomes a new question linked to the original (revise_paper), which stays exactly as it is."""
+    same_owner = (q.scope, q.provider_id) == (paper.scope, paper.provider_id)
+    return same_owner and _can_edit_question(p, q)
 
 
 def validation_summary(result) -> dict:

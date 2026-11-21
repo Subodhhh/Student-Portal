@@ -18,24 +18,48 @@ from institute_common.models.staff import Staff, StaffRoleAssignment
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
-def cookie_name() -> str:
+LOCAL_HTTP_ORIGINS = ("http://localhost:", "http://127.0.0.1:", "http://[::1]:")
+LOCAL_COOKIE = "inst_sid"
+
+
+def local_http_request(request) -> bool:
+    """A browser on plain http://localhost talking to this dev stack (only with SESSION_COOKIE_LOCAL_HTTP, refused for qa/prod):
+    its session cookie is "inst_sid" - still Secure and HttpOnly - because Chrome refuses the __Host- prefix there."""
+    if request is None or not settings.session_cookie_local_http:
+        return False
+    origin = request.headers.get("origin") or ""
+    return any(origin.startswith(o) for o in LOCAL_HTTP_ORIGINS)
+
+
+def cookie_name(request=None) -> str:
     # __Host- prefix pins the cookie to this exact host over HTTPS (no Domain attr).
-    return "__Host-inst_sid" if settings.session_cookie_secure else "inst_sid"
+    if local_http_request(request):
+        return LOCAL_COOKIE
+    return "__Host-inst_sid" if settings.session_cookie_secure else LOCAL_COOKIE
 
 
-def session_cookie_attributes() -> dict:
+def session_cookie_attributes(request=None) -> dict:
     """Attributes shared by setting AND clearing the session cookie. Browsers ignore a deletion whose attributes do not
     satisfy the cookie's requirements: a __Host- cookie can only be cleared with Secure and Path=/ (and no Domain)."""
     return {"httponly": True, "secure": settings.session_cookie_secure,
             "samesite": settings.session_cookie_samesite.lower(), "path": "/"}  # no Domain attribute => host-only
 
 
-def set_session_cookie(response, sid: str, max_age: int) -> None:
-    response.set_cookie(key=cookie_name(), value=sid, max_age=max_age, **session_cookie_attributes())
+def set_session_cookie(response, sid: str, max_age: int, request=None) -> None:
+    response.set_cookie(key=cookie_name(request), value=sid, max_age=max_age, **session_cookie_attributes(request))
 
 
-def clear_session_cookie(response) -> None:
-    response.delete_cookie(cookie_name(), **session_cookie_attributes())
+def clear_session_cookie(response, request=None) -> None:
+    response.delete_cookie(cookie_name(request), **session_cookie_attributes(request))
+
+
+def session_id(request) -> str | None:
+    """The session id the browser sent: the Secure __Host- cookie or, in the dev local-http mode, the unprefixed one - which then
+    wins: it is the one this mode sets, while a __Host- cookie left from before the mode was switched on would be stale. (On an https
+    host the unprefixed cookie never exists, so that host keeps using __Host-.)"""
+    if settings.session_cookie_local_http and request.cookies.get(LOCAL_COOKIE):
+        return request.cookies.get(LOCAL_COOKIE)
+    return request.cookies.get(cookie_name())
 
 
 def client_ip(request: Request) -> str:
@@ -288,7 +312,7 @@ def principal_from_payload(data: dict, sid: str, ip: str) -> Principal:
 
 def get_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
     origin_check(request)
-    sid = request.cookies.get(cookie_name())
+    sid = session_id(request)
     if current_service() == "identity" or current_service() is None:
         staff, assignments, teaching, data = authenticate_principal(db, sid, request.method, request.headers.get("x-csrf-token", ""))
         return Principal(staff, assignments, teaching, sid, data["csrf"], client_ip(request))

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.marks import Marks
+
 
 class StartAttemptRequest(BaseModel):
     test_id: UUID
@@ -33,14 +35,15 @@ class WorkspaceQuestion(BaseModel):
     option_b: str | None
     option_c: str | None
     option_d: str | None
-    marks: int
-    negative_marks: int
+    marks: Marks
+    negative_marks: Marks
     image_reference: str | None
     question_image: str | None = None
     option_a_image: str | None = None
     option_b_image: str | None = None
     option_c_image: str | None = None
     option_d_image: str | None = None
+    content: dict | None = None          # MSQ options / NAT number format (never the key)
     selected_answer: str | None
     question_state: str
 

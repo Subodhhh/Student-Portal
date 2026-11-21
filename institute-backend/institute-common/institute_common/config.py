@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     session_cookie_secure: bool = True
     session_cookie_samesite: str = "strict"
+    # DEVELOPMENT ONLY (refused for qa/prod): Chrome refuses a __Host- cookie on plain http://localhost (it keeps Secure cookies
+    # there, but not the __Host- prefix), so requests whose Origin is http://localhost / 127.0.0.1 get the same Secure, HttpOnly,
+    # SameSite cookie WITHOUT the prefix ("inst_sid"). Every other request - e.g. https through a tunnel - keeps __Host-.
+    session_cookie_local_http: bool = False
 
     argon2_time_cost: int = 3
     argon2_memory_cost_kib: int = 65536
@@ -68,6 +72,9 @@ class Settings(BaseSettings):
     student_notification_service_api_key: str = ""
     student_test_service_url: str = ""
     student_test_service_api_key: str = ""
+    # Question types exams may deliver to students (comma-separated: MCQ_SINGLE, MCQ_MULTI, NUMERICAL). MCQ only by default: MSQ / NAT
+    # exams are enabled per environment only after the Student services that score them are deployed (QUESTION_TYPES_ARCHITECTURE.md).
+    student_question_types: str = "MCQ_SINGLE"
     # Most questions one Global Test exam may hold (every paper of the date); never truncated: generation stops above it
     global_test_max_questions: int = 5000
     # Read projection of Institute-owned reference data (providers, branches, batches, enrollments) kept in the Student database
@@ -78,6 +85,24 @@ class Settings(BaseSettings):
 
     # Private file storage (paper service only).
     file_store_dir: str = "./var/files"
+    # Object storage for question pictures (institute_common.objectstore). Credentials are never settings: the S3 client uses the
+    # standard AWS credential chain (environment, credentials file or role).
+    object_store: str = "local"                    # local | s3
+    object_store_dir: str = "./var/objects"        # local only
+    object_store_bucket: str = ""                  # s3 only; a PRIVATE bucket
+    object_store_region: str = ""
+    object_store_endpoint_url: str = ""            # optional S3-compatible endpoint (Cloudflare R2, MinIO); empty for AWS S3
+    object_store_prefix: str = ""                  # optional key prefix, e.g. "prod/"
+    object_store_signed_url_seconds: int = 300     # lifetime of a signed download URL
+    # Bulk question import (paper service + bulk import worker)
+    bulk_import_max_bytes: int = 512 * 1024 * 1024     # largest uploaded .xlsx/.docx (pictures included)
+    bulk_import_max_rows: int = 100_000                # questions per Excel file
+    bulk_import_max_docx_rows: int = 5_000             # questions per Word file (Word is meant for smaller collections)
+    bulk_import_max_active_jobs: int = 3               # unfinished imports one provider may have at a time
+    bulk_import_batch_size: int = 200                  # questions per database transaction while importing
+    bulk_import_lease_seconds: int = 300               # a worker that stops renewing its lease for this long is presumed dead
+    bulk_import_max_attempts: int = 3                  # claims before a job that keeps failing is stopped
+    bulk_import_preview_days: int = 7                  # an unconfirmed preview is discarded (and its files deleted) after this
     max_upload_bytes: int = 2 * 1024 * 1024
     # .xlsx workbooks and .zip packages (CSV + images) carry question pictures: each picture is at most 5 MB (question_images.py)
     max_package_upload_bytes: int = 25 * 1024 * 1024
@@ -125,6 +150,8 @@ class Settings(BaseSettings):
             problems = []
             if not self.session_cookie_secure:
                 problems.append("SESSION_COOKIE_SECURE must be true")
+            if self.session_cookie_local_http:
+                problems.append("SESSION_COOKIE_LOCAL_HTTP is dev-only")
             if self.email_backend == "console":
                 problems.append("EMAIL_BACKEND=console is dev-only")
             if any(o.startswith("http://") for o in self.origins):
