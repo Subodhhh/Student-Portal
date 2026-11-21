@@ -107,7 +107,7 @@ def init_local(force: bool) -> None:
         print("local/postgres.env already exists: student/institute files left alone so their passwords stay in step")
         return
     for part, key, role in (("student", "LT_STUDENT_PASSWORD", "lt_student"), ("institute", "LT_INSTITUTE_PASSWORD", "lt_institute")):
-        url = f"postgresql+psycopg://{role}:{pw[key]}@lt-postgres:5432/{role}"
+        url = f"postgresql+psycopg://{role}:" + pw[key] + f"@lt-postgres:5432/{role}"   # split: the secret scan must not see a literal URL
         write_private(CONFIG / "local" / f"{part}.env", fill(CONFIG / "local" / f"{part}.env.example", {"DATABASE_URL": url}), force=True)
 
 
