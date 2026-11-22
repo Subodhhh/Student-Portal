@@ -60,3 +60,9 @@ var/
 
 # Python packaging build artefacts
 *.egg-info/
+
+# Local-only tooling and configuration (kept on disk, not in the repository)
+.claude/
+graphify-out/
+CLAUDE.md
+docker-compose.local.yml
