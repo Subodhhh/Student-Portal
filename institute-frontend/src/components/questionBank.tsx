@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useScope } from "../auth/ScopeContext";
@@ -10,6 +10,9 @@ import { MSQ_LETTERS, PATTERN_LABEL, TYPE_LABEL, TYPE_NAME, buildPapers, describ
   type SubjectReview } from "../services/questions";
 import { Alert, Button, DataTable, EmptyState, Field, Modal, Pagination, SearchField, SelectField, Spinner, StatusBadge, TextAreaField } from "./ui";
 import { MathText } from "./MathText";
+import { useTargetBranch } from "../hooks/useTargetBranch";
+import { requestAlias, suggestPath, type SuggestResult } from "../services/taxonomy";
+import type { TaxonomyLevel } from "../services/bulkImports";
 
 type Subject = { subject_id: string; code: string; name: string };
 type Facets = { exam_type: string[]; target_class: string[]; chapter: string[]; topic: string[]; subtopic: string[]; difficulty: string[]; pattern: string[] };
@@ -20,8 +23,8 @@ const SUGGESTED_EXAM_TYPES = ["NEET", "AIIMS", "JEE Main", "JEE Advanced", "CUET
 const shorten = (s: string, n = 110) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** The bank's filters and results. `selectable` adds checkboxes (used to build papers, also inside the test wizard). */
-export function QuestionBrowser({ source, branchId, selected, onToggle, selectable, onChanged }: {
-  source: Source; branchId?: string; selected?: Map<string, BankQuestion>; onToggle?: (q: BankQuestion) => void; selectable?: boolean; onChanged?: () => void;
+export function QuestionBrowser({ source, branchId, providerId, selected, onToggle, selectable, onChanged }: {
+  source: Source; branchId?: string; providerId?: string; selected?: Map<string, BankQuestion>; onToggle?: (q: BankQuestion) => void; selectable?: boolean; onChanged?: () => void;
 }) {
   const { me } = useAuth();
   const platform = isGlobalRole(me?.primary_role) || !!me?.assignments.some((a) => isGlobalRole(a.role));
@@ -37,6 +40,7 @@ export function QuestionBrowser({ source, branchId, selected, onToggle, selectab
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => { setF((x) => ({ ...x, [k]: e.target.value })); setPage(1); };
   const base = new URLSearchParams({ scope: source });
   if (branchId && source !== "GLOBAL") base.set("branch_id", branchId);
+  else if (providerId && source !== "GLOBAL") base.set("provider_id", providerId);       // "All Branches": the provider's whole bank
   const facetParams = new URLSearchParams(base);
   if (f.subject_id) facetParams.set("subject_id", f.subject_id);
   const params = new URLSearchParams(base);
@@ -176,18 +180,77 @@ function QuestionPreview({ questionId, subjectName, onClose }: { questionId: str
 
 type ClassFields = { exam_type: string; target_class: string; chapter: string; topic: string; subtopic: string; difficulty: string; pattern: string; subtype: string };
 
-function ClassificationFields({ value, onChange, facets }: { value: ClassFields; onChange: (v: ClassFields) => void; facets?: Facets }) {
+/** Where a question's chapter/topic/subtopic names are looked up: its provider's list, or the platform list (providerId null). */
+type Place = { providerId: string | null; subjectId: string; source: "QUESTION" | "CLASSIFY" };
+
+/** The typed value, once the person stops typing for a moment (so suggestions are not fetched on every key). */
+function useSettled(value: string, ms = 350) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => { const t = window.setTimeout(() => setSettled(value), ms); return () => window.clearTimeout(t); }, [value, ms]);
+  return settled;
+}
+
+function useSuggest(place: Place | undefined, level: TaxonomyLevel, value: string, parentId: string | null | undefined) {
+  const typed = useSettled(value.trim());
+  const ready = place?.subjectId && typed && (level === "CHAPTER" || parentId);
+  const result = useApi<SuggestResult>(ready ? suggestPath(place.providerId, place.subjectId, level, typed, parentId) : null).data;
+  return typed === value.trim() ? result : null;            // never a hint about what was typed before
+}
+
+/** "Did you mean …?" under a Chapter / Topic / Subtopic field: the official name is chosen with one click (never automatically), and
+ * the typed spelling can be remembered (an alias for administrators; a request to them for everyone else). */
+function NameHint({ place, level, value, result, onPick }: { place: Place; level: TaxonomyLevel; value: string; result?: SuggestResult | null;
+  onPick: (name: string) => void }) {
+  const [picked, setPicked] = useState<{ nodeId: string; typed: string; name: string } | null>(null);
+  const act = useAction();
+  const [sent, setSent] = useState("");
+  const word = level.toLowerCase();
+  if (picked && value === picked.name) {
+    return (
+      <div className="small muted taxonomy-hint" role="status">
+        {sent || <>Using the official name. <button type="button" className="link-btn" disabled={act.busy} onClick={() => void act.run(async () => {
+          const r = await requestAlias(picked.nodeId, picked.typed, place.source);
+          setSent(r.approved ? `“${picked.typed}” will be recognised from now on.` : `Your administrator was asked to accept “${picked.typed}”.`);
+        })}>Remember “{picked.typed}” as another spelling</button></>}
+        {act.error && <span className="error-text"> {act.error}</span>}
+      </div>
+    );
+  }
+  if (!result || !value.trim()) return null;
+  if (result.match) {
+    return result.match.name !== value.trim() ? <div className="small muted taxonomy-hint">Recognised as “{result.match.name}”.</div> : null;
+  }
+  const choose = (nodeId: string, name: string) => { setPicked({ nodeId, typed: value.trim(), name }); setSent(""); onPick(name); };
+  return (
+    <div className="small taxonomy-hint" role="status">
+      {result.suggestions.length > 0 ? (
+        <>Did you mean{" "}{result.suggestions.map((s, i) => (
+          <span key={s.node_id}>{i > 0 && " or "}<button type="button" className="link-btn" onClick={() => choose(s.node_id, s.name)}>
+            {s.name}</button>{s.node_id === result.preselect ? " (very likely)" : ""}</span>
+        ))}?</>
+      ) : result.in_use ? <>“{value.trim()}” is not a {word} of this subject. Choose one from the list.</> : null}
+      {result.elsewhere.map((e) => <div key={e.node_id} className="muted">“{e.name}” is a {word} of “{e.parent_name}”.</div>)}
+    </div>
+  );
+}
+
+function ClassificationFields({ value, onChange, facets, place }: { value: ClassFields; onChange: (v: ClassFields) => void; facets?: Facets; place?: Place }) {
   const id = useId();
   const set = (k: keyof ClassFields) => (e: { target: { value: string } }) => onChange({ ...value, [k]: e.target.value });
+  const chapter = useSuggest(place, "CHAPTER", value.chapter, null);
+  const topic = useSuggest(place, "TOPIC", value.topic, chapter?.match?.node_id);
+  const subtopic = useSuggest(place, "SUBTOPIC", value.subtopic, topic?.match?.node_id);
+  const hint = (level: TaxonomyLevel, k: "chapter" | "topic" | "subtopic", result?: SuggestResult | null) => place &&
+    <NameHint place={place} level={level} value={value[k]} result={result} onPick={(name) => onChange({ ...value, [k]: name })} />;
   const list = (k: string, values: string[]) => <datalist id={`${id}-${k}`}>{values.map((v) => <option key={v} value={v} />)}</datalist>;
   return (
     <>
       <div className="grid cols-2">
         <Field label="Exam type" value={value.exam_type} onChange={set("exam_type")} list={`${id}-exam`} placeholder="NEET" />
         <Field label="Class / target level" value={value.target_class} onChange={set("target_class")} list={`${id}-class`} placeholder="Class 12" />
-        <Field label="Chapter" value={value.chapter} onChange={set("chapter")} list={`${id}-chapter`} />
-        <Field label="Topic" value={value.topic} onChange={set("topic")} list={`${id}-topic`} />
-        <Field label="Subtopic" value={value.subtopic} onChange={set("subtopic")} list={`${id}-subtopic`} />
+        <div><Field label="Chapter" value={value.chapter} onChange={set("chapter")} list={`${id}-chapter`} />{hint("CHAPTER", "chapter", chapter)}</div>
+        <div><Field label="Topic" value={value.topic} onChange={set("topic")} list={`${id}-topic`} />{hint("TOPIC", "topic", topic)}</div>
+        <div><Field label="Subtopic" value={value.subtopic} onChange={set("subtopic")} list={`${id}-subtopic`} />{hint("SUBTOPIC", "subtopic", subtopic)}</div>
         <Field label="Subtype (optional)" value={value.subtype} onChange={set("subtype")} />
         <SelectField label="Difficulty" value={value.difficulty} onChange={set("difficulty")}><option value="">Not set</option>{Object.entries(DIFFICULTY_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</SelectField>
         <SelectField label="Pattern" value={value.pattern} onChange={set("pattern")}>{Object.entries(PATTERN_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</SelectField>
@@ -208,7 +271,8 @@ function ClassifyQuestion({ question, facets, onClose, onDone }: { question: Ban
     <Modal title="Classify question" onClose={onClose}>
       <p className="muted small">Classification helps everyone find the question. It never changes the question's content or any paper using it.</p>
       {error && <Alert kind="error">{error}</Alert>}
-      <ClassificationFields value={v} onChange={setV} facets={facets} />
+      <ClassificationFields value={v} onChange={setV} facets={facets}
+        place={{ providerId: question.provider_id, subjectId: question.subject_id, source: "CLASSIFY" }} />
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button busy={busy} onClick={() => void run(async () => { await api(`/api/v1/questions/${question.question_id}`, { method: "PATCH", body: nullIfEmpty(v) }); onDone(); })}>Save</Button>
@@ -447,6 +511,7 @@ export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { 
   // provider-wide questions are the Provider Admin's (the server decides; this only decides whether to offer the choice)
   const mayAddProviderWide = scope === "PROVIDER" && !!providerId && !!me?.assignments.some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId);
   const [providerWide, setProviderWide] = useState(false);
+  const { target, field: branchField } = useTargetBranch(scope === "PROVIDER" ? branchId : "global");   // "All Branches": choose one
   const catalogue = useReference<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null);
   const offered = useReference<Subject[]>(scope === "PROVIDER" && providerId ? `/api/v1/providers/${providerId}/subjects` : null);
   const subjects = scope === "GLOBAL" ? catalogue.data?.items ?? [] : offered.data ?? [];
@@ -464,15 +529,17 @@ export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { 
       )}
       <p className="muted small">{scope === "GLOBAL" ? "Platform questions are available to every institute."
         : "The question is shared with every branch of the institute; only its own branch and the provider administrators can change it."}</p>
+      {!(providerWide && mayAddProviderWide) && branchField}
       <SelectField label="Subject" value={subjectId} onChange={(e) => setSubjectId(e.target.value)} required>
         <option value="">Select…</option>{subjects.map((s) => <option key={s.subject_id} value={s.subject_id}>{s.name}</option>)}
       </SelectField>
-      <ClassificationFields value={k} onChange={setK} facets={facets.data ?? undefined} />
+      <ClassificationFields value={k} onChange={setK} facets={facets.data ?? undefined}
+        place={subjectId && (scope === "GLOBAL" || providerId) ? { providerId: scope === "GLOBAL" ? null : providerId!, subjectId, source: "QUESTION" } : undefined} />
       <ContentFieldsForm value={c} onChange={setC} />
       <div className="modal-actions">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button busy={busy} disabled={!subjectId || !contentReady(c)} onClick={() => void run(async () => {
-          const where = scope === "GLOBAL" ? {} : providerWide && mayAddProviderWide ? { provider_id: providerId } : { branch_id: branchId };
+          const where = scope === "GLOBAL" ? {} : providerWide && mayAddProviderWide ? { provider_id: providerId } : { branch_id: target };
           await api("/api/v1/questions", { method: "POST", body: { scope, ...where, subject_id: subjectId, ...nullIfEmpty(k), pattern: k.pattern, ...contentBody(c) } });
           onDone();
         })}>Add question</Button>
@@ -515,13 +582,15 @@ export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }
   const { busy, error, run } = useAction();
   const { can } = useAuth();
   const sName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
-  const ready = groups.every((g) => (titles[g.subject_id] ?? "").trim().length >= 3);
+  const { target, field: branchField } = useTargetBranch(scope === "PROVIDER" ? branchId : "global");   // a paper belongs to one branch
+  const ready = groups.every((g) => (titles[g.subject_id] ?? "").trim().length >= 3) && (scope === "GLOBAL" || !!target);
   return (
     <Modal title="Create paper from selected questions" onClose={onClose}>
       <p className="muted small">{selected.size} question(s) in {groups.length} subject(s). {groups.length > 1 ? "One paper is created per subject; combine them in a test." : ""}
         {" "}The new version starts as a draft (VALIDATED){can("paper.approve") ? ", ready for you to approve and publish" : " for approval"}.</p>
       {error && <Alert kind="error">{error}</Alert>}
       {reviews && <ReviewFlags reviews={reviews} stemOf={(id) => selected.get(id)?.latest.stem ?? ""} subjectName={sName} />}
+      {branchField}
       {groups.map((g) => (
         <Field key={g.subject_id} label={`${sName(g.subject_id)} paper title (${g.question_ids.length} questions)`} value={titles[g.subject_id] ?? ""}
           onChange={(e) => setTitles((t) => ({ ...t, [g.subject_id]: e.target.value }))} />
@@ -535,10 +604,10 @@ export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }
         <Button busy={busy} disabled={!ready || groups.length === 0 || !!reviews?.some((r) => r.blocking.length)} onClick={() => void run(async () => {
           const named = groups.map((g) => ({ ...g, title: titles[g.subject_id].trim() }));
           if (!reviews) {
-            const found = await reviewPapers(scope, branchId, named, meta);
+            const found = await reviewPapers(scope, target, named, meta);
             if (found.length) { setReviews(found); return; }
           }
-          onDone(await buildPapers(scope, branchId, named, meta));
+          onDone(await buildPapers(scope, target, named, meta));
         })}>{reviews && !reviews.some((r) => r.blocking.length) ? "Create anyway" : `Create ${groups.length > 1 ? `${groups.length} papers` : "paper"}`}</Button>
       </div>
     </Modal>

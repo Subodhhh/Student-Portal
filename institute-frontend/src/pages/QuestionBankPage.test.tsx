@@ -63,7 +63,8 @@ describe("Question Bank", () => {
     fireEvent.click(screen.getByLabelText(/Include questions already used/));
     await waitFor(() => {
       const last = calls.filter((c) => c.path === "/api/v1/questions").at(-1)!.search;
-      expect([last.get("difficulty"), last.get("chapter"), last.get("include_used"), last.get("branch_id")]).toEqual(["HARD", "Laws of Motion", "false", "b1"]);
+      expect([last.get("difficulty"), last.get("chapter"), last.get("include_used"), last.get("provider_id"), last.get("branch_id")])
+        .toEqual(["HARD", "Laws of Motion", "false", "p1", null]);                       // "All Branches" first: the provider's whole bank
     });
     fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[0]);
     const dialog = await screen.findByRole("dialog", { name: "Question preview" });
@@ -164,6 +165,58 @@ describe("Question Bank", () => {
     // marks are optional and no longer pre-filled: left empty, the question carries no marks and each test decides them
     expect([body.scope, body.branch_id, body.chapter, body.marks_positive, body.marks_negative, body.subject_id])
       .toEqual(["GLOBAL", undefined, "Laws of Motion", null, null, "phy"]);
+  });
+});
+
+describe("Classify: chapter names", () => {
+  it("suggests the official name while typing, applies it only on a click, and can ask to remember the spelling", async () => {
+    const SUGGEST = { match: null, matched_by: null, preselect: "n1", in_use: true, elsewhere: [],
+      suggestions: [{ node_id: "n1", name: "Laws of Motion", band: "HIGH", matched: "Laws of Motion", score: 0.9 }] };
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([q("q1", "phy")]),
+      "/api/v1/question-taxonomy/suggest": (url: URL) => (url.searchParams.get("level") !== "CHAPTER"
+        ? { ...SUGGEST, suggestions: [], preselect: null, in_use: false }
+        : url.searchParams.get("value") === "Laws of Motion"
+          ? { ...SUGGEST, match: { node_id: "n1", name: "Laws of Motion" }, matched_by: "NAME", suggestions: [], preselect: null } : SUGGEST),
+      "POST /api/v1/question-taxonomy/alias-requests": { approved: false },
+      "PATCH /api/v1/questions/q1": q("q1", "phy") });
+    renderApp("/papers");
+    fireEvent.click(await screen.findByRole("button", { name: "Classify" }));
+    const d = await screen.findByRole("dialog", { name: "Classify question" });
+    fireEvent.change(within(d).getByLabelText("Chapter"), { target: { value: "Newtons Law of Motions" } });
+    fireEvent.click(await within(d).findByRole("button", { name: "Laws of Motion" }, { timeout: 2000 }));
+    expect((within(d).getByLabelText("Chapter") as HTMLInputElement).value).toBe("Laws of Motion");
+    const s = calls.filter((c) => c.path === "/api/v1/question-taxonomy/suggest" && c.search.get("level") === "CHAPTER").at(-1)!.search;
+    expect([s.get("provider_id"), s.get("subject_id"), s.get("level"), s.get("value")]).toEqual(["p1", "phy", "CHAPTER", "Newtons Law of Motions"]);
+    fireEvent.click(within(d).getByRole("button", { name: "Remember “Newtons Law of Motions” as another spelling" }));
+    expect(await within(d).findByText(/Your administrator was asked to accept/)).toBeTruthy();
+    expect(calls.find((c) => c.path === "/api/v1/question-taxonomy/alias-requests")?.body)
+      .toEqual({ node_id: "n1", alias: "Newtons Law of Motions", source: "CLASSIFY" });
+  });
+});
+
+describe("All Branches is the first choice of the Question Bank & Papers tabs", () => {
+  it.each([["/papers"], ["/papers?tab=papers"], ["/papers?tab=imports"]])("%s starts on All Branches and asks the provider, not a branch", async (path) => {
+    const calls = stubApi({ ...common, "/api/v1/auth/me": PA, "/api/v1/questions": page([]), "/api/v1/papers": page([]), "/api/v1/uploads": page([]),
+      "/api/v1/review-drafts": { items: [] } });
+    renderApp(path);
+    const branch = await screen.findByLabelText("Branch", { selector: ".scope-bar select" });
+    expect((branch as HTMLSelectElement).selectedOptions[0].textContent).toBe("All Branches");
+    const listed = ["/api/v1/questions", "/api/v1/papers", "/api/v1/uploads"];
+    await waitFor(() => expect(calls.some((c) => listed.includes(c.path))).toBe(true));
+    for (const c of calls.filter((x) => listed.includes(x.path) || x.path === "/api/v1/review-drafts")) {
+      expect([c.search.get("provider_id"), c.search.get("branch_id")]).toEqual(["p1", null]);
+    }
+  });
+
+  it("asks which branch a new question, paper or import belongs to while All Branches is shown", async () => {
+    const admin = { ...PA, assignments: [{ role: "PROVIDER_ADMIN", provider_id: "p1", branch_id: null }] };
+    stubApi({ ...common, "/api/v1/auth/me": admin, "/api/v1/questions": page([]), "/api/v1/uploads": page([]), "/api/v1/review-drafts": { items: [] } });
+    renderApp("/papers");
+    fireEvent.click(await screen.findByRole("button", { name: "Add question" }));
+    const dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByLabelText("Branch") as HTMLSelectElement).value).toBe("b1");
+    fireEvent.click(within(dialog).getByLabelText(/Provider-wide/));                              // a provider-wide question has no branch
+    expect(within(dialog).queryByLabelText("Branch")).toBeNull();
   });
 });
 

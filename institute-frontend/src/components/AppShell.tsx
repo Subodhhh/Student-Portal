@@ -5,13 +5,17 @@ import { ROLE_LABEL, visibleNav } from "../auth/nav";
 import { useApi } from "../hooks/useApi";
 import { pageTitle } from "../routes";
 import { NavIcon } from "./icons";
-import { Button } from "./ui";
+import { Button, ConfirmDialog } from "./ui";
+import { UploadTray } from "./UploadManager";
+import { useUploads } from "../hooks/uploads";
 
 export default function AppShell() {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const uploads = useUploads();
+  const [leaving, setLeaving] = useState(false);          // signing out while a file is still sending: ask first
   const unread = useApi<{ unread_count: number }>(
     "/api/v1/notifications/unread-count",
   );
@@ -86,6 +90,7 @@ export default function AppShell() {
               variant="secondary"
               small
               onClick={async () => {
+                if (uploads.active) { setLeaving(true); return; }
                 await logout();
                 navigate("/login");
               }}
@@ -98,6 +103,12 @@ export default function AppShell() {
         <main className="content" id="main">
           <Outlet />
         </main>
+        <UploadTray />
+        {leaving && (
+          <ConfirmDialog title="A file is still uploading" confirmLabel="Sign out anyway" danger onCancel={() => setLeaving(false)}
+            message="Signing out stops the upload. You can continue it later: sign in, open Bulk Upload and choose the same file - it continues where it stopped."
+            onConfirm={async () => { setLeaving(false); await logout(); navigate("/login"); }} />
+        )}
       </div>
     </div>
   );

@@ -34,8 +34,10 @@ EDGE_PROXY_IP = "10.231.47.2"
 
 
 # Routes that need more than the default body size (and time to receive it). Bulk question imports accept files up to
-# BULK_IMPORT_MAX_BYTES (512 MB); the paper service enforces the exact limit, the gateway only lets the upload through.
-LARGE_UPLOADS = {"/api/v1/bulk-imports": "client_max_body_size 520m; client_body_timeout 300s; proxy_read_timeout 300s;"}
+# BULK_IMPORT_MAX_BYTES (2 GiB); the paper service enforces the exact limit, the gateway only lets the upload through. The body is
+# streamed to the service (no 2 GB copy on the gateway's disk); the service answers after storing the file (S3: up to minutes).
+LARGE_UPLOADS = {"/api/v1/bulk-imports": "client_max_body_size 2100m; client_body_timeout 300s; proxy_request_buffering off; "
+                                         "proxy_read_timeout 900s; proxy_send_timeout 900s;"}
 
 
 def render() -> str:

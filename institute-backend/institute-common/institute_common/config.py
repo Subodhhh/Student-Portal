@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     object_store_prefix: str = ""                  # optional key prefix, e.g. "prod/"
     object_store_signed_url_seconds: int = 300     # lifetime of a signed download URL
     # Bulk question import (paper service + bulk import worker)
-    bulk_import_max_bytes: int = 512 * 1024 * 1024     # largest uploaded .xlsx/.docx (pictures included)
+    bulk_import_max_bytes: int = 2 * 1024 ** 3         # largest uploaded .xlsx/.docx, pictures included (2 GiB; streamed, never in memory)
     bulk_import_max_rows: int = 100_000                # questions per Excel file
     bulk_import_max_docx_rows: int = 5_000             # questions per Word file (Word is meant for smaller collections)
     bulk_import_max_active_jobs: int = 3               # unfinished imports one provider may have at a time
@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     bulk_import_lease_seconds: int = 300               # a worker that stops renewing its lease for this long is presumed dead
     bulk_import_max_attempts: int = 3                  # claims before a job that keeps failing is stopped
     bulk_import_preview_days: int = 7                  # an unconfirmed preview is discarded (and its files deleted) after this
+    bulk_upload_chunk_bytes: int = 8 * 1024 * 1024     # resumable uploads: the size of each piece the browser sends
+    bulk_upload_resume_days: int = 3                   # an unfinished resumable upload can be continued this long, then it is deleted
     max_upload_bytes: int = 2 * 1024 * 1024
     # .xlsx workbooks and .zip packages (CSV + images) carry question pictures: each picture is at most 5 MB (question_images.py)
     max_package_upload_bytes: int = 25 * 1024 * 1024

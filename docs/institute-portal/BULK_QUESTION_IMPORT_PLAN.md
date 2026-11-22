@@ -211,8 +211,8 @@ at import through `store_images(object_store=…)` (deduplicated per provider), 
 `PATCH …/rows/{row_no}`, `GET …/images/{sha256}`, `GET …/taxonomy-issues`, `POST …/taxonomy-resolutions` (MAP / ALIAS / CREATE,
 `taxonomy.manage`), `POST …/revalidate`, `POST …/confirm` (one conditional UPDATE: exactly once), `POST …/cancel`, `GET …/report.csv`
 (CSV with BOM, formula-injection safe). All need `question.manage` for the job's provider/branch/subject; teachers see their own jobs;
-other jobs answer 404. Limits: 512 MB per file, 3 unfinished imports per provider (settings `BULK_IMPORT_*`). The gateway allows
-520 MB on `POST /api/v1/bulk-imports` only.
+other jobs answer 404. Limits: 2 GB per file, 3 unfinished imports per provider (settings `BULK_IMPORT_*`). The gateway allows
+2,100 MB on `POST /api/v1/bulk-imports` only (streamed to the paper service, 15-minute response wait).
 
 **Security correction (2026-11-20, owner request):** every time the worker claims a job it re-checks the uploader and, once
 confirmed, the confirmer with the API's own rules (`services/bulk_import.permission_problem`): ACTIVE account, `question.manage` for the

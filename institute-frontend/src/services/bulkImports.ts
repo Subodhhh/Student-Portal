@@ -29,7 +29,9 @@ export type RowData = {
   tolerance_type?: string; tolerance?: string; minimum?: string; maximum?: string; answer_format?: string; decimal_places?: string; unit?: string;
 };
 export type ImageColumn = "question_image" | `option_${"a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"}_image`;
-export type Suggestion = { node_id: string; name: string };
+/** A record a typed name may mean: HIGH (very likely) or MEDIUM; `matched`: the name or alias it resembles. */
+export type Suggestion = { node_id: string; name: string; score?: number; band?: "HIGH" | "MEDIUM"; matched?: string;
+  parent_id?: string | null; parent_name?: string | null };
 export type RowError = { field: string | null; message: string; code?: string; level?: string; value?: string; parent_id?: string | null;
   suggestions?: Suggestion[] };
 export type ImportRow = {
@@ -41,13 +43,19 @@ export type ImportRow = {
 };
 export type TaxonomyLevel = "CHAPTER" | "TOPIC" | "SUBTOPIC";
 export type TaxonomyIssue = { level: TaxonomyLevel; value: string; parent_id: string | null; suggestions: Suggestion[]; rows: number;
-  example_rows: number[] };
+  example_rows: number[];
+  preselect?: string | null;        // the one clearly meant: shown chosen, still confirmed by the person
+  elsewhere?: Suggestion[];         // the same name at another place of the tree
+  may_manage?: boolean;             // the caller may approve aliases and create records (otherwise: map, and request)
+};
 export type TaxonomyNode = { node_id: string; parent_id: string | null; level: TaxonomyLevel; name: string; status: string };
-export type Resolution = { level: TaxonomyLevel; value: string; parent_id: string | null; action: "MAP" | "ALIAS" | "CREATE"; node_id?: string };
+export type Resolution = { level: TaxonomyLevel; value: string; parent_id: string | null; action: "MAP" | "ALIAS" | "CREATE"; node_id?: string;
+  remember?: boolean };
 
 /** Files the server accepts, and its default size limit (BULK_IMPORT_MAX_BYTES). Checked here only to give an early message. */
 export const ACCEPTED_EXTENSIONS = [".xlsx", ".docx"];
-export const MAX_UPLOAD_MB = 512;
+export const MAX_UPLOAD_MB = 2048;
+export const MAX_UPLOAD_TEXT = MAX_UPLOAD_MB >= 1024 ? `${MAX_UPLOAD_MB / 1024} GB` : `${MAX_UPLOAD_MB} MB`;
 
 /** Jobs the worker is still working on: the page refreshes their status while they are in one of these states. */
 export const WORKING: JobStatus[] = ["UPLOADED", "PARSING", "VALIDATE_QUEUED", "VALIDATING", "IMPORT_QUEUED", "IMPORTING"];
@@ -74,17 +82,23 @@ export type ImportTargets = {
 export type ImportWhere = { kind: "BRANCH"; branchId: string } | { kind: "PROVIDER"; providerId: string } | { kind: "GLOBAL" };
 export const targetsPath = `${base}/targets`;
 
-export const uploadImport = (where: ImportWhere, subjectId: string, file: File, onProgress: (fraction: number) => void) => {
-  const form = new FormData();
-  if (where.kind === "BRANCH") form.append("branch_id", where.branchId);        // the original form of the call: a branch import
-  else {
-    form.append("target", where.kind);
-    if (where.kind === "PROVIDER") form.append("provider_id", where.providerId);
-  }
-  form.append("subject_id", subjectId);
-  form.append("file", file);
-  return uploadWithProgress<ImportJob>(base, form, onProgress);
-};
+// ------------------------------------------------------------------ resumable uploads (routes/bulk_uploads.py)
+
+/** A file being sent in pieces. The server says how much has arrived, so an interrupted upload continues from there. */
+export type UploadSession = { upload_id: string; scope: "GLOBAL" | "PROVIDER"; provider_id: string | null; subject_id: string;
+  file_name: string; size: number; chunk_size: number; received_parts: number; received_bytes: number;
+  status: "RECEIVING" | "COMPLETED" | "DISCARDED"; job_id: string | null; created_at: string; updated_at: string; resumed?: boolean };
+export type UploadWhere = Exclude<ImportWhere, { kind: "BRANCH" }>;
+export const uploadsPath = `${base}/uploads`;
+/** The same file chosen again (same name, size and date) is recognised by this and continues where it stopped. */
+export const fingerprintOf = (f: File) => `${f.name}|${f.size}|${f.lastModified}`.slice(0, 300);
+export const startUpload = (where: UploadWhere, subjectId: string, file: File) => api<UploadSession>(uploadsPath, { method: "POST", body: {
+  subject_id: subjectId, target: where.kind, provider_id: where.kind === "PROVIDER" ? where.providerId : null, file_name: file.name,
+  size: file.size, fingerprint: fingerprintOf(file) } });
+export const sendPart = (uploadId: string, n: number, piece: Blob, onProgress: (fraction: number) => void) =>
+  uploadWithProgress<UploadSession>(`${uploadsPath}/${uploadId}/parts/${n}`, piece, onProgress, "PUT");
+export const completeUpload = (uploadId: string) => api<ImportJob>(`${uploadsPath}/${uploadId}/complete`, { method: "POST" });
+export const discardUpload = (uploadId: string) => api<UploadSession>(`${uploadsPath}/${uploadId}`, { method: "DELETE" });
 export const historyPath = (where: ImportWhere, page: number) => {
   const of = where.kind === "BRANCH" ? `branch_id=${encodeURIComponent(where.branchId)}`
     : where.kind === "PROVIDER" ? `provider_id=${encodeURIComponent(where.providerId)}` : "target=GLOBAL";
@@ -94,9 +108,9 @@ export const jobPath = (jobId: string) => `${base}/${encodeURIComponent(jobId)}`
 export const rowsPath = (jobId: string, status: string, page: number) =>
   `${jobPath(jobId)}/rows?page=${page}&page_size=25${status ? `&status=${status}` : ""}`;
 export const taxonomyIssuesPath = (jobId: string) => `${jobPath(jobId)}/taxonomy-issues`;
-/** Every record of the subject (all levels), to name parents and offer records to map to. */
-export const taxonomyNodesPath = (providerId: string, subjectId: string) =>
-  `/api/v1/question-taxonomy/nodes?provider_id=${encodeURIComponent(providerId)}&subject_id=${encodeURIComponent(subjectId)}`;
+/** Every record of the subject (all levels), to name parents and offer records to map to. No provider: the platform list. */
+export const taxonomyNodesPath = (providerId: string | null, subjectId: string) =>
+  `/api/v1/question-taxonomy/nodes?subject_id=${encodeURIComponent(subjectId)}${providerId ? `&provider_id=${encodeURIComponent(providerId)}` : ""}`;
 
 /** A preview picture's address: the authenticated API endpoint the server returned (never a storage URL built here). */
 export const imageSrc = (url: string) => `${API_URL}${url}`;

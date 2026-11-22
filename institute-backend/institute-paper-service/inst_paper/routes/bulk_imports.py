@@ -7,8 +7,10 @@ Three targets (docs/institute-portal/THREE_SCOPE_QUESTION_BANK_PLAN.md), one wor
   * BRANCH - questions originating in one branch: `question.manage` for the provider, branch and subject (unchanged).
 Provider questions, whatever their origin, are shared with every branch of the provider. The rule for each job is
 services/bulk_import.manage_problem (the worker checks it again at every claim). Teachers see only the imports they uploaded.
-Resolving taxonomy values additionally needs `taxonomy.manage` (not for GLOBAL imports: there is no platform taxonomy). A job the
-caller may not see answers 404, exactly like a job that does not exist.
+Mapping an unknown Chapter/Topic/Subtopic spelling to a record for one import is open to whoever manages the job; approving it as an
+alias for good or creating a record needs `taxonomy.manage` for the list (the Provider Admin; platform administrators for the
+platform list a GLOBAL import uses) - anyone else's "remember this spelling" becomes an alias request. A job the caller may not see
+answers 404, exactly like a job that does not exist.
 
     GET    /bulk-imports/targets                         what the caller may import into (the page shows only these)
     POST   /bulk-imports                                 upload (multipart: target, provider_id | branch_id, subject_id, file)
@@ -53,6 +55,7 @@ from institute_common.util import Strict, paginate
 
 from inst_paper.services import bulk_import as jobs
 from inst_paper.services import bulk_validation as rules
+from inst_paper.routes import taxonomy as taxonomy_routes
 from inst_paper.services import bank_access, taxonomy
 from inst_paper.services.taxonomy import TaxonomyError
 
@@ -121,13 +124,15 @@ class RowPatch(Strict):
 
 class ResolutionIn(Strict):
     """What to do with one unmatched value (level + value + parent identify it, as listed by /taxonomy-issues).
-    MAP: use an existing record for this import only. ALIAS: approve the value as an alias of a record (every later import too).
-    CREATE: create a new record named exactly like the value."""
+    MAP: use an existing record for this import (with `remember`: also remember the spelling - an alias at once for the list's
+    administrators, an alias request for everyone else). ALIAS: approve the value as an alias of a record (every later import too).
+    CREATE: create a new record named exactly like the value. ALIAS and CREATE need taxonomy.manage."""
     level: Literal["CHAPTER", "TOPIC", "SUBTOPIC"]
     value: str = Field(min_length=1, max_length=300)
     parent_id: UUID | None = None
     action: Literal["MAP", "ALIAS", "CREATE"]
     node_id: UUID | None = None
+    remember: bool = False
 
 
 # ------------------------------------------------------------------ helpers
@@ -170,7 +175,9 @@ def _save_upload(file: UploadFile, workdir: str) -> tuple[str, int]:
         while chunk := file.file.read(1024 * 1024):
             size += len(chunk)
             if size > settings.bulk_import_max_bytes:
-                raise api_error(413, "FILE_TOO_LARGE", f"The file is larger than {settings.bulk_import_max_bytes // (1024 * 1024)} MB.")
+                limit = settings.bulk_import_max_bytes
+                shown = f"{limit / 1024 ** 3:g} GB" if limit >= 1024 ** 3 else f"{limit // 1024 ** 2} MB"
+                raise api_error(413, "FILE_TOO_LARGE", f"The file is larger than {shown}.")
             out.write(chunk)
     with open(path, "rb") as fh:
         if fh.read(4) != ZIP_MAGIC:          # the extension is not trusted: a real .xlsx/.docx is a zip package
@@ -211,17 +218,22 @@ def _active_subjects(db: Session, provider_id: UUID | None) -> list[dict]:
 @router.get("/bulk-imports/targets")
 def targets(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """What the caller may import into, decided here (the page offers only these):
-    `global` (platform administrators: the active subjects), `provider_wide` (each provider whose Provider Admin the caller is, with
-    its subjects) and `branch` (true when the caller may import into a branch they then choose, as before)."""
+    `global` (platform administrators: the active subjects) and `provider_wide` (each provider the caller may bulk upload to - for
+    platform administrators every active provider - with the subjects they may upload: bank_access.import_subjects). `branch` stays
+    true for older clients; the page no longer offers it."""
     if not p.has_perm("question.manage"):
         p.require(db, "question.manage")
     platform = p.is_global and p.has_perm("question.manage")
-    wide = sorted({a.provider_id for a in p.assignments if a.provider_id and bank_access.is_provider_admin(p, a.provider_id)}, key=str)
+    mine = set(db.scalars(select(Provider.provider_id).where(Provider.status == "ACTIVE"))) if platform else \
+        {a.provider_id for a in p.assignments if a.provider_id}
+    allowed = {pid: bank_access.import_subjects(p, pid) for pid in mine}
+    wide = sorted((pid for pid, subjects in allowed.items() if subjects is None or subjects), key=str)
     providers = {pid: name for pid, name in db.execute(select(Provider.provider_id, Provider.name).where(
         Provider.provider_id.in_(wide), Provider.status == "ACTIVE"))} if wide else {}
     return {"global": {"subjects": _active_subjects(db, None)} if platform else None,
-            "provider_wide": [{"provider_id": str(pid), "name": providers[pid], "subjects": _active_subjects(db, pid)}
-                              for pid in wide if pid in providers],
+            "provider_wide": [{"provider_id": str(pid), "name": providers[pid],
+                               "subjects": [s for s in _active_subjects(db, pid) if allowed[pid] is None or UUID(s["subject_id"]) in allowed[pid]]}
+                              for pid in sorted((x for x in wide if x in providers), key=lambda x: providers[x].lower())],
             "branch": True}
 
 
@@ -245,8 +257,8 @@ def _target(db: Session, p: Principal, target: str | None, provider_id: UUID | N
         provider_id = provider_id or bank_access.single_provider(p, "question.manage")
         if provider_id is None:
             raise api_error(422, "PROVIDER_REQUIRED", "Choose the provider.")
-        if not bank_access.is_provider_admin(p, provider_id):
-            bank_access.deny(db, p, "question.manage", provider_id, reason="provider_wide_needs_provider_admin")
+        if not bank_access.may_import_provider_wide(p, provider_id, subject_id):
+            bank_access.deny(db, p, "question.manage", provider_id, reason="provider_wide_import_not_allowed")
         provider = db.get(Provider, provider_id)
         if provider is None or provider.status != "ACTIVE":
             raise api_error(404, "NOT_FOUND", "Provider not found.")
@@ -280,29 +292,37 @@ def upload(subject_id: UUID = Form(...), file: UploadFile = File(...), target: L
         raise api_error(422, "UNSUPPORTED_FORMAT", "Upload the Excel (.xlsx) or Word (.docx) template. CSV and .doc are not supported.")
     if jobs.active_jobs(db, provider_id) >= settings.bulk_import_max_active_jobs:
         raise api_error(429, "TOO_MANY_IMPORTS", "Finish or cancel an import in progress before starting another.")
-    job_id = uuid4()
     with tempfile.TemporaryDirectory(prefix="bulk-upload-") as workdir:
         path, size = _save_upload(file, workdir)
-        key = jobs.source_key(job_id, file_format)
-        try:
-            get_object_store().put_file(key, path, jobs.MIME_OF[file_format])
-        except ObjectStoreError:
-            raise api_error(503, "STORE_UNAVAILABLE", "The file could not be stored right now. Try again shortly.")
-        job = BulkImportJob(job_id=job_id, scope=scope, provider_id=provider_id, branch_id=branch_id, subject_id=subject_id, file_format=file_format,
-                            file_name=name, source_key=key, source_size=size, source_sha256=jobs.sha256_of_file(path),
-                            created_by=p.staff_id, created_ip=_stored_ip(p))
+        job = new_job(db, p, scope, provider_id, branch_id, subject_id, name, file_format, path, size)
+    return _out(job)
+
+
+def new_job(db: Session, p: Principal, scope: str, provider_id: UUID | None, branch_id: UUID | None, subject_id: UUID, name: str,
+            file_format: str, path: str, size: int) -> BulkImportJob:
+    """Store a received file (on disk at `path`) as a new job's source and queue the job for reading: the end of a one-request upload
+    and of a resumable one alike."""
+    job_id = uuid4()
+    key = jobs.source_key(job_id, file_format)
+    try:
+        get_object_store().put_file(key, path, jobs.MIME_OF[file_format])
+    except ObjectStoreError:
+        raise api_error(503, "STORE_UNAVAILABLE", "The file could not be stored right now. Try again shortly.")
+    job = BulkImportJob(job_id=job_id, scope=scope, provider_id=provider_id, branch_id=branch_id, subject_id=subject_id, file_format=file_format,
+                        file_name=name, source_key=key, source_size=size, source_sha256=jobs.sha256_of_file(path),
+                        created_by=p.staff_id, created_ip=_stored_ip(p))
     db.add(job)
     db.commit()
     _audit(db, p, "bulk_import.upload", job, size=size, format=file_format)
-    return _out(job)
+    return job
 
 
 @router.get("/bulk-imports")
 def history(branch_id: UUID | None = None, provider_id: UUID | None = None, target: Literal["GLOBAL"] | None = None,
             page: int = Query(default=1, ge=1), page_size: int = Query(default=25, ge=1, le=100),
             p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Imports, newest first: a branch's (teachers see their own), a provider's provider-wide imports (?provider_id=, its Provider
-    Admin), or the platform's (?target=GLOBAL, platform administrators)."""
+    """Imports, newest first: a branch's (teachers see their own), a provider's provider-wide imports (?provider_id=: the Provider
+    Admin all of them, everyone else who may upload there their own), or the platform's (?target=GLOBAL, platform administrators)."""
     if target == "GLOBAL":
         if not (p.is_global and p.has_perm("question.manage")):
             bank_access.deny(db, p, "question.manage", None, reason="global_import_history")
@@ -316,7 +336,7 @@ def history(branch_id: UUID | None = None, provider_id: UUID | None = None, targ
         if not p.can("question.manage", exclude_roles=(Role.TEACHER,), provider_id=br.provider_id, branch_id=branch_id):
             stmt = stmt.where(BulkImportJob.created_by == p.staff_id)
     elif provider_id:
-        if not bank_access.is_provider_admin(p, provider_id):
+        if bank_access.import_subjects(p, provider_id) == set():
             bank_access.deny(db, p, "question.manage", provider_id, reason="provider_wide_import_history")
         stmt = select(BulkImportJob).where(BulkImportJob.scope == "PROVIDER", BulkImportJob.provider_id == provider_id,
                                            BulkImportJob.branch_id.is_(None))
@@ -462,11 +482,11 @@ def preview_image(job_id: UUID, sha256: str, p: Principal = Depends(get_principa
 
 @router.get("/bulk-imports/{job_id}/taxonomy-issues")
 def taxonomy_issues(job_id: UUID, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    """Every distinct Chapter/Topic/Subtopic value that matched no record, with how many rows use it and suggestions. None for a
-    GLOBAL import: platform questions keep plain-text labels."""
+    """Every distinct Chapter/Topic/Subtopic value that matched no record (one decision per spelling, however many rows use it), with
+    how many rows use it, suggestions (best first; `preselect`: the one clearly meant, still to be confirmed) and where else the
+    name exists. `may_manage`: whether the caller may approve aliases and create records here (otherwise MAP, and request)."""
     job = _job(db, p, job_id)
-    if job.scope == "GLOBAL":
-        return []
+    may_manage = taxonomy_routes.may_manage(p, job.provider_id)
     issues: dict[tuple, dict] = {}
     rows_with_errors = db.scalars(select(BulkImportRow).where(BulkImportRow.job_id == job.job_id, BulkImportRow.status == "INVALID")
                                   .execution_options(yield_per=2000))
@@ -476,7 +496,8 @@ def taxonomy_issues(job_id: UUID, p: Principal = Depends(get_principal), db: Ses
                 continue
             key = (e["level"], e.get("parent_id"), rules.label_key(e["value"]))
             item = issues.setdefault(key, {"level": e["level"], "value": e["value"], "parent_id": e.get("parent_id"),
-                                           "suggestions": e.get("suggestions", []), "rows": 0, "example_rows": []})
+                                           "suggestions": e.get("suggestions", []), "preselect": e.get("preselect"),
+                                           "elsewhere": e.get("elsewhere", []), "may_manage": may_manage, "rows": 0, "example_rows": []})
             item["rows"] += 1
             if len(item["example_rows"]) < 5:
                 item["example_rows"].append(row.row_no)
@@ -488,9 +509,12 @@ def taxonomy_issues(job_id: UUID, p: Principal = Depends(get_principal), db: Ses
 def resolve_taxonomy(job_id: UUID, body: ResolutionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Map, alias or create one unmatched value, then validate the whole preview again (in the worker)."""
     job = _job(db, p, job_id, lock=True)
-    if job.scope == "GLOBAL":
-        raise api_error(409, "NOT_APPLICABLE", "Platform questions keep plain-text chapters and topics: there is nothing to resolve.")
-    p.require(db, "taxonomy.manage", provider_id=job.provider_id)
+    manager = taxonomy_routes.may_manage(p, job.provider_id)
+    if body.action != "MAP" and not manager:
+        audit.record(db, "authz.denied", "DENIED", actor=p.staff_id, ip=p.ip, provider_id=job.provider_id,
+                     details={"permission": "taxonomy.manage", "bulk_import_id": str(job_id), "action": body.action})
+        raise api_error(403, "FORBIDDEN", "Only an administrator of this list may approve aliases or create records. Choose a record "
+                                          "instead and tick “Remember this spelling” to ask them.")
     if job.status not in EDITABLE:
         raise api_error(409, "NOT_EDITABLE", "Taxonomy values can be resolved only while the preview is shown.")
     node = None
@@ -500,11 +524,17 @@ def resolve_taxonomy(job_id: UUID, body: ResolutionIn, p: Principal = Depends(ge
         if (node is None or node.provider_id != job.provider_id or node.subject_id != job.subject_id or node.level != body.level
                 or node.parent_id != body.parent_id or node.status != "ACTIVE"):
             raise api_error(422, "INVALID_NODE", "Choose an active record of this subject at the same place in the hierarchy.")
+    requested = False
     try:
         if body.action == "MAP":
             mappings = dict(job.taxonomy_mappings or {})
             mappings[rules.TaxonomyContext.mapping_key(body.level, body.parent_id, body.value)] = str(node.node_id)
             job.taxonomy_mappings = mappings
+            if body.remember and manager:
+                if taxonomy.find(db, job.provider_id, job.subject_id, body.level, body.parent_id, body.value)[0] is None:
+                    taxonomy.add_alias(db, node, body.value, p.staff_id, _stored_ip(p))
+            elif body.remember:
+                requested = taxonomy.request_alias(db, node, body.value, p.staff_id, "BULK_UPLOAD", str(job.job_id)) is not None
         elif body.action == "ALIAS":
             taxonomy.add_alias(db, node, body.value, p.staff_id, _stored_ip(p))
         else:
@@ -515,7 +545,8 @@ def resolve_taxonomy(job_id: UUID, body: ResolutionIn, p: Principal = Depends(ge
         raise api_error(exc.status, exc.code, exc.message)
     job.status = "VALIDATE_QUEUED"
     db.commit()
-    _audit(db, p, "bulk_import.taxonomy", job, resolution=body.action, level=body.level, value=body.value, node_id=str(node.node_id))
+    _audit(db, p, "bulk_import.taxonomy", job, resolution=body.action, level=body.level, value=body.value, node_id=str(node.node_id),
+           remembered=body.remember, alias_requested=requested)
     return _out(job)
 
 

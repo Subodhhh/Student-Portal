@@ -36,12 +36,12 @@ from institute_common.core.security import Principal, load_principal
 from institute_common.database import utcnow
 from institute_common.models.academics import ProviderSubject, Subject
 from institute_common.models.org import Branch, Provider
-from institute_common.models.bulk_import import BulkImportImage, BulkImportJob, BulkImportRow
+from institute_common.models.bulk_import import BulkImportImage, BulkImportJob, BulkImportRow, BulkImportUpload
 from institute_common.core import question_types as qtypes
 from institute_common.models.papers import Question, QuestionImageAsset, QuestionTaxonomyNode, QuestionVersion, QuestionVersionAsset
 from institute_common.objectstore import ObjectMissing, ObjectStore, ObjectStoreError, question_image_key
 
-from inst_paper.services import bank_access
+from inst_paper.services import bank_access, notify
 from inst_paper.services import bulk_validation as rules
 from inst_paper.services.bulk_reader import BulkFile, FileRejected, ReadRow
 from inst_paper.services.image_assets import store_images
@@ -106,13 +106,18 @@ def manage_problem(person: Principal, job: BulkImportJob) -> str | None:
     """Why `person` may not work with this import (see, correct, confirm, cancel; and, in the worker, have it processed), or None.
     The one rule for the API (routes/bulk_imports.py) and the worker, by the job's target:
       * GLOBAL (platform bank): a platform administrator holding question.manage;
-      * provider-wide (PROVIDER, no branch): the provider's own Provider Admin (bank_access.is_provider_admin; not platform roles);
+      * provider-wide (PROVIDER, no branch): anyone who may bulk upload to the provider for that subject
+        (bank_access.may_import_provider_wide, platform administrators included); everyone but the Provider Admin and platform
+        administrators only their own uploads;
       * branch: question.manage for the provider, branch and subject; a teacher only their own uploads."""
     if job.scope == "GLOBAL":
         return None if person.is_global and person.has_perm("question.manage") else "only platform administrators may import platform questions"
     if job.branch_id is None:
-        return None if bank_access.is_provider_admin(person, job.provider_id) else \
-            "only the provider's Provider Admin may import provider-wide questions"
+        if not bank_access.may_import_provider_wide(person, job.provider_id, job.subject_id):
+            return "the permission to add questions of this subject to the institute was removed"
+        if person.staff_id != job.created_by and not (person.is_global or bank_access.is_provider_admin(person, job.provider_id)):
+            return "only the Provider Admin may work with other people's uploads"
+        return None
     if not person.can("question.manage", provider_id=job.provider_id, branch_id=job.branch_id, subject_id=job.subject_id):
         return "the permission to add questions to this branch and subject was removed"
     if person.staff_id != job.created_by and not person.can("question.manage", exclude_roles=(Role.TEACHER,), provider_id=job.provider_id,
@@ -260,10 +265,9 @@ def _stage_picture(db, job, media: str, upload: BulkFile, store: ObjectStore, st
 # ------------------------------------------------------------------ 2. validation
 
 def taxonomy_context(job: BulkImportJob) -> rules.TaxonomyContext | None:
-    """The provider's taxonomy (shared by all its branches); None for a GLOBAL import (plain-text labels, decision D10)."""
-    if job.scope == "GLOBAL":
-        return None
-    return rules.TaxonomyContext(job.provider_id, job.subject_id, dict(job.taxonomy_mappings or {}))
+    """The provider's taxonomy (shared by all its branches), or the platform list for a GLOBAL import - where a typed name must be a
+    record only at places that have records (TAXONOMY_ALIASES_PLAN A3; elsewhere it stays plain text, as before)."""
+    return rules.TaxonomyContext(job.provider_id, job.subject_id, dict(job.taxonomy_mappings or {}), strict=job.scope != "GLOBAL")
 
 
 def validate_job(db: Session, job: BulkImportJob, worker: str) -> None:
@@ -288,6 +292,11 @@ def validate_job(db: Session, job: BulkImportJob, worker: str) -> None:
     refresh_counts(db, job)
     # the stage finished: the attempt count is for a stage that keeps failing, not for the re-checks a user asks for
     job.status, job.locked_until, job.worker, job.attempts = "PREVIEW", None, None, 0
+    if job.confirmed_at is None:                     # the first preview of an upload (a re-check later notifies nobody again)
+        notify.queue(db, [job.created_by], kind="BULK_IMPORT_PREVIEW_READY", dedupe=f"bulk-preview:{job.job_id}",
+                     provider_id=job.provider_id, title=f"Ready to review: {job.file_name}",
+                     body=f"{job.valid_rows} question(s) are ready, {job.invalid_rows} need correcting and {job.duplicate_rows} are "
+                          "duplicates. Open Question Bank & Papers > Bulk Upload to review and confirm the import.")
     db.commit()
 
 
@@ -409,8 +418,10 @@ def _import_row(db: Session, job: BulkImportJob, row: BulkImportRow, store: Obje
     label = lambda node_id: nodes[node_id].name if node_id in nodes else None    # noqa: E731  (canonical names, not the typed text)
     # the job's target: GLOBAL (platform, plain-text labels), or PROVIDER - branch_id is the ORIGIN branch (NULL: provider-wide); a
     # provider question is shared with every branch of the provider, nothing is copied (bank_access)
-    labels = rules.plain_labels(row.data) if job.scope == "GLOBAL" else \
-        {"chapter": label(row.chapter_id), "topic": label(row.topic_id), "subtopic": label(row.subtopic_id)}
+    # a GLOBAL label that names no platform record yet (none exist at its place) keeps its typed text
+    plain = rules.plain_labels(row.data) if job.scope == "GLOBAL" else {}
+    labels = {"chapter": label(row.chapter_id) or plain.get("chapter"), "topic": label(row.topic_id) or plain.get("topic"),
+              "subtopic": label(row.subtopic_id) or plain.get("subtopic")}
     question = Question(provider_id=job.provider_id, branch_id=job.branch_id, subject_id=job.subject_id, scope=job.scope,
                         owner_staff_id=job.confirmed_by, **labels, chapter_id=row.chapter_id, topic_id=row.topic_id,
                         subtopic_id=row.subtopic_id, difficulty=data["difficulty"], pattern="SINGLE_CORRECT",
@@ -484,6 +495,13 @@ def finish(db: Session, job: BulkImportJob, store: ObjectStore, status: str, mes
     if file_errors:
         job.file_errors = file_errors
     refresh_counts(db, job)
+    if status in ("COMPLETED", "PARTIAL", "FAILED"):
+        title = {"COMPLETED": "Import finished", "PARTIAL": "Import finished with problems", "FAILED": "Import failed"}[status]
+        body = (f"{job.imported_rows} question(s) were added to the Question Bank"
+                + (f"; {job.total_rows - job.imported_rows} were not imported (see the import report)." if job.imported_rows < job.total_rows else ".")
+                if status != "FAILED" or job.imported_rows else (job.last_error or "No question could be imported."))
+        notify.queue(db, [job.created_by, job.confirmed_by], kind=f"BULK_IMPORT_{status}", dedupe=f"bulk-finished:{job.job_id}",
+                     provider_id=job.provider_id, title=f"{title}: {job.file_name}", body=body)
     db.commit()
     cleanup(db, job, store)
 
@@ -528,7 +546,29 @@ def housekeeping(db: Session, store: ObjectStore, now=None) -> dict:
     for job in db.scalars(select(BulkImportJob).where(BulkImportJob.status.in_(TERMINAL), BulkImportJob.cleaned_at.is_(None)).limit(100)):
         cleanup(db, job, store)
         retried += 1
-    return {"expired": expired, "cleanup_retried": retried}
+    abandoned = 0
+    resume_cutoff = now - timedelta(days=settings.bulk_upload_resume_days)
+    for upload in db.scalars(select(BulkImportUpload).where(BulkImportUpload.status == "RECEIVING",
+                                                            BulkImportUpload.updated_at < resume_cutoff).limit(100)):
+        upload.status, upload.updated_at = "DISCARDED", now
+        db.commit()
+        delete_upload_parts(upload, store)
+        abandoned += 1
+    return {"expired": expired, "cleanup_retried": retried, "uploads_discarded": abandoned}
+
+
+def upload_part_key(upload_id: UUID, n: int) -> str:
+    """Where piece n of a resumable upload is kept until the upload completes."""
+    return f"staging/bulk-uploads/{upload_id}/{n:06d}"
+
+
+def delete_upload_parts(upload: BulkImportUpload, store: ObjectStore) -> None:
+    """Delete a resumable upload's pieces (best effort: deleting twice is safe; a store outage leaves them for the next pass)."""
+    for n in range(max(upload.received_parts, 0)):
+        try:
+            store.delete(upload_part_key(upload.upload_id, n))
+        except ObjectStoreError:
+            return
 
 
 def sha256_of_file(path: str) -> str:

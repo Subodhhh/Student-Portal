@@ -1,0 +1,32 @@
+{
+  "about": "Spelling variants the taxonomy suggestions must handle (inst_paper/services/taxonomy_match.py). 'preselect': the one record shown pre-selected (still confirmed by a person); 'offers': records that must be among the suggestions, best first; 'none': nothing should be suggested.",
+  "records": ["Newton's Laws of Motion", "Work, Energy and Power", "Kinematics", "Gravitation", "Laws of Thermodynamics",
+              "Rotational Motion", "Motion in a Plane", "Motion in a Straight Line", "Properties of Matter", "Units and Measurements",
+              "Thermal Properties of Matter"],
+  "cases": [
+    {"typed": "Newtons Laws of Motion", "preselect": "Newton's Laws of Motion"},
+    {"typed": "newton law of motion", "preselect": "Newton's Laws of Motion"},
+    {"typed": "Newton's 1st Law of Motion", "preselect": "Newton's Laws of Motion"},
+    {"typed": "Newtons1st Law of Motion", "preselect": "Newton's Laws of Motion"},
+    {"typed": "NEWTON'S LAWS OF MOTION", "preselect": "Newton's Laws of Motion"},
+    {"typed": "Work Energy Power", "preselect": "Work, Energy and Power"},
+    {"typed": "Work, energy & power", "preselect": "Work, Energy and Power"},
+    {"typed": "Kinematic", "preselect": "Kinematics"},
+    {"typed": "Kinmatics", "preselect": "Kinematics"},
+    {"typed": "Gravitaion", "preselect": "Gravitation"},
+    {"typed": "Rotatonal Motion", "preselect": "Rotational Motion"},
+    {"typed": "Unit & Measurement", "preselect": "Units and Measurements"},
+    {"typed": "Property of matter", "preselect": "Properties of Matter"},
+    {"typed": "Straight line motion", "preselect": "Motion in a Straight Line"},
+    {"typed": "Thermal Property of Matter", "preselect": "Thermal Properties of Matter"},
+    {"typed": "Laws of Motion", "offers": ["Newton's Laws of Motion"]},
+    {"typed": "Newtons Lwas of Motion", "offers": ["Newton's Laws of Motion"]},
+    {"typed": "Thermodynamics", "offers": ["Laws of Thermodynamics"]},
+    {"typed": "Rotational", "offers": ["Rotational Motion"]},
+    {"typed": "Motion", "offers": ["Motion in a Plane", "Rotational Motion", "Newton's Laws of Motion"]},
+    {"typed": "Work", "offers": ["Work, Energy and Power"]},
+    {"typed": "Energy", "offers": ["Work, Energy and Power"]},
+    {"typed": "Optics", "none": true},
+    {"typed": "Electrostatics", "none": true}
+  ]
+}

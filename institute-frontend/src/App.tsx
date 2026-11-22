@@ -20,7 +20,8 @@ import { ResultDetailPage, ResultsPage } from "./pages/ResultsPages";
 import { AuditPage, BillingPage, NotificationsPage, SettingsPage, SupportPage } from "./pages/OpsPages";
 import { PaperDetailPage } from "./pages/PapersPage";
 import QuestionBankPage from "./pages/QuestionBankPage";
-import BulkImportPage, { BulkImportJobPage } from "./pages/BulkImportPage";
+import { BULK_TAB, BulkImportJobPage } from "./pages/BulkImportPage";
+import { UploadsProvider } from "./components/UploadManager";
 import { BranchDetailPage, ProviderDetailPage, ProvidersPage } from "./pages/ProvidersPage";
 import RoleManagementPage, { RoleCategoryPage } from "./pages/StaffPage";
 import StudentsPage from "./pages/StudentsPage";
@@ -43,7 +44,7 @@ export function AppRoutes() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/forbidden" element={<Forbidden />} />
       <Route element={<ProtectedRoute />}>
-        <Route element={<ScopeProvider><AppShell /></ScopeProvider>}>
+        <Route element={<ScopeProvider><UploadsProvider><AppShell /></UploadsProvider></ScopeProvider>}>
           <Route index element={<DashboardPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
@@ -63,7 +64,7 @@ export function AppRoutes() {
           {/* old address of the combined subjects/batches page */}
           <Route path="academics" element={<Navigate to="/subjects" replace />} />
           <Route element={<ProtectedRoute perm="question.manage" />}>
-            <Route path="papers/bulk-import" element={<BulkImportPage />} />
+            <Route path="papers/bulk-import" element={<Navigate to={BULK_TAB} replace />} />
             <Route path="papers/bulk-import/:jobId" element={<BulkImportJobPage />} />
           </Route>
           <Route element={<ProtectedRoute perm="paper.read" />}>

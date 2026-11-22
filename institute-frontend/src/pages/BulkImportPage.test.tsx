@@ -30,7 +30,8 @@ const PICTURE_ROW = { row_no: 3, status: "INVALID", data: data({ question_text: 
   images: { question_image: { sha256: "aa", url: "/api/v1/bulk-imports/j1/images/aa" }, option_b_image: { sha256: "bb", url: "/api/v1/bulk-imports/j1/images/bb" } },
   content_format: "IMAGE", question_id: null };
 const DUPLICATE_ROW = { ...VALID_ROW, row_no: 4, status: "DUPLICATE", errors: [{ field: null, message: "Same question as row 2." }] };
-const ISSUE = { level: "CHAPTER", value: "Newton Laws", parent_id: null, suggestions: [{ node_id: "n1", name: "Laws of Motion" }], rows: 1, example_rows: [3] };
+const ISSUE = { level: "CHAPTER", value: "Newton Laws", parent_id: null, rows: 1, example_rows: [3], preselect: "n1", may_manage: true,
+  suggestions: [{ node_id: "n1", name: "Laws of Motion", band: "HIGH", matched: "Laws of Motion" }], elsewhere: [] };
 const NODES = [{ node_id: "n1", parent_id: null, level: "CHAPTER", name: "Laws of Motion", status: "ACTIVE" },
   { node_id: "n2", parent_id: null, level: "CHAPTER", name: "Optics", status: "ACTIVE" }];
 
@@ -41,11 +42,16 @@ function preview(status = "PREVIEW", extra: Record<string, unknown> = {}, routes
     "/api/v1/bulk-imports/j1/taxonomy-issues": [ISSUE], "/api/v1/question-taxonomy/nodes": NODES, ...routes });
 }
 
-// ------------------------------------------------------------------ upload (XMLHttpRequest, for progress)
+// ------------------------------------------------------------------ resumable upload: start / complete by fetch, pieces by XHR
 
-type Sent = { url: string; fields: Record<string, string> };
-const sent: Sent[] = [];
-let xhrAnswer: { status: number; body: unknown } | "network" = { status: 202, body: job("UPLOADED") };
+/** The server's view of an upload (routes/bulk_uploads.py); pieces of 4 bytes in these tests. */
+const SESSION = (over: Record<string, unknown> = {}) => ({ upload_id: "u1", scope: "PROVIDER", provider_id: "p1", subject_id: "phy",
+  file_name: "physics.xlsx", size: 2, chunk_size: 4, received_parts: 0, received_bytes: 0, status: "RECEIVING", job_id: null,
+  created_at: "2026-11-22T10:00:00Z", updated_at: "2026-11-22T10:00:00Z", resumed: false, ...over });
+
+type Sent = { url: string; size: number };
+const sent: Sent[] = [];                                     // the pieces sent (PUT .../parts/{n})
+let xhrAnswer: ((url: string) => { status: number; body: unknown }) | null = null;
 
 class FakeXhr {
   status = 0;
@@ -57,13 +63,14 @@ class FakeXhr {
   private url = "";
   open(_method: string, url: string) { this.url = url; }
   setRequestHeader() {}
-  send(form: FormData) {
-    sent.push({ url: this.url, fields: Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : (v as File).name])) });
+  send(body: Blob) {
+    sent.push({ url: this.url, size: body.size });
+    const n = Number(/parts\/(\d+)$/.exec(this.url)?.[1] ?? 0);
+    const answer = xhrAnswer?.(this.url) ?? { status: 200, body: SESSION({ received_parts: n + 1 }) };
     setTimeout(() => {
-      if (xhrAnswer === "network") { this.onerror?.(); return; }
-      this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
-      this.status = xhrAnswer.status;
-      this.responseText = JSON.stringify(xhrAnswer.body);
+      this.upload.onprogress?.({ lengthComputable: true, loaded: body.size / 2, total: body.size });
+      this.status = answer.status;
+      this.responseText = JSON.stringify(answer.body);
       this.onload?.();
     }, 0);
   }
@@ -73,7 +80,7 @@ const saved: string[] = [];
 beforeEach(() => {
   sent.length = 0;
   saved.length = 0;
-  xhrAnswer = { status: 202, body: job("UPLOADED") };
+  xhrAnswer = null;
   vi.stubGlobal("XMLHttpRequest", FakeXhr);
   URL.createObjectURL = vi.fn(() => "blob:report");
   URL.revokeObjectURL = vi.fn();
@@ -81,11 +88,20 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-function startPage(user = ADMIN, extra: Record<string, unknown> = {}) {
-  const calls = stubApi({ ...common, "/api/v1/auth/me": user, "/api/v1/bulk-imports": page([job("COMPLETED", { imported_rows: 3, file_name: "earlier-upload.xlsx" })]),
+const CHEM = { subject_id: "chem", name: "Chemistry" };
+const SUPER = me("SUPER_ADMIN", ["paper.read", "question.read", "question.manage", "taxonomy.manage"]);
+const TARGETS_PA = { global: null, provider_wide: [{ provider_id: "p1", name: "Alpha", subjects: [{ subject_id: "phy", name: "Physics" }] }], branch: true };
+const TARGETS_SA = { global: { subjects: [{ subject_id: "phy", name: "Physics" }, CHEM] }, provider_wide: [], branch: true };
+
+/** Question Bank & Papers > Bulk Upload (the tab), for `user` with the server's import targets. */
+function startPage(user = ADMIN, extra: Record<string, unknown> = {}, path = "/papers?tab=bulk") {
+  const calls = stubApi({ ...common, "/api/v1/auth/me": user, "/api/v1/bulk-imports/targets": TARGETS_PA,
+    "POST /api/v1/bulk-imports/uploads": SESSION(), "POST /api/v1/bulk-imports/uploads/u1/complete": job("UPLOADED"),
+    "/api/v1/bulk-imports/uploads": [],
+    "/api/v1/bulk-imports": page([job("COMPLETED", { imported_rows: 3, file_name: "earlier-upload.xlsx" })]),
     "/api/v1/bulk-imports/j1": job("PREVIEW"), "/api/v1/bulk-imports/j1/rows": page([VALID_ROW]),
     "/api/v1/bulk-imports/j1/taxonomy-issues": [], ...extra });
-  renderApp("/papers/bulk-import");
+  renderApp(path);
   return calls;
 }
 
@@ -102,21 +118,60 @@ async function chooseSubject() {
   fireEvent.change(select, { target: { value: "phy" } });
 }
 
-describe("Bulk Import page: upload", () => {
-  it.each([["physics.xlsx"], ["physics.docx"]])("uploads %s with branch and subject, then opens the import", async (name) => {
+/** The start of an upload to the provider (the file itself follows in pieces). */
+const startedFor = (calls: Call[]) => calls.find((c) => c.method === "POST" && c.path === "/api/v1/bulk-imports/uploads")?.body;
+const PROVIDER_START = (name: string) => ({ subject_id: "phy", target: "PROVIDER", provider_id: "p1", file_name: name, size: 2,
+  fingerprint: expect.stringMatching(new RegExp(`^${name.replace(".", "\\.")}\\|2\\|`)) });
+
+describe("Bulk Upload tab: upload", () => {
+  it("is a tab of Question Bank & Papers, next to Import Processing", async () => {
     startPage();
+    const tabs = (await screen.findAllByRole("tab")).map((t) => t.textContent);
+    expect(tabs.slice(0, 4)).toEqual(["Question Bank", "Papers", "Import Processing", "Bulk Upload"]);
+    expect(await screen.findByLabelText("File (.xlsx or .docx)")).toBeTruthy();
+  });
+
+  it("opens from the old address too, with no branch or provider to choose", async () => {
+    startPage(ADMIN, {}, "/papers/bulk-import");
+    expect(await screen.findByLabelText("File (.xlsx or .docx)")).toBeTruthy();
+    expect(screen.queryByLabelText("Upload to")).toBeNull();
+    expect(screen.queryByText("No branch available")).toBeNull();
+  });
+
+  it.each([["physics.xlsx"], ["physics.docx"]])("uploads %s in the background to the provider, then says it has arrived", async (name) => {
+    const calls = startPage();
     await chooseSubject();
     await chooseFile(name);
     expect(screen.getByText(name)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
-    await waitFor(() => expect(sent).toEqual([{ url: `${API_URL}/api/v1/bulk-imports`, fields: { branch_id: "b1", subject_id: "phy", file: name } }]));
-    expect(await screen.findByText("Ready for review")).toBeTruthy();                       // navigated to the import (stubbed PREVIEW)
+    expect(await screen.findByText(new RegExp(`“${name}” is uploading in the background`))).toBeTruthy();
+    expect((screen.getByLabelText("File (.xlsx or .docx)") as HTMLInputElement).value).toBe("");      // free for the next file
+    await waitFor(() => expect(startedFor(calls)).toEqual(PROVIDER_START(name)));
+    const toast = (await screen.findByText(`Upload finished: ${name}`)).closest(".upload-toast") as HTMLElement;
+    expect(toast.getAttribute("role")).toBe("status");                                        // announced to screen readers
+    expect(within(toast).getByRole("link", { name: "Open the import" }).getAttribute("href")).toBe("/papers/bulk-import/j1");
+    expect(sent).toEqual([{ url: `${API_URL}/api/v1/bulk-imports/uploads/u1/parts/0`, size: 2 }]);
+    expect(calls.some((c) => c.method === "POST" && c.path === "/api/v1/bulk-imports/uploads/u1/complete")).toBe(true);
+    const tray = screen.getByRole("region", { name: "Uploads" });
+    expect(within(tray).getByText("Upload finished")).toBeTruthy();
+  });
+
+  it("sends a large file piece by piece and continues an interrupted upload from where it stopped", async () => {
+    const calls = startPage(ADMIN, { "POST /api/v1/bulk-imports/uploads": SESSION({ size: 10, received_parts: 1, received_bytes: 4, resumed: true }) });
+    await chooseSubject();
+    const input = await screen.findByLabelText("File (.xlsx or .docx)");
+    fireEvent.change(input, { target: { files: [new File(["PK34567890"], "physics.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
+    expect(await screen.findByText(/Upload finished: physics.xlsx/)).toBeTruthy();
+    expect(sent.map((x) => [x.url.split("/").slice(-1)[0], x.size])).toEqual([["1", 4], ["2", 2]]);      // piece 0 had already arrived
+    expect(screen.getByText(/continued from 4 KB|continued from/)).toBeTruthy();
+    expect(startedFor(calls)).toMatchObject({ size: 10, file_name: "physics.xlsx" });
   });
 
   it.each([
     ["questions.csv", undefined, "CSV and .doc files are not supported"],
     ["questions.doc", undefined, "CSV and .doc files are not supported"],
-    ["huge.xlsx", 600 * 1024 * 1024, "larger than 512 MB"],
+    ["huge.xlsx", 2.5 * 1024 * 1024 * 1024, "larger than 2 GB"],
   ])("refuses %s before sending anything", async (name, size, message) => {
     startPage();
     await chooseSubject();
@@ -135,26 +190,52 @@ describe("Bulk Import page: upload", () => {
     expect(screen.queryByText("physics.xlsx")).toBeNull();
   });
 
-  it("asks for a branch when none is available", async () => {
-    stubApi({ ...common, "/api/v1/auth/me": ADMIN, "/api/v1/providers/p1/branches": page([]) });
-    renderApp("/papers/bulk-import");
-    expect(await screen.findByText("No branch available")).toBeTruthy();
-    expect(screen.queryByLabelText("File (.xlsx or .docx)")).toBeNull();
-  });
-
-  it("shows the server's refusal and a network failure", async () => {
-    xhrAnswer = { status: 422, body: { detail: { code: "INVALID_FILE", message: "The file is not a valid Excel (.xlsx) or Word (.docx) file." } } };
+  it("shows the server's refusal in the tray, and Continue tries again", async () => {
+    xhrAnswer = () => ({ status: 422, body: { detail: { code: "INVALID_FILE", message: "The file is not a valid Excel (.xlsx) or Word (.docx) file." } } });
     startPage();
     await chooseSubject();
     await chooseFile("physics.xlsx");
     fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
-    expect(await screen.findByText("The file is not a valid Excel (.xlsx) or Word (.docx) file.")).toBeTruthy();
-    xhrAnswer = "network";
-    fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
-    expect(await screen.findByText(/Cannot reach the server/)).toBeTruthy();
+    const tray = await screen.findByRole("region", { name: "Uploads" });
+    expect(await within(tray).findByText("The file is not a valid Excel (.xlsx) or Word (.docx) file.")).toBeTruthy();
+    xhrAnswer = null;
+    fireEvent.click(within(tray).getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText(/Upload finished: physics.xlsx/)).toBeTruthy();
   });
 
-  it("lists the branch's earlier imports with subject, status and counts", async () => {
+  it("shows live progress in the upload history while the server imports", async () => {
+    startPage(ADMIN, { "/api/v1/bulk-imports": page([job("IMPORTING", { file_name: "big.xlsx", progress: { done: 40, total: 100 } })]) });
+    const bar = await screen.findByLabelText("big.xlsx: 40 of 100 imported");
+    expect((bar as HTMLProgressElement).value).toBe(40);
+    expect(screen.getByText(/40 of 100 imported/)).toBeTruthy();
+  });
+
+  it("lists unfinished uploads to continue or discard", async () => {
+    const calls = startPage(ADMIN, { "/api/v1/bulk-imports/uploads": [SESSION({ upload_id: "u7", file_name: "big.xlsx", size: 100, received_bytes: 40 })],
+      "DELETE /api/v1/bulk-imports/uploads/u7": SESSION({ upload_id: "u7", status: "DISCARDED" }) });
+    const card = (await screen.findByRole("heading", { name: "Unfinished uploads" })).closest(".card") as HTMLElement;
+    expect(within(card).getByText("big.xlsx")).toBeTruthy();
+    expect(within(card).getByText(/40% of/)).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/api/v1/bulk-imports/uploads/u7")).toBe(true));
+  });
+
+  it("asks before signing out while a file is still uploading", async () => {
+    xhrAnswer = () => ({ status: 200, body: SESSION({ received_parts: 1 }) });
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    startPage(ADMIN, { "POST /api/v1/bulk-imports/uploads": async () => { await hold; return SESSION(); } });
+    await chooseSubject();
+    await chooseFile("physics.xlsx");
+    fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    expect(await screen.findByText("A file is still uploading")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    release();
+    expect(await screen.findByText(/Upload finished: physics.xlsx/)).toBeTruthy();
+  });
+
+  it("lists the provider's earlier uploads with subject, status and counts", async () => {
     const calls = startPage();
     const link = await screen.findByRole("link", { name: "earlier-upload.xlsx" });
     expect(link.getAttribute("href")).toBe("/papers/bulk-import/j1");
@@ -162,14 +243,15 @@ describe("Bulk Import page: upload", () => {
     expect(within(row).getByText("Physics")).toBeTruthy();
     expect(within(row).getByText("COMPLETED")).toBeTruthy();
     expect(within(row).getByText("3 read · 1 ready · 3 imported")).toBeTruthy();
-    expect(calls.find((c) => c.path === "/api/v1/bulk-imports")!.search.get("branch_id")).toBe("b1");
+    const asked = calls.find((c) => c.path === "/api/v1/bulk-imports")!;
+    expect([asked.search.get("provider_id"), asked.search.get("branch_id")]).toEqual(["p1", null]);
   });
 
   it("is not offered to staff who may not add questions", async () => {
-    stubApi({ ...common, "/api/v1/auth/me": me("TEACHER", ["paper.read", "question.read"]) });
-    renderApp("/papers/bulk-import");
-    await waitFor(() => expect(screen.queryByLabelText("File (.xlsx or .docx)")).toBeNull());
-    expect(await screen.findByText(/not allowed|permission|access/i)).toBeTruthy();
+    startPage(me("TEACHER", ["paper.read", "question.read"]), {
+      "/api/v1/bulk-imports/targets": fail(403, { code: "FORBIDDEN", message: "You do not have permission for this action." }) });
+    expect(await screen.findByText(/permission/i)).toBeTruthy();
+    expect(screen.queryByLabelText("File (.xlsx or .docx)")).toBeNull();
   });
 });
 
@@ -247,27 +329,37 @@ describe("Bulk Import page: corrections", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("lets a taxonomy manager approve an alias, and checks the preview again", async () => {
+  it("pre-selects the likeliest record and lets a taxonomy manager remember the spelling, then checks again", async () => {
     const calls = preview("PREVIEW", {}, { "POST /api/v1/bulk-imports/j1/taxonomy-resolutions": job("VALIDATE_QUEUED"),
       "POST /api/v1/bulk-imports/j1/revalidate": job("VALIDATE_QUEUED") });
     renderApp("/papers/bulk-import/j1");
     expect(await screen.findByText(/Chapter “Newton Laws”/)).toBeTruthy();
     const select = await screen.findByLabelText("Existing chapter");
-    await waitFor(() => expect(within(select).getByRole("option", { name: "Laws of Motion (suggested)" })).toBeTruthy());
+    await waitFor(() => expect(within(select).getByRole("option", { name: "Laws of Motion (very likely)" })).toBeTruthy());
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose…", "Laws of Motion (very likely)", "Optics"]);
     expect((select as HTMLSelectElement).value).toBe("n1");                                    // preselected suggestion, not applied yet
+    expect(screen.getByText("Did you mean “Laws of Motion”?")).toBeTruthy();
     expect(calls.some((c) => c.path.endsWith("taxonomy-resolutions"))).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Always accept this name" }));
+    fireEvent.click(screen.getByLabelText("Remember this spelling"));
+    expect(screen.getByText("“Newton Laws” will be recognised from now on.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Use this chapter" }));
     await waitFor(() => expect(calls.find((c) => c.path.endsWith("taxonomy-resolutions"))?.body)
-      .toEqual({ level: "CHAPTER", value: "Newton Laws", parent_id: null, action: "ALIAS", node_id: "n1" }));
+      .toEqual({ level: "CHAPTER", value: "Newton Laws", parent_id: null, action: "MAP", node_id: "n1", remember: true }));
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path.endsWith("/revalidate"))).toBe(true));
   });
 
-  it("shows other staff what must be resolved without offering the resolution", async () => {
-    preview("PREVIEW", {}, { "/api/v1/auth/me": TEACHER });
+  it("lets other staff choose a record and ask for the spelling, but not create records", async () => {
+    const calls = preview("PREVIEW", {}, { "/api/v1/auth/me": TEACHER, "/api/v1/bulk-imports/j1/taxonomy-issues": [{ ...ISSUE, may_manage: false }],
+      "POST /api/v1/bulk-imports/j1/taxonomy-resolutions": job("VALIDATE_QUEUED") });
     renderApp("/papers/bulk-import/j1");
-    expect(await screen.findByText(/Ask a provider administrator/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Always accept this name" })).toBeNull();
+    expect(await screen.findByText(/Only an administrator can add new chapters/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Create “Newton Laws”/ })).toBeNull();
+    fireEvent.click(await screen.findByLabelText("Remember this spelling"));
+    expect(screen.getByText(/An administrator will be asked to approve this spelling/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Use this chapter" }));
+    await waitFor(() => expect(calls.find((c) => c.path.endsWith("taxonomy-resolutions"))?.body)
+      .toEqual({ level: "CHAPTER", value: "Newton Laws", parent_id: null, action: "MAP", node_id: "n1", remember: true }));
   });
 
   it("shows the server's refusal of a resolution", async () => {
@@ -343,54 +435,46 @@ describe("Bulk Import page: confirmation and results", () => {
   });
 });
 
-// ------------------------------------------------------------------ three targets: platform, provider-wide, branch
+// ------------------------------------------------------------------ where the questions go: the provider, or the platform
 
-const CHEM = { subject_id: "chem", name: "Chemistry" };
-const SUPER = me("SUPER_ADMIN", ["paper.read", "question.read", "question.manage", "taxonomy.manage"]);
-const TARGETS_PA = { global: null, provider_wide: [{ provider_id: "p1", name: "Alpha", subjects: [{ subject_id: "phy", name: "Physics" }] }], branch: true };
-const TARGETS_SA = { global: { subjects: [{ subject_id: "phy", name: "Physics" }, CHEM] }, provider_wide: [], branch: true };
-
-async function into(label: RegExp) {
-  const select = await screen.findByLabelText("Import into");
-  const option = await waitFor(() => within(select).getByRole("option", { name: label }) as HTMLOptionElement);
-  fireEvent.change(select, { target: { value: option.value } });
-}
-
-describe("Bulk Import page: where the questions go", () => {
-  it("offers only what the server allows: a teacher gets the branch import without a choice", async () => {
-    startPage(TEACHER, { "/api/v1/bulk-imports/targets": { global: null, provider_wide: [], branch: true } });
+describe("Bulk Upload tab: where the questions go", () => {
+  it("a teacher or Branch Admin uploads to the provider without choosing anything", async () => {
+    const calls = startPage(TEACHER);
     expect(await screen.findByLabelText("File (.xlsx or .docx)")).toBeTruthy();
-    expect(screen.queryByLabelText("Import into")).toBeNull();
-  });
-
-  it("lets a Provider Admin import provider-wide: no branch is sent, the provider is", async () => {
-    const calls = startPage(ADMIN, { "/api/v1/bulk-imports/targets": TARGETS_PA });
-    await into(/Provider-wide — Alpha/);
-    expect(screen.queryByText("No branch available")).toBeNull();
+    expect(screen.queryByLabelText("Upload to")).toBeNull();
+    expect(screen.getByText(/Alpha's Question Bank, shared with all its branches/)).toBeTruthy();
     await chooseSubject();
     await chooseFile("physics.xlsx");
     fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
-    await waitFor(() => expect(sent).toEqual([{ url: `${API_URL}/api/v1/bulk-imports`,
-      fields: { target: "PROVIDER", provider_id: "p1", subject_id: "phy", file: "physics.xlsx" } }]));
-    expect(calls.some((c) => c.path === "/api/v1/bulk-imports" && c.search.get("provider_id") === "p1" && !c.search.get("branch_id"))).toBe(true);
+    await waitFor(() => expect(startedFor(calls)).toEqual(PROVIDER_START("physics.xlsx")));
   });
 
-  it("lets a platform administrator import into the platform bank with every platform subject", async () => {
+  it("a platform administrator uploads into the platform bank with every platform subject", async () => {
     const calls = startPage(SUPER, { "/api/v1/bulk-imports/targets": TARGETS_SA });
-    await into(/Platform question bank/);
     const select = await screen.findByLabelText("Subject");
-    expect(within(select).getByRole("option", { name: "Chemistry" })).toBeTruthy();
+    await waitFor(() => expect(within(select).getByRole("option", { name: "Chemistry" })).toBeTruthy());
     fireEvent.change(select, { target: { value: "chem" } });
     await chooseFile("chemistry.docx");
     fireEvent.click(screen.getByRole("button", { name: "Upload and check" }));
-    await waitFor(() => expect(sent).toEqual([{ url: `${API_URL}/api/v1/bulk-imports`, fields: { target: "GLOBAL", subject_id: "chem", file: "chemistry.docx" } }]));
+    await waitFor(() => expect(startedFor(calls)).toMatchObject({ target: "GLOBAL", provider_id: null, subject_id: "chem", file_name: "chemistry.docx" }));
     expect(calls.some((c) => c.path === "/api/v1/bulk-imports" && c.search.get("target") === "GLOBAL")).toBe(true);
   });
 
-  it("never asks to resolve chapters of a platform import (they stay as typed)", async () => {
+  it("offers a choice only when there is more than one place to upload to", async () => {
+    startPage(SUPER, { "/api/v1/bulk-imports/targets": { ...TARGETS_SA, provider_wide: TARGETS_PA.provider_wide } });
+    const select = await screen.findByLabelText("Upload to");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Platform question bank (all institutes)", "Alpha"]);
+    fireEvent.change(select, { target: { value: "p1" } });
+    expect(await screen.findByText(/Alpha's Question Bank/)).toBeTruthy();
+  });
+
+  it("resolves chapters of a platform import against the platform list", async () => {
     const calls = preview("PREVIEW", { scope: "GLOBAL", provider_id: null, branch_id: null });
     renderApp("/papers/bulk-import/j1");
     expect(await screen.findByText(/into the platform question bank/)).toBeTruthy();
-    expect(calls.some((c) => c.path.endsWith("/taxonomy-issues"))).toBe(false);
+    await screen.findByLabelText("Existing chapter");
+    const nodes = calls.find((c) => c.path.startsWith("/api/v1/question-taxonomy/nodes"));
+    expect(nodes?.search.get("subject_id")).toBeTruthy();
+    expect(nodes?.search.has("provider_id")).toBe(false);                                     // the platform list
   });
 });

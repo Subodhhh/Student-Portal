@@ -136,16 +136,27 @@ def create_question(client, h, world, bank, **over):
     return client.get(f"{API}/questions/{r.json()['question_id']}", headers=h).json()["question"]
 
 
-def test_question_labels_are_linked_to_records_and_unknown_labels_are_kept_as_text(client, world, bank, tree):
+def test_question_labels_are_linked_to_records_and_unknown_labels_are_refused_where_records_exist(client, world, bank, tree):
     h = tree["h"]
     q = create_question(client, h, world, bank, chapter="laws  of MOTION", topic="FORCE", subtopic="units")
     assert (q["chapter_id"], q["topic_id"], q["subtopic_id"]) == (tree["chapter"]["node_id"], tree["topic"]["node_id"], tree["subtopic"]["node_id"])
     assert (q["chapter"], q["topic"], q["subtopic"]) == ("Laws of Motion", "Force", "Units")          # canonical spelling
-    q = create_question(client, h, world, bank, stem="What is inertia, briefly?", chapter="Optics", topic="Force")
-    assert q["chapter"] == "Optics" and q["chapter_id"] is None and q["topic_id"] is None              # nothing is created silently
-    # re-classifying follows the new labels
-    r = client.patch(f"{API}/questions/{q['question_id']}", json={"chapter": "Laws of Motion"}, headers=h)
+    # where records exist, an unknown name is refused with suggestions (nothing is created silently, nothing saved)
+    body = q_body(bank["phy"], branch_id=str(world["p1b1"]), stem="What is inertia, briefly?", chapter="Law of Motions", topic="Force")
+    r = client.post(f"{API}/questions", json=body, headers=h)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "TAXONOMY_UNMATCHED"
+    [item] = r.json()["detail"]["items"]
+    assert item["level"] == "CHAPTER" and item["preselect"] == tree["chapter"]["node_id"]
+    # where a place has no records yet, a typed name is kept as text (it waits in the "Unlinked names" queue)
+    optics = node(client, h, world["p1"], bank["phy"], "CHAPTER", "Optics")
+    q = create_question(client, h, world, bank, stem="What is inertia, briefly?", chapter="Optics", topic="Lenses")
+    assert q["chapter_id"] == optics["node_id"] and q["topic"] == "Lenses" and q["topic_id"] is None
+    # re-classifying follows the new labels, and is refused for an unknown name
+    r = client.patch(f"{API}/questions/{q['question_id']}", json={"chapter": "Laws of Motion", "topic": "Force"}, headers=h)
     assert r.status_code == 200 and r.json()["chapter_id"] == tree["chapter"]["node_id"] and r.json()["topic_id"] == tree["topic"]["node_id"]
+    r = client.patch(f"{API}/questions/{q['question_id']}", json={"topic": "Forse"}, headers=h)
+    assert r.status_code == 422 and r.json()["detail"]["items"][0]["suggestions"][0]["node_id"] == tree["topic"]["node_id"]
+    assert client.get(f"{API}/questions/{q['question_id']}", headers=h).json()["question"]["topic"] == "Force"     # unchanged
 
 
 def test_renaming_relabels_linked_questions_and_retiring_keeps_their_links(client, world, bank, tree):
@@ -164,7 +175,7 @@ def test_renaming_relabels_linked_questions_and_retiring_keeps_their_links(clien
     node(client, h, world["p1"], bank["phy"], "SUBTOPIC", "si units", tree["topic"]["node_id"], status=409)
 
 
-def test_global_questions_are_never_linked(client, world, bank, tree, login):
+def test_global_questions_are_not_linked_to_a_providers_records(client, world, bank, tree, login):
     r = client.post(f"{API}/questions", json=q_body(bank["phy"], scope="GLOBAL"), headers=login(bank["sa"]))
     assert r.status_code == 201
     q = client.get(f"{API}/questions/{r.json()['question_id']}", headers=login(bank["sa"])).json()["question"]

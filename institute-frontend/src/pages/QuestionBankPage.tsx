@@ -10,13 +10,16 @@ import { Alert, Button, Card, DataTable, EmptyState, Field, PageHeader, Paginati
 import { useAction, useApi, useReference } from "../hooks/useApi";
 import { ApiError, api, type Page } from "../services/api";
 import { DraftReview } from "../components/reviewDraft";
+import { BulkUpload } from "./BulkImportPage";
+import { ChaptersTab } from "../components/taxonomy";
+import { useTargetBranch } from "../hooks/useTargetBranch";
 import type { DraftView, ReviewDraft } from "../hooks/useDraftAutosave";
 
 type Subject = { subject_id: string; code: string; name: string };
 type PV = { paper_version_id: string; version_no: number; status: string; question_count: number; total_marks: string };
 type PaperRow = { paper_id: string; scope: string; branch_id: string | null; subject_id: string; title: string; exam_type: string | null; target_class: string | null; latest_version: PV | null };
 type UploadError = { row: number | null; field: string | null; message: string };
-type UploadRow = { upload_id: string; title: string | null; subject_id: string; status: string; question_count: number | null; errors: UploadError[]; error_count: number;
+type UploadRow = { upload_id: string; title: string | null; branch_id: string; subject_id: string; status: string; question_count: number | null; errors: UploadError[]; error_count: number;
   has_answer_key: boolean; paper_version_id: string | null; paper_version_status: string | null; version_no: number | null; created_at: string };
 
 /** Question Bank & Papers: reusable questions, versioned papers built from them, and the history of file imports. */
@@ -26,12 +29,26 @@ export default function QuestionBankPage() {
   return (
     <>
       <Tabs active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })}
-        tabs={[{ id: "bank", label: "Question Bank" }, { id: "papers", label: "Papers" }, { id: "imports", label: "Import Processing" }]} />
+        tabs={[{ id: "bank", label: "Question Bank" }, { id: "papers", label: "Papers" }, { id: "imports", label: "Import Processing" },
+          { id: "bulk", label: "Bulk Upload" }, { id: "chapters", label: "Chapters & Topics" }]} />
       {tab === "bank" && <BankTab />}
       {tab === "papers" && <PapersTab />}
-      {tab === "imports" && <NeedBranch>{(ids) => <ImportTab {...ids} />}</NeedBranch>}
+      {tab === "imports" && <ImportsTab />}
+      {tab === "bulk" && <BulkUpload />}
+      {tab === "chapters" && <ChaptersTab />}
     </>
   );
+}
+
+/** "All Branches" is the default of these tabs (owner decision 2026-11-22); other pages keep working in one branch. */
+function useAllBranches() {
+  const [on, set] = useState(true);
+  return { on, set };
+}
+
+function ImportsTab() {
+  const allBranches = useAllBranches();
+  return <NeedBranch allBranches={allBranches}>{(ids) => <ImportTab key={ids.branchId} {...ids} />}</NeedBranch>;
 }
 
 // ------------------------------------------------------------------ question bank
@@ -61,6 +78,7 @@ function BankTab() {
     return next;
   });
   const reset = (s: Source) => { setSource(s); setSelected(new Map()); setBuilt(null); };
+  const allBranches = useAllBranches();
   const paperScope = source === "GLOBAL" ? "GLOBAL" : "PROVIDER";
   // A provider paper may combine the branch's questions with platform questions; a platform paper only platform questions.
   const canBuild = paperScope === "GLOBAL" ? global && can("paper.create") : can("paper.create");
@@ -73,7 +91,6 @@ function BankTab() {
         <SourcePicker value={source} onChange={reset} />
         {((source === "GLOBAL" && global && can("question.manage")) || (source !== "GLOBAL" && can("question.manage"))) && (
           <div className="row">
-            {source !== "GLOBAL" && <Link className="btn secondary" to="/papers/bulk-import">Bulk import from Excel or Word</Link>}
             <Button onClick={() => setAdding(true)}>{source === "GLOBAL" ? "Add platform question" : "Add question"}</Button>
           </div>
         )}
@@ -91,7 +108,8 @@ function BankTab() {
           <Button small variant="secondary" onClick={() => setSelected(new Map())}>Clear selection</Button>
         </div>
       )}
-      <QuestionBrowser key={`${source}-${branchId ?? ""}-${version}`} source={source} branchId={branchId} selectable={canBuild} selected={selected} onToggle={toggle} />
+      <QuestionBrowser key={`${source}-${providerId ?? ""}-${branchId ?? ""}-${version}`} source={source} branchId={branchId} providerId={providerId}
+        selectable={canBuild} selected={selected} onToggle={toggle} />
       {adding && <AddQuestion scope={source === "GLOBAL" ? "GLOBAL" : "PROVIDER"} branchId={branchId} providerId={providerId}
         onClose={() => setAdding(false)} onDone={() => { setAdding(false); setVersion((v) => v + 1); }} />}
       {building && <BuildPapersDialog scope={paperScope} branchId={branchId} selected={selected} onClose={() => setBuilding(false)}
@@ -101,7 +119,7 @@ function BankTab() {
   return (
     <>
       {intro}
-      {source === "GLOBAL" ? body() : <NeedBranch>{({ providerId, branchId }) => body(branchId, providerId)}</NeedBranch>}
+      {source === "GLOBAL" ? body() : <NeedBranch allBranches={allBranches}>{({ providerId, branchId }) => body(branchId, providerId)}</NeedBranch>}
     </>
   );
 }
@@ -112,7 +130,7 @@ function PapersTab() {
   const { me } = useAuth();
   const global = isGlobalRole(me?.primary_role);
   const [source, setSource] = useState<"GLOBAL" | "PROVIDER">(global ? "GLOBAL" : "PROVIDER");
-  const [allBranches, setAllBranches] = useState(false);       // local: other pages keep needing one branch
+  const [allBranches, setAllBranches] = useState(true);        // "All Branches" first; other pages keep needing one branch
   return (
     <>
       <PageHeader subtitle="Versioned papers. Published versions never change: a correction becomes the next version, and exams keep the version they used." />
@@ -190,12 +208,15 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
   const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
-  const history = useApi<Page<UploadRow>>(`/api/v1/uploads?branch_id=${branchId}&page=${page}&page_size=20${status ? `&status=${status}` : ""}`);
+  const where = branchId ? `branch_id=${branchId}` : `provider_id=${providerId}`;        // one branch, or "All Branches"
+  const { target, field: branchField } = useTargetBranch(branchId);                       // the branch an upload goes to
+  const branchName = (id: string) => scope.branches.find((b) => b.branch_id === id)?.name ?? "—";
+  const history = useApi<Page<UploadRow>>(`/api/v1/uploads?${where}&page=${page}&page_size=20${status ? `&status=${status}` : ""}`);
   const [subjectId, setSubjectId] = useState("");
   const [title, setTitle] = useState("");
   // a revised file can be imported as the next version of an existing paper of this branch and subject (compare it with the earlier one)
   const [revisionOf, setRevisionOf] = useState("");
-  const existing = useApi<Page<PaperRow>>(subjectId ? `/api/v1/papers?scope=PROVIDER&branch_id=${branchId}&subject_id=${subjectId}&page=1&page_size=100` : null);
+  const existing = useApi<Page<PaperRow>>(subjectId && target ? `/api/v1/papers?scope=PROVIDER&branch_id=${target}&subject_id=${subjectId}&page=1&page_size=100` : null);
   const [useKey, setUseKey] = useState(false);
   const [errors, setErrors] = useState<UploadError[]>([]);
   const [ok, setOk] = useState<{ version: string; count: number } | null>(null);
@@ -208,7 +229,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
   const [params, setParams] = useSearchParams();
   const draftId = params.get("draft");
   const [view, setView] = useState<DraftView | null>(null);
-  const drafts = useApi<{ items: (Omit<ReviewDraft, "decisions"> & { decided: number })[] }>(`/api/v1/review-drafts?branch_id=${branchId}`);
+  const drafts = useApi<{ items: (Omit<ReviewDraft, "decisions"> & { decided: number })[] }>(`/api/v1/review-drafts?${where}`);
   const openDraft = (id: string | null) => setParams((cur) => {
     const next = new URLSearchParams(cur);
     if (id) next.set("draft", id); else next.delete("draft");
@@ -250,7 +271,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
   const showPreview = () => up.run(async () => {
     setErrors([]); setOk(null); setView(null);
     try {
-      const v = await api<DraftView>(`/api/v1/branches/${branchId}/subjects/${subjectId}/review-drafts`, { method: "POST", form: uploadForm() });
+      const v = await api<DraftView>(`/api/v1/branches/${target}/subjects/${subjectId}/review-drafts`, { method: "POST", form: uploadForm() });
       setView(v);
       openDraft(v.draft.draft_id);
       drafts.reload();
@@ -269,7 +290,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
   };
   return (
     <div className="stack">
-      <PageHeader subtitle={`Imports into ${scope.branch?.name ?? "this branch"}. Files are validated completely when uploaded: one problem rejects the whole paper.`} />
+      <PageHeader subtitle={`${branchId ? `Imports into ${scope.branch?.name ?? "this branch"}` : "Imports of every branch"}. Files are validated completely when uploaded: one problem rejects the whole paper.`} />
       {can("paper.upload") && (
         <Card>
           <h2>Upload a question file</h2>
@@ -298,6 +319,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
               columns={[{ header: "Row / question", render: (e) => e.row ?? "—" }, { header: "Field", render: (e) => e.field ?? "—" }, { header: "Problem", render: (e) => e.message }]} />
           )}
           <div className="grid cols-2">
+            {branchField}
             <SelectField label="Subject" value={subjectId} onChange={(e) => { setSubjectId(e.target.value); setRevisionOf(""); }}>
               <option value="">Select…</option>{(subjects.data ?? []).map((s) => <option key={s.subject_id} value={s.subject_id}>{s.name}</option>)}
             </SelectField>
@@ -312,11 +334,11 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
           <div className="field"><label htmlFor="paper-file">Question file (max 2 MB; Excel or .zip with pictures up to 25 MB)</label><input id="paper-file" type="file" accept={ACCEPT} ref={file} /></div>
           <label className="row checkbox-field"><input type="checkbox" checked={useKey} onChange={(e) => setUseKey(e.target.checked)} /> The answers are in a separate answer-key file</label>
           {useKey && <div className="field"><label htmlFor="key-file">Answer key (.csv or .txt)</label><input id="key-file" type="file" accept=".csv,.txt,text/csv,text/plain" ref={key} /></div>}
-          <div className="row"><Button busy={up.busy} disabled={!subjectId || title.trim().length < 3} onClick={() => void showPreview()}>Validate & preview</Button></div>
+          <div className="row"><Button busy={up.busy} disabled={!target || !subjectId || title.trim().length < 3} onClick={() => void showPreview()}>Validate & preview</Button></div>
         </Card>
       )}
       {view?.preview && (
-        <DraftReview key={view.draft.draft_id} view={{ ...view, preview: view.preview }} target={{ branchId, subjectId: view.draft.subject_id }}
+        <DraftReview key={view.draft.draft_id} view={{ ...view, preview: view.preview }} target={{ branchId: view.draft.branch_id ?? target, subjectId: view.draft.subject_id }}
           onImported={imported} onClose={closeReview} />
       )}
       {!view && (drafts.data?.items.length ?? 0) > 0 && (
@@ -324,7 +346,8 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
           <h2>Reviews in progress</h2>
           <p className="muted small">Saved automatically. Continue where you left off; nothing is imported until you confirm.</p>
           <DataTable rows={drafts.data!.items} rowKey={(d) => d.draft_id}
-            columns={[{ header: "Paper", render: (d) => d.title }, { header: "File", render: (d) => d.file_name },
+            columns={[{ header: "Paper", render: (d) => d.title }, ...(branchId ? [] : [{ header: "Branch", render: (d: { branch_id?: string }) => branchName(d.branch_id ?? "") }]),
+              { header: "File", render: (d) => d.file_name },
               { header: "Subject", render: (d) => sName(d.subject_id) }, { header: "Decisions", render: (d) => d.decided },
               { header: "Last saved", render: (d) => new Date(d.updated_at).toLocaleString() },
               { header: "", render: (d) => <Button small onClick={() => openDraft(d.draft_id)}>Continue</Button> }]} />
@@ -345,6 +368,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
               columns={[
                 { header: "When", render: (u) => new Date(u.created_at).toLocaleString() },
                 { header: "Title", render: (u) => u.title ?? "—" },
+                ...(branchId ? [] : [{ header: "Branch", render: (u: UploadRow) => branchName(u.branch_id) }]),
                 { header: "Subject", render: (u) => sName(u.subject_id) },
                 { header: "Result", render: (u) => <StatusBadge status={u.status === "VALIDATED" ? "SUCCESS" : "REJECTED"} /> },
                 { header: "Questions", render: (u) => u.question_count ?? "—" },

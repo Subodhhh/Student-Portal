@@ -341,6 +341,12 @@ NEW_ROUTES = {
     # canonical question taxonomy (paper service): provider-scoped chapters/topics/subtopics, aliases and matching
     ("GET", f"{API}/question-taxonomy/nodes"), ("POST", f"{API}/question-taxonomy/nodes"), ("PATCH", f"{API}/question-taxonomy/nodes/{{node_id}}"),
     ("POST", f"{API}/question-taxonomy/nodes/{{node_id}}/aliases"), ("GET", f"{API}/question-taxonomy/match"),
+    ("GET", f"{API}/question-taxonomy/suggest"), ("GET", f"{API}/question-taxonomy/tree"),
+    ("POST", f"{API}/question-taxonomy/nodes/{{node_id}}/merge"), ("DELETE", f"{API}/question-taxonomy/aliases/{{alias_id}}"),
+    ("POST", f"{API}/question-taxonomy/alias-requests"), ("GET", f"{API}/question-taxonomy/alias-requests"),
+    ("POST", f"{API}/question-taxonomy/alias-requests/{{request_id}}/approve"),
+    ("POST", f"{API}/question-taxonomy/alias-requests/{{request_id}}/reject"),
+    ("GET", f"{API}/question-taxonomy/unlinked"), ("POST", f"{API}/question-taxonomy/unlinked/resolve"),
     # bulk question import (paper service; the work itself runs in the bulk import worker)
     ("POST", f"{API}/bulk-imports"), ("GET", f"{API}/bulk-imports"), ("GET", f"{API}/bulk-imports/{{job_id}}"),
     ("GET", f"{API}/bulk-imports/targets"),       # three-scope import targets (THREE_SCOPE_QUESTION_BANK_PLAN.md)
@@ -351,6 +357,10 @@ NEW_ROUTES = {
     ("GET", f"{API}/bulk-imports/{{job_id}}/report.csv"),
     # MSQ / NAT (QUESTION_TYPES_ARCHITECTURE.md): R1 "Import anyway" for a KEY_CONFLICT row, and the question-level analysis
     ("POST", f"{API}/bulk-imports/{{job_id}}/rows/{{row_no}}/import-anyway"), ("GET", f"{API}/exams/{{exam_id}}/results/questions"),
+    # resumable bulk uploads: start / resume, list, read, send a piece, complete, discard
+    ("POST", f"{API}/bulk-imports/uploads"), ("GET", f"{API}/bulk-imports/uploads"), ("GET", f"{API}/bulk-imports/uploads/{{upload_id}}"),
+    ("PUT", f"{API}/bulk-imports/uploads/{{upload_id}}/parts/{{n}}"), ("POST", f"{API}/bulk-imports/uploads/{{upload_id}}/complete"),
+    ("DELETE", f"{API}/bulk-imports/uploads/{{upload_id}}"),
     ("GET", f"{API}/bulk-import-templates/{{kind}}"),                               # the Excel / Word question templates
 }
 

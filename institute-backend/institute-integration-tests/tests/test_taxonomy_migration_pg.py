@@ -30,13 +30,14 @@ def test_upgrade_from_0010_adds_the_taxonomy_and_keeps_question_labels(db):
     paper_at(db, "0010_optional_question_marks")
     for s in AFTER_PAPER:
         run(db, s, "upgrade", "head")
+    sql(db, "drop table if exists question_taxonomy_alias_requests")            # (0017; the baseline makes it from today's models)
     sql(db, "drop table if exists question_taxonomy_aliases")                   # the shape of a database migrated before 0011
     sql(db, "alter table bank_questions drop column if exists chapter_id, drop column if exists topic_id, drop column if exists subtopic_id")
     sql(db, "drop table if exists question_taxonomy_nodes")
     seed_whole_number_data(db)
     sql(db, f"update bank_questions set chapter = 'Laws of Motion' where question_id = '{QUESTION}'")
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0015_question_types"
+    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
     assert link_columns(db) == [(c, "YES") for c in LINKS]
     assert sql(db, "select chapter, chapter_id from bank_questions") == [("Laws of Motion", None)]     # untouched until the backfill
 

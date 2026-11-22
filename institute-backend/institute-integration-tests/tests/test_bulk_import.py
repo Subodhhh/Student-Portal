@@ -338,6 +338,30 @@ def test_a_mapping_for_one_import_does_not_create_an_alias(client, world, bi, db
     assert m["match"] is None
 
 
+def test_anyone_managing_the_import_may_map_and_remembering_is_an_alias_or_a_request(client, world, bi, db_factory, store):
+    from institute_common.models.papers import QuestionTaxonomyAlias, QuestionTaxonomyAliasRequest
+    job_id = upload(client, world, bi, xlsx([q(chapter="Law of Motions"), q(stem="Second?", chapter="Newtons Laws")]), who="ba").json()["job_id"]
+    work(db_factory, store)
+    issues = client.get(f"{API}/bulk-imports/{job_id}/taxonomy-issues", headers=bi["h"]("ba")).json()
+    first = next(i for i in issues if i["value"] == "Law of Motions")
+    assert first["preselect"] == str(bi["chapter"]) and first["suggestions"][0]["band"] == "HIGH" and first["may_manage"] is False
+    url = f"{API}/bulk-imports/{job_id}/taxonomy-resolutions"
+    body = {"level": "CHAPTER", "value": "Law of Motions", "action": "MAP", "node_id": str(bi["chapter"]), "remember": True}
+    assert client.post(url, json=body, headers=bi["h"]("ba")).status_code == 200          # a Branch Admin maps, and asks
+    work(db_factory, store)
+    with db_factory() as db:
+        [req] = db.query(QuestionTaxonomyAliasRequest).all()
+        assert (req.alias, req.status, req.source, req.source_ref) == ("Law of Motions", "PENDING", "BULK_UPLOAD", job_id)
+        assert db.query(QuestionTaxonomyAlias).count() == 0
+    assert client.get(f"{API}/bulk-imports/{job_id}/taxonomy-issues", headers=bi["h"]("pa")).json()[0]["may_manage"] is True
+    r = client.post(url, json={**body, "value": "Newtons Laws"}, headers=bi["h"]("pa"))             # the Provider Admin: an alias at once
+    assert r.status_code == 200
+    work(db_factory, store)
+    assert job_of(client, bi, job_id, who="pa")["valid_rows"] == 2
+    with db_factory() as db:
+        assert [a.alias for a in db.query(QuestionTaxonomyAlias).all()] == ["Newtons Laws"]
+
+
 # ------------------------------------------------------------------ authorisation, isolation, hostile files
 
 def test_only_permitted_staff_see_and_act_on_an_import(client, world, bi, db_factory, store):

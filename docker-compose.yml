@@ -316,6 +316,9 @@ services:
     env_file: *institute_env
     environment:
       OBJECT_STORE_DIR: /var/institute/files/objects
+      # "preview ready" / "import finished" notifications go to the operations service's inbox (the bell)
+      OPERATIONS_SERVICE_URL: http://institute-operations-service:8000
+      OPERATIONS_SERVICE_API_KEY: ${INSTITUTE_OPERATIONS_KEY:-}
     command: ["python", "-m", "inst_paper.bulk_import_worker", "loop"]
     mem_limit: 1g              # streaming keeps an import far below this; the cap protects the host from a hostile file
     volumes:

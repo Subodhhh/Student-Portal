@@ -106,6 +106,23 @@ def is_provider_admin(p: Principal, provider_id: UUID, permission: str = "questi
                for a in p.assignments)
 
 
+def import_subjects(p: Principal, provider_id: UUID) -> set[UUID] | None:
+    """Bulk Upload goes to the provider's central (provider-wide) bank for everyone who may add questions somewhere in the provider
+    (owner decisions 2026-11-22): platform administrators holding question.manage (any provider), its Provider Admin and Branch Admins
+    (every subject; None = no restriction), a teacher (the subjects they teach there). An empty set: may not bulk upload to it."""
+    if p.is_global:
+        return None if p.has_perm("question.manage") else set()
+    roles = {Role(a.role) for a in p.assignments if a.provider_id == provider_id and "question.manage" in ROLE_PERMISSIONS[Role(a.role)]}
+    if roles & {Role.PROVIDER_ADMIN, Role.BRANCH_ADMIN}:
+        return None
+    return {t.subject_id for t in p.teaching if t.provider_id == provider_id} if Role.TEACHER in roles else set()
+
+
+def may_import_provider_wide(p: Principal, provider_id: UUID, subject_id: UUID) -> bool:
+    subjects = import_subjects(p, provider_id)
+    return subjects is None or subject_id in subjects
+
+
 def single_provider(p: Principal, permission: str = "question.read") -> UUID | None:
     """The caller's provider when it is unambiguous (non-platform staff of exactly one provider); None otherwise."""
     if p.is_global:

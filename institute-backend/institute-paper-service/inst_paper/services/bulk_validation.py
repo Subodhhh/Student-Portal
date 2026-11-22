@@ -188,9 +188,10 @@ def bank_hashes(db: Session, provider_id: UUID | None, subject_id: UUID) -> dict
 class TaxonomyContext:
     """Taxonomy lookups for one job: the job's confirmed mappings first, then names and approved aliases. Results are cached
     for the pass (a file usually repeats a few chapter names thousands of times)."""
-    provider_id: UUID
+    provider_id: UUID | None                  # None: the platform list (a GLOBAL import)
     subject_id: UUID
     mappings: dict
+    strict: bool = True                       # False: an unknown name is an error only where records exist (GLOBAL imports)
     cache: dict = field(default_factory=dict)
 
     @staticmethod
@@ -198,7 +199,8 @@ class TaxonomyContext:
         return f"{level}|{parent_id or ''}|{label_key(value)}"
 
     def resolve(self, db: Session, level: str, parent_id, value: str):
-        """(node or None, suggestions) for one value at one place in the hierarchy."""
+        """(node or None, problem) for one value at one place in the hierarchy. problem: None when matched or acceptable as plain
+        text (a non-strict list without records here), else {suggestions, preselect, elsewhere} for TAXONOMY_UNMATCHED."""
         key = self.mapping_key(level, parent_id, value)
         if key not in self.cache:
             node = None
@@ -209,15 +211,16 @@ class TaxonomyContext:
                     node = candidate
             if node is None:
                 node, _how = taxonomy.find(db, self.provider_id, self.subject_id, level, parent_id, value)
-            suggestions = [] if node else taxonomy.suggestions(db, self.provider_id, self.subject_id, level, parent_id, value)
-            self.cache[key] = (node, [{"node_id": str(n.node_id), "name": n.name} for n in suggestions])
+            problem = None
+            if node is None and (self.strict or taxonomy.in_use(db, self.provider_id, self.subject_id, level, parent_id)):
+                problem = taxonomy.suggestion_payload(taxonomy.suggest(db, self.provider_id, self.subject_id, level, parent_id, value))
+            self.cache[key] = (node, problem)
         return self.cache[key]
 
 
 def _check_taxonomy(db: Session, row: BulkImportRow, ctx: TaxonomyContext | None, errors: list[dict]) -> None:
     """Resolve Chapter > Topic > Subtopic; unmatched values become errors carrying suggestions and what to resolve. Without a
-    context (a GLOBAL import: platform questions keep plain-text labels, there are no platform taxonomy records) the labels are only
-    checked as labels."""
+    context the labels are only checked as labels."""
     row.chapter_id = row.topic_id = row.subtopic_id = None
     if ctx is None:
         _check_plain_labels(row, errors)
@@ -238,10 +241,13 @@ def _check_taxonomy(db: Session, row: BulkImportRow, ctx: TaxonomyContext | None
         except ValueError as exc:
             errors.append(error(column, f"{column.capitalize()} {exc}."))
             return
-        node, suggestions = ctx.resolve(db, level, parent, value)
+        node, problem = ctx.resolve(db, level, parent, value)
+        if node is None and problem is None:         # plain text is fine here (no platform records at this place yet)
+            _check_plain_labels(row, errors)
+            return
         if node is None:
             errors.append(error(column, f"“{value}” is not a {level.lower()} of this subject yet.", code="TAXONOMY_UNMATCHED",
-                                level=level, value=value, parent_id=str(parent) if parent else None, suggestions=suggestions))
+                                level=level, value=value, parent_id=str(parent) if parent else None, **problem))
             return
         setattr(row, link, node.node_id)
         parent = node.node_id

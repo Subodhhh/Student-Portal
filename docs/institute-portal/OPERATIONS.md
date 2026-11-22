@@ -98,6 +98,11 @@ reads, validates and imports uploaded Excel/Word question files. The database is
 worker's job is resumed after its lease (`BULK_IMPORT_LEASE_SECONDS`, default 300 s). It needs the same `DATABASE_URL` and object-store
 settings as the paper service. Unconfirmed previews and their files are deleted after `BULK_IMPORT_PREVIEW_DAYS` (7). Run it with a memory
 cap (compose: `mem_limit: 1g`). Tuning: `BULK_IMPORT_BATCH_SIZE`, `BULK_IMPORT_MAX_ROWS`, `BULK_IMPORT_MAX_BYTES`, `BULK_IMPORT_MAX_ACTIVE_JOBS`.
+Upload size: `BULK_IMPORT_MAX_BYTES` defaults to 2 GiB (production-ready; the gateway allows 2,100 MB on `POST /api/v1/bulk-imports`,
+streams it to the paper service and waits up to 15 minutes for the answer). Files are streamed, never held in memory, but they need
+temporary DISK: the paper service about 2x the file size while an upload is received (the multipart spool, then its private copy),
+the worker 1x while it reads a job; plus the object store (S3 multipart for large files). Any proxy or CDN in front (Cloudflare, a load
+balancer) must allow the same body size and a long enough timeout; the Cloudflare Pages demo edge (deploy/tunnel) keeps its own small limit.
 
 Three import targets (`docs/institute-portal/THREE_SCOPE_QUESTION_BANK_PLAN.md`): **GLOBAL** (platform bank, platform administrators;
 pictures become platform assets under `question-images/platform/<sha256>`), **provider-wide** (the provider's Provider Admin; `branch_id`

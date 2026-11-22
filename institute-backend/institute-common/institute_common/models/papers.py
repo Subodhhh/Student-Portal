@@ -104,25 +104,32 @@ class QuestionTaxonomyNode(Base):
     A chapter has no parent; a topic's parent is a chapter and a subtopic's a topic (same provider and subject). Names are unique per
     parent, compared by `name_key` (core.taxonomy.label_key: case, spacing and Unicode width ignored), so labels that differ only in
     capitalisation or spacing are the same record. Records are never deleted: `status` RETIRED hides one from new classification
-    while questions already linked to it keep the link."""
+    while questions already linked to it keep the link; MERGED (`merged_into_id`) means a duplicate folded into another record (its
+    questions were relinked there and its name became an alias of it). `provider_id` NULL: the PLATFORM list, used by platform
+    (GLOBAL) questions (docs/institute-portal/TAXONOMY_ALIASES_PLAN.md)."""
 
     __tablename__ = "question_taxonomy_nodes"
     __table_args__ = (
         CheckConstraint("level IN ('CHAPTER','TOPIC','SUBTOPIC')", name="question_taxonomy_nodes_level_check"),
         CheckConstraint("(level = 'CHAPTER') = (parent_id IS NULL)", name="question_taxonomy_nodes_parent_check"),
-        CheckConstraint("status IN ('ACTIVE','RETIRED')", name="question_taxonomy_nodes_status_check"),
-        # one name per place in the tree: chapters per (provider, subject), topics/subtopics per parent
+        CheckConstraint("status IN ('ACTIVE','RETIRED','MERGED')", name="question_taxonomy_nodes_status_check"),
+        CheckConstraint("(status = 'MERGED') = (merged_into_id IS NOT NULL)", name="question_taxonomy_nodes_merged_check"),
+        # one name per place in the tree: chapters per (provider, subject) - or per subject on the platform list -, topics/subtopics
+        # per parent
         Index("uq_question_taxonomy_chapter_name", "provider_id", "subject_id", "name_key", unique=True,
               postgresql_where=text("parent_id IS NULL"), sqlite_where=text("parent_id IS NULL")),
+        Index("uq_question_taxonomy_platform_chapter_name", "subject_id", "name_key", unique=True,
+              postgresql_where=text("parent_id IS NULL AND provider_id IS NULL"), sqlite_where=text("parent_id IS NULL AND provider_id IS NULL")),
         Index("uq_question_taxonomy_child_name", "parent_id", "name_key", unique=True,
               postgresql_where=text("parent_id IS NOT NULL"), sqlite_where=text("parent_id IS NOT NULL")),
         Index("ix_question_taxonomy_nodes_scope", "provider_id", "subject_id", "level"),
     )
 
     node_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False)
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"))          # NULL: the platform list
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     parent_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"), index=True)
+    merged_into_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
     level: Mapped[str] = mapped_column(String(10), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)               # as shown (and copied into question labels)
     name_key: Mapped[str] = mapped_column(String(200), nullable=False)           # core.taxonomy.label_key(name)
@@ -143,14 +150,16 @@ class QuestionTaxonomyAlias(Base):
     __table_args__ = (
         Index("uq_question_taxonomy_chapter_alias", "provider_id", "subject_id", "alias_key", unique=True,
               postgresql_where=text("parent_id IS NULL"), sqlite_where=text("parent_id IS NULL")),
+        Index("uq_question_taxonomy_platform_chapter_alias", "subject_id", "alias_key", unique=True,
+              postgresql_where=text("parent_id IS NULL AND provider_id IS NULL"), sqlite_where=text("parent_id IS NULL AND provider_id IS NULL")),
         Index("uq_question_taxonomy_child_alias", "parent_id", "alias_key", unique=True,
               postgresql_where=text("parent_id IS NOT NULL"), sqlite_where=text("parent_id IS NOT NULL")),
     )
 
     alias_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     node_id: Mapped[UUID] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"), nullable=False, index=True)
-    # copied from the record so uniqueness can be enforced per place in the tree without a join
-    provider_id: Mapped[UUID] = mapped_column(ForeignKey("providers.provider_id"), nullable=False)
+    # copied from the record so uniqueness can be enforced per place in the tree without a join (NULL: the platform list)
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"))
     subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
     parent_id: Mapped[UUID | None] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"))
     alias: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -158,6 +167,36 @@ class QuestionTaxonomyAlias(Base):
     approved_by: Mapped[UUID] = mapped_column(nullable=False)
     approved_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
     approved_ip: Mapped[str | None] = mapped_column(IPAddress)
+
+
+class QuestionTaxonomyAliasRequest(Base):
+    """"Remember this spelling" from someone who may not approve aliases (decision A2): a request for the record's administrators
+    (the provider's Provider Admin; platform administrators for the platform list). Approving creates the alias; rejecting records why.
+    The requester's own choice already applied where they made it (that upload or question) - the request is only about the future."""
+
+    __tablename__ = "question_taxonomy_alias_requests"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING','APPROVED','REJECTED')", name="question_taxonomy_alias_requests_status_check"),
+        CheckConstraint("source IN ('BULK_UPLOAD','QUESTION','CLASSIFY','UNLINKED')", name="question_taxonomy_alias_requests_source_check"),
+        Index("ix_question_taxonomy_alias_requests_owner", "provider_id", "status", "requested_at"),
+        Index("uq_question_taxonomy_alias_requests_pending", "node_id", "alias_key", unique=True,
+              postgresql_where=text("status = 'PENDING'"), sqlite_where=text("status = 'PENDING'")),
+    )
+
+    request_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    node_id: Mapped[UUID] = mapped_column(ForeignKey("question_taxonomy_nodes.node_id"), nullable=False)
+    provider_id: Mapped[UUID | None] = mapped_column(ForeignKey("providers.provider_id"))
+    subject_id: Mapped[UUID] = mapped_column(ForeignKey("subjects.subject_id"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(200), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str] = mapped_column(String(12), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(64))                 # the upload / question it came from (shown to the approver)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="PENDING", server_default="PENDING")
+    requested_by: Mapped[UUID] = mapped_column(nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    decided_by: Mapped[UUID | None] = mapped_column()
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    decision_reason: Mapped[str | None] = mapped_column(String(500))
 
 
 class Question(Base):

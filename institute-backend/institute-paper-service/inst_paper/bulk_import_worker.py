@@ -16,7 +16,7 @@ import time
 from institute_common.context import service_context
 from institute_common.database import new_session
 from institute_common.objectstore import get_object_store
-from inst_paper.services import bulk_import
+from inst_paper.services import bulk_import, notify
 
 log = logging.getLogger("inst_paper.bulk_import_worker")
 IDLE_SECONDS = 5
@@ -39,6 +39,11 @@ def run_once() -> dict:
         except Exception:                                   # noqa: BLE001  (housekeeping never stops the worker)
             db.rollback()
             log.exception("bulk import housekeeping failed")
+        try:
+            out["notifications"] = notify.deliver_pending(db)
+        except Exception:                                   # noqa: BLE001  (an inbox outage never stops imports; retried next pass)
+            db.rollback()
+            log.exception("bulk import notification delivery failed")
     return out
 
 

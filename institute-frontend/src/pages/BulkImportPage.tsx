@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { useScope } from "../auth/ScopeContext";
-import NeedBranch from "../components/NeedBranch";
+import { Link, useParams } from "react-router-dom";
 import { ImportPreview, TaxonomyIssues } from "../components/bulkImportPreview";
 import { ImportTemplateDownloads } from "../components/importTemplates";
 import { Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, PageHeader, Pagination, SelectField, Spinner, StatCard, StatusBadge } from "../components/ui";
-import { useAction, useApi, useReference } from "../hooks/useApi";
+import { useAction, useApi } from "../hooks/useApi";
+import { useUploads } from "../hooks/uploads";
 import {
-  ACCEPTED_EXTENSIONS, CANCELLABLE, FINISHED, JOB_STATUS_LABEL, MAX_UPLOAD_MB, WORKING, cancelImport, confirmImport, downloadReport, historyPath,
-  jobPath, revalidate, targetsPath, uploadImport, type HistoryPage, type ImportJob, type ImportTargets, type ImportWhere, type Subject,
+  ACCEPTED_EXTENSIONS, CANCELLABLE, FINISHED, JOB_STATUS_LABEL, MAX_UPLOAD_MB, MAX_UPLOAD_TEXT, WORKING, cancelImport, confirmImport, downloadReport, historyPath,
+  discardUpload, jobPath, revalidate, targetsPath, uploadsPath, type HistoryPage, type UploadSession, type UploadWhere, type ImportJob, type ImportTargets, type ImportWhere, type Subject,
 } from "../services/bulkImports";
 
+export const BULK_TAB = "/papers?tab=bulk";
 const POLL_MS = 3000;           // how often a job the worker is processing is refreshed (only while it is processing)
 const STEPS = ["Upload", "Preview", "Resolve", "Confirm", "Results"];
 
@@ -37,70 +37,52 @@ function Steps({ active }: { active: number }) {
   );
 }
 
-// ------------------------------------------------------------------ start page: where to, upload + history
+// ------------------------------------------------------------------ start: where to, upload + history
 
-type Option = { key: string; label: string; where?: Exclude<ImportWhere, { kind: "BRANCH" }>; subjects?: Subject[] };
+type Option = { key: string; label: string; where: Exclude<ImportWhere, { kind: "BRANCH" }>; subjects: Subject[] };
 
-/** The places the server says the user may import into (GET /bulk-imports/targets). A branch import is always offered (the server
- * still checks the branch); while the list loads, or if it cannot be loaded, only the branch import is shown. */
+/** Where the user may bulk upload, as the server decides (GET /bulk-imports/targets): their provider's central Question Bank, shared
+ * with every branch (Provider Admins, Branch Admins, and teachers for their subjects), and for platform administrators the platform
+ * bank. No branch is chosen: every upload is provider-wide. */
 function importOptions(targets: ImportTargets | undefined): Option[] {
   const out: Option[] = [];
   if (targets?.global) out.push({ key: "GLOBAL", label: "Platform question bank (all institutes)", where: { kind: "GLOBAL" }, subjects: targets.global.subjects });
   for (const p of targets?.provider_wide ?? []) {
-    out.push({ key: `PROVIDER:${p.provider_id}`, label: `Provider-wide — ${p.name} (shared with all its branches)`,
-      where: { kind: "PROVIDER", providerId: p.provider_id }, subjects: p.subjects });
+    out.push({ key: p.provider_id, label: p.name, where: { kind: "PROVIDER", providerId: p.provider_id }, subjects: p.subjects });
   }
-  out.push({ key: "BRANCH", label: "A branch (its questions are shared with every branch of the institute)" });
   return out;
 }
 
-/** /papers/bulk-import: choose where to import, the subject and the file, and see earlier imports there. */
-export default function BulkImportPage() {
+/** Question Bank & Papers > Bulk Upload: the subject and the file, then earlier uploads. A picker appears only when there is more
+ * than one place to upload to. */
+export function BulkUpload() {
   const targets = useApi<ImportTargets>(targetsPath);
   const options = importOptions(targets.data ?? undefined);
-  const [key, setKey] = useState("BRANCH");
-  const chosen = options.find((o) => o.key === key) ?? options[options.length - 1];
-  return (
-    <>
-      <PageHeader crumbs={[<Link key="qb" to="/papers">Question Bank & Papers</Link>, "Bulk import"]} title="Bulk import questions"
-        subtitle="Upload many questions at once from the Excel or Word template. You check a preview before anything is added to the Question Bank." />
-      <Steps active={0} />
-      {options.length > 1 && (
-        <Card>
-          <SelectField label="Import into" value={chosen.key} onChange={(e) => setKey(e.target.value)}>
-            {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </SelectField>
-        </Card>
-      )}
-      {chosen.where ? (
-        <div className="stack">
-          <UploadCard key={chosen.key} where={chosen.where} subjects={chosen.subjects} note={chosen.where.kind === "GLOBAL"
-            ? "Platform questions are available to every institute. Chapters and topics are kept exactly as typed."
-            : "The questions go to the institute's central Question Bank, shared with all its branches (no branch is recorded)."} />
-          <ImportTemplateDownloads />
-          <HistoryCard key={`h-${chosen.key}`} where={chosen.where} subjects={chosen.subjects} title={chosen.where.kind === "GLOBAL"
-            ? "Import history — platform" : `Import history — ${chosen.label.split(" — ")[1]?.split(" (")[0] ?? "provider-wide"}`}
-            emptyHint="Files you upload here are listed here." />
-        </div>
-      ) : (
-        <NeedBranch>{({ providerId, branchId }) => <BranchImport key={branchId} providerId={providerId} branchId={branchId} />}</NeedBranch>
-      )}
-    </>
-  );
-}
-
-function BranchImport({ providerId, branchId }: { providerId: string; branchId: string }) {
-  const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
-  const { branches } = useScope();
-  const branchName = branches.find((b) => b.branch_id === branchId)?.name ?? "";
-  const where: ImportWhere = { kind: "BRANCH", branchId };
+  const [key, setKey] = useState("");
+  const chosen = options.find((o) => o.key === key) ?? options[0];
+  if (targets.loading && !targets.data) return <Spinner label="Loading" />;
+  if (targets.error) return <Alert kind="error">{targets.error}</Alert>;
+  if (!chosen) return <EmptyState title="Bulk Upload is not available to you" hint="It is for staff who may add questions to the Question Bank." />;
+  const platform = chosen.where.kind === "GLOBAL";
   return (
     <div className="stack">
-      <UploadCard where={where} subjects={subjects.data ?? undefined} subjectsError={subjects.error}
-        note="The branch is the one selected above; its questions are shared with every branch of the institute." />
+      <PageHeader subtitle="Upload many MCQ, MSQ and NAT questions at once from the Excel or Word template. Nothing is added to the Question Bank until you check the preview and confirm." />
+      <Steps active={0} />
+      {options.length > 1 && (
+        <div className="toolbar">
+          <SelectField label="Upload to" value={chosen.key} onChange={(e) => setKey(e.target.value)}>
+            {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </SelectField>
+        </div>
+      )}
+      <UnfinishedUploads />
+      <UploadCard key={chosen.key} where={chosen.where} label={chosen.label} subjects={chosen.subjects} note={platform
+        ? "Platform questions are available to every institute. Chapters and topics are kept exactly as typed."
+        : `The questions go to ${chosen.label}'s Question Bank, shared with all its branches.`} />
       <ImportTemplateDownloads />
-      <HistoryCard where={where} subjects={subjects.data ?? undefined} title={`Import history${branchName ? ` — ${branchName}` : ""}`}
-        emptyHint="Files you upload for this branch are listed here." />
+      <HistoryCard key={`h-${chosen.key}`} where={chosen.where} subjects={chosen.subjects}
+        title={platform ? "Upload history — platform" : options.length > 1 ? `Upload history — ${chosen.label}` : "Upload history"}
+        emptyHint="Files you upload are listed here." />
     </div>
   );
 }
@@ -109,19 +91,19 @@ function BranchImport({ providerId, branchId }: { providerId: string; branchId: 
 function fileProblem(file: File): string | null {
   const name = file.name.toLowerCase();
   if (!ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext))) return "Choose an Excel (.xlsx) or Word (.docx) file made from the template. CSV and .doc files are not supported.";
-  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) return `The file is larger than ${MAX_UPLOAD_MB} MB. Split it into smaller files.`;
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) return `The file is larger than ${MAX_UPLOAD_TEXT}. Split it into smaller files.`;
   if (file.size === 0) return "The file is empty.";
   return null;
 }
 
-function UploadCard({ where, subjects, subjectsError, note }: { where: ImportWhere; subjects?: Subject[]; subjectsError?: string | null; note: string }) {
-  const navigate = useNavigate();
+function UploadCard({ where, label, subjects, subjectsError, note }: { where: UploadWhere; label: string; subjects?: Subject[];
+  subjectsError?: string | null; note: string }) {
+  const uploads = useUploads();
   const [subjectId, setSubjectId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState("");
-  const [progress, setProgress] = useState<number | null>(null);
+  const [started, setStarted] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const upload = useAction();
 
   const choose = (picked: File | null) => {
     setFile(picked);
@@ -132,21 +114,18 @@ function UploadCard({ where, subjects, subjectsError, note }: { where: ImportWhe
     if (input.current) input.current.value = "";
   };
   const missing = !subjectId ? "Choose the subject of these questions." : !file ? "Choose the file to upload." : problem || null;
-  const start = () => upload.run(async () => {
-    setProgress(0);
-    try {
-      const job = await uploadImport(where, subjectId, file!, setProgress);
-      navigate(`/papers/bulk-import/${job.job_id}`);
-    } finally {
-      setProgress(null);
-    }
-  });
+  // the file is sent in the background (components/UploadManager.tsx): this form is free for the next file at once
+  const start = () => {
+    uploads.start(file!, where, subjectId, label);
+    setStarted(file!.name);
+    remove();
+  };
 
   return (
     <Card>
       <h2>1. Upload a file</h2>
       <p className="muted small">{note} Every question in the file is added to the subject you choose here.
-        Accepted: Excel (.xlsx, up to 100,000 questions) or Word (.docx, up to 5,000), at most {MAX_UPLOAD_MB} MB, pictures included.</p>
+        Accepted: Excel (.xlsx, up to 100,000 questions) or Word (.docx, up to 5,000), at most {MAX_UPLOAD_TEXT}, pictures included.</p>
       <div className="grid cols-2">
         <SelectField label="Subject" value={subjectId} onChange={(e) => setSubjectId(e.target.value)} required>
           <option value="">Choose a subject…</option>
@@ -162,27 +141,60 @@ function UploadCard({ where, subjects, subjectsError, note }: { where: ImportWhe
       {file && (
         <div className="row between selected-file">
           <span><strong>{file.name}</strong> <span className="muted">· {sizeText(file.size)}</span></span>
-          <Button variant="secondary" small onClick={remove} disabled={upload.busy}>Remove</Button>
+          <Button variant="secondary" small onClick={remove}>Remove</Button>
         </div>
       )}
       {problem && <Alert kind="error">{problem}</Alert>}
-      {upload.error && <Alert kind="error">{upload.error}</Alert>}
-      {progress !== null && (
-        <div className="upload-progress">
-          <progress max={1} value={progress} aria-label="Upload progress" /> <span className="small muted">{Math.round(progress * 100)}% uploaded</span>
-        </div>
+      {started && (
+        <Alert kind="info">“{started}” is uploading in the background: see its progress at the bottom right. You can keep working on other
+          pages. Once it has arrived, it is checked on the server and the bell tells you when the preview is ready.</Alert>
       )}
       <div className="row">
-        <Button onClick={() => void start()} disabled={!!missing} busy={upload.busy}>Upload and check</Button>
+        <Button onClick={start} disabled={!!missing}>Upload and check</Button>
         {missing && !problem && <span className="muted small">{missing}</span>}
       </div>
     </Card>
   );
 }
 
+/** The caller's interrupted uploads (any tab, any device): choosing the same file again continues one; Discard deletes it. */
+function UnfinishedUploads() {
+  const uploads = useUploads();
+  const list = useApi<UploadSession[]>(`${uploadsPath}?v=${uploads.version}-${uploads.active}`);
+  const act = useAction();
+  const sending = new Set(uploads.items.map((i) => i.uploadId).filter(Boolean));
+  const rows = (list.data ?? []).filter((u) => !sending.has(u.upload_id));
+  if (!rows.length) return null;
+  return (
+    <Card>
+      <h2>Unfinished uploads</h2>
+      <p className="muted small">These uploads stopped before the whole file arrived. To continue one, choose the same file below (same subject)
+        and press Upload and check: it continues from where it stopped. Unfinished uploads are deleted after a few days.</p>
+      {act.error && <Alert kind="error">{act.error}</Alert>}
+      <DataTable rows={rows} rowKey={(u) => u.upload_id}
+        columns={[
+          { header: "File", render: (u) => u.file_name },
+          { header: "Arrived", render: (u) => <span className="small"><progress className="history-progress" max={u.size} value={u.received_bytes}
+            aria-label={`${u.file_name}: ${Math.floor((100 * u.received_bytes) / u.size)}% arrived`} /> {Math.floor((100 * u.received_bytes) / u.size)}% of {sizeText(u.size)}</span> },
+          { header: "Last activity", render: (u) => fmt(u.updated_at) },
+          { header: "", render: (u) => <Button small variant="secondary" busy={act.busy}
+            onClick={() => void act.run(async () => { await discardUpload(u.upload_id); list.reload(); })}>Discard</Button> },
+        ]} />
+    </Card>
+  );
+}
+
 function HistoryCard({ where, subjects, title, emptyHint }: { where: ImportWhere; subjects?: Subject[]; title: string; emptyHint: string }) {
   const [pageNo, setPageNo] = useState(1);
-  const history = useApi<HistoryPage>(historyPath(where, pageNo));
+  const { version } = useUploads();
+  const history = useApi<HistoryPage>(`${historyPath(where, pageNo)}&v=${version}`);      // refreshed when an upload becomes an import
+  const working = (history.data?.items ?? []).some((j) => WORKING.includes(j.status));
+  const { reload } = history;
+  useEffect(() => {                                   // live progress while the server reads, checks or imports a file
+    if (!working) return undefined;
+    const timer = window.setTimeout(reload, POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [working, history.data, reload]);
   const subjectName = (id: string) => subjects?.find((s) => s.subject_id === id)?.name ?? "—";
   return (
     <Card>
@@ -197,7 +209,11 @@ function HistoryCard({ where, subjects, title, emptyHint }: { where: ImportWhere
             { header: "Subject", render: (j) => subjectName(j.subject_id) },
             { header: "Uploaded", render: (j) => fmt(j.created_at) },
             { header: "Status", render: (j) => <StatusBadge status={j.status} /> },
-            { header: "Questions", render: (j) => `${j.total_rows} read · ${j.valid_rows} ready · ${j.imported_rows} imported` },
+            { header: "Questions", render: (j) => (["IMPORT_QUEUED", "IMPORTING"].includes(j.status) ? (
+              <span className="small"><progress className="history-progress" max={Math.max(j.progress.total, 1)} value={j.progress.done}
+                aria-label={`${j.file_name}: ${j.progress.done} of ${j.progress.total} imported`} /> {j.progress.done} of {j.progress.total} imported</span>
+            ) : WORKING.includes(j.status) ? <span className="small muted">Reading and checking the file…</span>
+              : `${j.total_rows} read · ${j.valid_rows} ready · ${j.imported_rows} imported`) },
           ]} />
       )}
       {history.data && <Pagination page={pageNo} pageSize={history.data.page_size} total={history.data.total} onChange={setPageNo} />}
@@ -224,16 +240,16 @@ export function BulkImportJobPage() {
     return () => window.clearTimeout(timer);
   }, [working, loading, reload]);
 
-  const crumbs = [<Link key="qb" to="/papers">Question Bank & Papers</Link>, <Link key="bi" to="/papers/bulk-import">Bulk import</Link>, data?.file_name ?? "Import"];
+  const crumbs = [<Link key="qb" to="/papers">Question Bank & Papers</Link>, <Link key="bi" to={BULK_TAB}>Bulk Upload</Link>, data?.file_name ?? "Upload"];
   if (!data) {
     const notFound = job.error && /not found|404/i.test(job.error);
     return (
       <>
-        <PageHeader crumbs={crumbs} title="Bulk import" />
+        <PageHeader crumbs={crumbs} title="Bulk Upload" />
         {job.error ? (
           <EmptyState title={notFound ? "This import is not available" : "The import could not be loaded"}
             hint={notFound ? "It does not exist, or you do not have access to it." : job.error}
-            action={<Link className="btn secondary" to="/papers/bulk-import">Back to bulk import</Link>} />
+            action={<Link className="btn secondary" to={BULK_TAB}>Back to Bulk Upload</Link>} />
         ) : <Spinner label="Loading the import" />}
       </>
     );

@@ -28,7 +28,7 @@ def test_created_on_0012_and_their_checks_hold(db):
         sql(db, f"drop table if exists {t} cascade")              # the shape of a database migrated before 0013
     seed_whole_number_data(db)
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0015_question_types" and tables(db) == list(TABLES)
+    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases" and tables(db) == sorted([*TABLES, "bulk_import_uploads"])   # 0016 adds the resumable upload sessions
     job_id = job(db)
     sql(db, f"insert into bulk_import_rows(job_id, row_no, data) values ('{job_id}', 2, '{{}}')")
     with pytest.raises(IntegrityError):
@@ -43,7 +43,7 @@ def test_a_new_database_adopts_the_baseline_tables(db):
     paper_at(db, "head")
     for s in AFTER_PAPER:
         run(db, s, "upgrade", "head")
-    assert head(db) == PAPER_HEAD and tables(db) == list(TABLES)
+    assert head(db) == PAPER_HEAD and tables(db) == sorted([*TABLES, "bulk_import_uploads"])   # 0016 adds the resumable upload sessions
 
 
 def test_downgrade_refuses_while_imports_exist(db):

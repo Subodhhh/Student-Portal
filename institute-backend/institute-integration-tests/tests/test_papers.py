@@ -230,3 +230,24 @@ def test_question_bank_versions_are_append_only(client, world, setup, make_staff
     assert client.post(f"{API}/questions", json={**body, "correct_option": "Z"}, headers=th).status_code == 422
     oh = login(setup["ocode"])
     assert client.post(f"{API}/questions/{q.json()['question_id']}/versions", json=edit, headers=oh).status_code == 403   # not the owner
+
+
+def test_import_history_and_open_reviews_can_cover_all_branches_of_the_provider(client, world, setup, make_staff, login):
+    """Question Bank & Papers > Import Processing defaults to "All branches" (?provider_id= alone): a Provider Admin sees every
+    branch's uploads, a Branch Admin their branches', everyone their own; another provider's staff are refused."""
+    _, pa = make_staff([(Role.PROVIDER_ADMIN, world["p1"], None)])
+    _, ba2 = make_staff([(Role.BRANCH_ADMIN, world["p1"], world["p1b2"])])
+    _, other = make_staff([(Role.PROVIDER_ADMIN, world["p2"], None)])
+    h = login(pa)
+    for branch, title in (("p1b1", "Main branch paper"), ("p1b2", "Second branch paper")):
+        assert upload(client, h, world, setup, branch=branch, title=title).status_code == 201
+    def titles(who):
+        r = client.get(f"{API}/uploads", params={"provider_id": str(world["p1"])}, headers=login(who))
+        assert r.status_code == 200, (who, r.text)
+        return sorted(u["title"] for u in r.json()["items"])
+    assert titles(pa) == ["Main branch paper", "Second branch paper"]
+    assert titles(ba2) == ["Second branch paper"]                                  # a Branch Admin: their branches
+    assert titles(setup["tcode"]) == []                                             # a teacher: their own uploads only
+    assert client.get(f"{API}/uploads", params={"provider_id": str(world["p1"])}, headers=login(other)).status_code == 403
+    assert client.get(f"{API}/review-drafts", params={"provider_id": str(world["p1"])}, headers=login(pa)).json() == {"items": []}
+    assert client.get(f"{API}/review-drafts", headers=login(pa)).status_code == 422

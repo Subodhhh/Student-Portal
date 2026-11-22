@@ -27,6 +27,7 @@ depends_on = None
 NODES, ALIASES = "question_taxonomy_nodes", "question_taxonomy_aliases"
 NOW = sa.text("CURRENT_TIMESTAMP")
 LINK_COLUMNS = ("chapter_id", "topic_id", "subtopic_id")
+LATER_COLUMNS = {NODES: {"merged_into_id"}}       # 0017_taxonomy_aliases
 
 
 def _node_columns() -> list[sa.Column]:
@@ -67,7 +68,8 @@ def _adopt_or_create(inspector, table: str, columns: list[sa.Column], create) ->
     if table not in inspector.get_table_names():
         create()
         return
-    want, have = {c.name for c in columns}, {c["name"] for c in inspector.get_columns(table)}
+    # columns a LATER revision adds are expected on a table the baseline created from today's models
+    want, have = {c.name for c in columns}, {c["name"] for c in inspector.get_columns(table)} - LATER_COLUMNS.get(table, set())
     if want != have:
         raise RuntimeError(f"{table} already exists but differs from what 0011_question_taxonomy creates (missing {sorted(want - have)}, "
                            f"unexpected {sorted(have - want)}). Fix the table by hand before upgrading.")

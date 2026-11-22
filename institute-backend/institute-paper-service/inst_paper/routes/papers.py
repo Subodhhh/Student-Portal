@@ -8,7 +8,7 @@ from uuid import UUID
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import and_, distinct, false, func, or_, select, true
@@ -474,6 +474,7 @@ def create_question(body: QuestionIn, p: Principal = Depends(get_principal), db:
         _scope_global(p, "question.manage", db)
         _active_subject(db, body.subject_id)
         q = Question(scope="GLOBAL", subject_id=body.subject_id, owner_staff_id=p.staff_id, **meta)
+        taxonomy.link_question(db, q)        # the platform list
         provider_id = branch_id = None
     elif body.provider_id:                  # provider-wide: the provider's own Provider Admin only (not platform roles)
         if not bank_access.is_provider_admin(p, body.provider_id):
@@ -489,6 +490,7 @@ def create_question(body: QuestionIn, p: Principal = Depends(get_principal), db:
         q = Question(provider_id=br.provider_id, branch_id=br.branch_id, subject_id=body.subject_id, owner_staff_id=p.staff_id, **meta)
         taxonomy.link_question(db, q)        # labels that name a canonical record get linked to it (nothing is created)
         provider_id, branch_id = br.provider_id, br.branch_id
+    _refuse_unmatched(db, q)
     db.add(q)
     db.flush()
     v = QuestionVersion(question_id=q.question_id, version_no=1, created_by=p.staff_id, **content)
@@ -790,6 +792,16 @@ def get_question(question_id: UUID, p: Principal = Depends(get_principal), db: S
             "usage": usage, "usage_elsewhere": hidden}
 
 
+def _refuse_unmatched(db: Session, q: Question) -> None:
+    """A typed Chapter / Topic / Subtopic must be one of the records where records exist (TAXONOMY_ALIASES_PLAN §4.2): refused with
+    the same "Did you mean …?" choices as Bulk Upload. Nothing is saved."""
+    items = taxonomy.unmatched(db, q)
+    if items:
+        db.rollback()
+        names = ", ".join(f"{i['level'].lower()} “{i['value']}”" for i in items)
+        raise HTTPException(422, {"code": "TAXONOMY_UNMATCHED", "message": f"Choose the official name for the {names}.", "items": items})
+
+
 @router.patch("/questions/{question_id}", response_model=BankQuestionOut)
 def update_question(question_id: UUID, body: QuestionPatch, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Re-classify or archive/restore. Archiving hides the question from the bank; papers and exams that already use one of its
@@ -803,6 +815,7 @@ def update_question(question_id: UUID, body: QuestionPatch, p: Principal = Depen
         setattr(q, k, v)
     if {"chapter", "topic", "subtopic"} & changes.keys():
         taxonomy.link_question(db, q)        # re-classified: follow the new labels to their canonical records
+        _refuse_unmatched(db, q)
     db.commit()
     audit.record(db, "question.archive" if changes.get("status") == "ARCHIVED" else "question.update", "SUCCESS", actor=p.staff_id,
                  target_type="question", target_id=question_id, provider_id=q.provider_id, branch_id=q.branch_id, ip=p.ip,
@@ -1388,13 +1401,24 @@ def paper_versions(paper_id: UUID, p: Principal = Depends(get_principal), db: Se
 
 
 @router.get("/uploads")
-def list_uploads(branch_id: UUID | None = None, status: str | None = Query(default=None, pattern="^(VALIDATED|REJECTED)$"),
+def list_uploads(branch_id: UUID | None = None, provider_id: UUID | None = None,
+                 status: str | None = Query(default=None, pattern="^(VALIDATED|REJECTED)$"),
                  page: int = 1, page_size: int = 25, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Import history. Uploads are processed synchronously, so an upload is either VALIDATED (it became a paper version, whose own
-    status shows the review/publication state) or REJECTED (nothing was imported; the errors say what to fix)."""
+    status shows the review/publication state) or REJECTED (nothing was imported; the errors say what to fix). ?provider_id= alone
+    ("All branches"): every live branch of the provider the caller reads - a Provider Admin all, a Branch Admin their branches, and
+    everyone their own uploads."""
     stmt = select(PaperUpload)
     if p.is_global and p.has_perm("paper.read") and not branch_id:
-        pass
+        if provider_id:
+            stmt = stmt.where(PaperUpload.provider_id == provider_id)
+    elif provider_id and not branch_id:
+        if not any(a.provider_id == provider_id for a in p.assignments):     # the paper list's rule (_readable_in_provider)
+            p.require(db, "paper.read", provider_id=provider_id)
+        stmt = stmt.where(PaperUpload.provider_id == provider_id, PaperUpload.branch_id.in_(_live_branches(provider_id)))
+        if not p.can("paper.read", exclude_roles=(Role.TEACHER, Role.BRANCH_ADMIN), provider_id=provider_id):
+            mine = [a.branch_id for a in p.assignments if Role(a.role) == Role.BRANCH_ADMIN and a.provider_id == provider_id]
+            stmt = stmt.where(or_(PaperUpload.branch_id.in_(mine or [None]), PaperUpload.uploaded_by == p.staff_id))
     else:
         if not branch_id:
             raise api_error(422, "BRANCH_REQUIRED", "Choose a branch to list its uploads.")

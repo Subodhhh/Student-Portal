@@ -6,6 +6,7 @@ import { ApiError, api } from "../services/api";
 
 export type DraftEntry = { decision: Decision | null; rev: number; by: string; at: string };
 export type ReviewDraft = { draft_id: string; status: "OPEN" | "IMPORTED" | "DISCARDED"; title: string; file_name: string; subject_id: string;
+  branch_id?: string;
   revision: number; decisions: Record<string, DraftEntry>; updated_at: string; result_paper_version_id: string | null; has_answer_key: boolean };
 export type DraftView = { draft: ReviewDraft; preview?: PaperPreview; resumed?: boolean; engine_changed?: boolean;
   stale_keys?: string[] };            // decisions made with an older recognition engine: confirmed again before import

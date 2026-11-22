@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useAuth } from "../auth/AuthContext";
 import { MathText } from "./MathText";
 import { Alert, Button, Card, ConfirmDialog, EmptyState, Field, Modal, Pagination, SelectField, Spinner, StatusBadge, Tabs, TextAreaField } from "./ui";
 import { TypeBadge } from "./questionBank";
@@ -183,25 +182,25 @@ function RowEditor({ jobId, row, onClose, onSaved }: { jobId: string; row: Impor
 
 // ------------------------------------------------------------------ chapter / topic / subtopic names that match nothing
 
-/** Unmatched taxonomy values with the server's suggestions. Administrators with taxonomy.manage choose what each value means; the
- * page never maps a similar name by itself. Everyone else sees what must be fixed and who can do it. */
+/** Unmatched taxonomy values, one decision per spelling however many rows use it, with the server's suggestions: the one clearly
+ * meant is pre-selected but never applied until a person confirms it. Whoever manages the import chooses the record for this import;
+ * "Remember this spelling" makes it an alias (administrators of the list) or asks them to (everyone else). A platform import uses
+ * the platform list. */
 export function TaxonomyIssues({ job, onResolved }: { job: ImportJob; onResolved: () => void }) {
-  const { can } = useAuth();
-  // platform (GLOBAL) imports keep chapters and topics as typed: there is no platform taxonomy to resolve against
-  const issues = useApi<TaxonomyIssue[]>(job.invalid_rows > 0 && job.scope !== "GLOBAL" ? `${taxonomyIssuesPath(job.job_id)}?v=${job.invalid_rows}` : null);
-  const manager = can("taxonomy.manage");
-  const nodes = useApi<TaxonomyNode[]>(manager && job.provider_id && (issues.data?.length ?? 0) > 0 ? taxonomyNodesPath(job.provider_id, job.subject_id) : null);
+  const issues = useApi<TaxonomyIssue[]>(job.invalid_rows > 0 ? `${taxonomyIssuesPath(job.job_id)}?v=${job.invalid_rows}` : null);
+  const nodes = useApi<TaxonomyNode[]>((issues.data?.length ?? 0) > 0 ? taxonomyNodesPath(job.provider_id, job.subject_id) : null);
   if (!issues.data?.length) return issues.error ? <Alert kind="error">{issues.error}</Alert> : null;
   const nameOf = (id: string | null) => nodes.data?.find((n) => n.node_id === id)?.name;
+  const manager = issues.data.some((i) => i.may_manage);
   return (
     <Card>
       <h2>Chapters, topics and subtopics to resolve</h2>
-      <p className="muted small">These names match nothing set up for this subject. Similar names are only suggestions; nothing is changed until
-        {manager ? " you choose what each name means." : " an administrator resolves them. You can also correct the rows instead."}</p>
+      <p className="muted small">These names match nothing set up for this subject. The likeliest record is chosen for you, but nothing is
+        changed until you confirm it.{manager ? "" : " Only an administrator can add new chapters or topics; you can also correct the rows instead."}</p>
       {nodes.error && <Alert kind="error">{nodes.error}</Alert>}
       <ul className="import-issues">
         {issues.data.map((issue) => (
-          <IssueItem key={`${issue.level}|${issue.parent_id}|${issue.value}`} job={job} issue={issue} manager={manager}
+          <IssueItem key={`${issue.level}|${issue.parent_id}|${issue.value}`} job={job} issue={issue} manager={!!issue.may_manage}
             parentName={nameOf(issue.parent_id)} nodes={nodes.data ?? []} onResolved={onResolved} />
         ))}
       </ul>
@@ -214,31 +213,39 @@ function IssueItem({ job, issue, manager, parentName, nodes, onResolved }: {
 }) {
   // records at exactly the place the value is used (same level and parent): the only ones the server accepts
   const candidates = nodes.filter((n) => n.level === issue.level && (n.parent_id ?? null) === (issue.parent_id ?? null) && n.status === "ACTIVE");
-  const suggested = issue.suggestions.map((s) => s.node_id);
-  const [nodeId, setNodeId] = useState(issue.suggestions[0]?.node_id ?? "");
+  const band = new Map(issue.suggestions.map((s) => [s.node_id, s.band]));
+  const [nodeId, setNodeId] = useState(issue.preselect ?? "");
+  const [remember, setRemember] = useState(false);
   const act = useAction();
   const level = LEVEL_LABEL[issue.level];
-  const resolve = (action: "MAP" | "ALIAS" | "CREATE") => act.run(async () => {
-    await resolveTaxonomy(job.job_id, { level: issue.level, value: issue.value, parent_id: issue.parent_id, action, ...(action === "CREATE" ? {} : { node_id: nodeId }) });
+  const resolve = (action: "MAP" | "CREATE") => act.run(async () => {
+    await resolveTaxonomy(job.job_id, { level: issue.level, value: issue.value, parent_id: issue.parent_id, action,
+      ...(action === "CREATE" ? {} : { node_id: nodeId, remember }) });
     onResolved();
   });
+  // suggestions first (best first), then every other record at this place
+  const ordered = [...issue.suggestions.map((s) => candidates.find((n) => n.node_id === s.node_id) ?? { ...s, parent_id: issue.parent_id,
+    level: issue.level, status: "ACTIVE" }), ...candidates.filter((n) => !band.has(n.node_id)).sort((a, b) => a.name.localeCompare(b.name))];
   return (
     <li>
       <p><strong>{level} “{issue.value}”</strong>{parentName && <span className="muted"> under “{parentName}”</span>}
         <span className="muted small"> · {issue.rows} row(s), e.g. row {issue.example_rows.join(", ")}</span></p>
-      {issue.suggestions.length > 0 && <p className="small">Did you mean: {issue.suggestions.map((s) => `“${s.name}”`).join(", ")}?</p>}
-      {manager ? (
-        <div className="row wrap">
-          <SelectField label={`Existing ${level.toLowerCase()}`} value={nodeId} onChange={(e) => setNodeId(e.target.value)}>
-            <option value="">Choose…</option>
-            {[...candidates].sort((a, b) => Number(suggested.includes(b.node_id)) - Number(suggested.includes(a.node_id)))
-              .map((n) => <option key={n.node_id} value={n.node_id}>{n.name}{suggested.includes(n.node_id) ? " (suggested)" : ""}</option>)}
-          </SelectField>
-          <Button variant="secondary" small disabled={!nodeId} busy={act.busy} onClick={() => void resolve("MAP")}>Use for this import</Button>
-          <Button variant="secondary" small disabled={!nodeId} busy={act.busy} onClick={() => void resolve("ALIAS")}>Always accept this name</Button>
-          <Button variant="secondary" small busy={act.busy} onClick={() => void resolve("CREATE")}>Create “{issue.value}” as a new {level.toLowerCase()}</Button>
-        </div>
-      ) : <p className="small muted">Ask a provider administrator to resolve this name, or correct it in the rows.</p>}
+      {issue.preselect && <p className="small">Did you mean “{ordered.find((n) => n.node_id === issue.preselect)?.name}”?</p>}
+      {(issue.elsewhere ?? []).map((e) => (
+        <p key={e.node_id} className="small muted">“{e.name}” is a {level.toLowerCase()} of “{e.parent_name}”{parentName ? `, not of “${parentName}”` : ""}.</p>
+      ))}
+      <div className="row wrap">
+        <SelectField label={`Existing ${level.toLowerCase()}`} value={nodeId} onChange={(e) => setNodeId(e.target.value)}>
+          <option value="">Choose…</option>
+          {ordered.map((n) => <option key={n.node_id} value={n.node_id}>{n.name}
+            {band.get(n.node_id) === "HIGH" ? " (very likely)" : band.get(n.node_id) ? " (possible)" : ""}</option>)}
+        </SelectField>
+        <label className="row checkbox-field"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember this spelling</label>
+        <Button small disabled={!nodeId} busy={act.busy} onClick={() => void resolve("MAP")}>Use this {level.toLowerCase()}</Button>
+        {manager && <Button variant="secondary" small busy={act.busy} onClick={() => void resolve("CREATE")}>Create “{issue.value}” as a new {level.toLowerCase()}</Button>}
+      </div>
+      {remember && <p className="small muted">{manager ? `“${issue.value}” will be recognised from now on.`
+        : "An administrator will be asked to approve this spelling; your choice applies to this import now."}</p>}
       {act.error && <Alert kind="error">{act.error}</Alert>}
     </li>
   );

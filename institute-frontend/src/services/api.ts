@@ -67,13 +67,16 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   return data as T;
 }
 
-/** A multipart upload that reports progress (0..1); same cookie, CSRF and error handling as `api`. */
-export function uploadWithProgress<T = unknown>(path: string, form: FormData, onProgress: (fraction: number) => void): Promise<T> {
+/** An upload that reports progress (0..1): a multipart form, or raw bytes (a Blob, e.g. one piece of a resumable upload, sent with
+ * PUT); same cookie, CSRF and error handling as `api`. */
+export function uploadWithProgress<T = unknown>(path: string, body: FormData | Blob, onProgress: (fraction: number) => void,
+  method: "POST" | "PUT" = "POST"): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_URL}${path}`);
+    xhr.open(method, `${API_URL}${path}`);
     xhr.withCredentials = true;
     if (csrfToken) xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    if (!(body instanceof FormData)) xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
     xhr.onerror = () => reject(new ApiError(0, "NETWORK", "Cannot reach the server. Check your connection and try again."));
     xhr.onload = () => {
@@ -84,7 +87,7 @@ export function uploadWithProgress<T = unknown>(path: string, form: FormData, on
       if (xhr.status === 401) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
       reject(new ApiError(xhr.status, code, message, extra));
     };
-    xhr.send(form);
+    xhr.send(body);
   });
 }
 

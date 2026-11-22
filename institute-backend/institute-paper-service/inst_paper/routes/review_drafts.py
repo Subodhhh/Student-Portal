@@ -144,11 +144,21 @@ def start_draft(branch_id: UUID, subject_id: UUID, title: str = Form(min_length=
 
 
 @router.get("/review-drafts")
-def list_drafts(branch_id: UUID, subject_id: UUID | None = None, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    br = papers._branch(db, branch_id)
-    p.require(db, PERM, provider_id=br.provider_id, branch_id=branch_id)
-    q = select(PaperReviewDraft).where(PaperReviewDraft.branch_id == branch_id, PaperReviewDraft.status == "OPEN",
-                                       PaperReviewDraft.kind == "IMPORT")
+def list_drafts(branch_id: UUID | None = None, provider_id: UUID | None = None, subject_id: UUID | None = None,
+                p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Open import reviews of one branch, or with ?provider_id= alone ("All branches") of every branch of the provider; each is
+    listed only when the caller may see it (_visible)."""
+    if branch_id:
+        br = papers._branch(db, branch_id)
+        p.require(db, PERM, provider_id=br.provider_id, branch_id=branch_id)
+        where = PaperReviewDraft.branch_id == branch_id
+    elif provider_id:
+        if not any(a.provider_id == provider_id for a in p.assignments):     # staff of the provider; _visible filters each draft
+            p.require(db, PERM, provider_id=provider_id)
+        where = PaperReviewDraft.provider_id == provider_id
+    else:
+        raise api_error(422, "BRANCH_REQUIRED", "Choose a branch or the provider.")
+    q = select(PaperReviewDraft).where(where, PaperReviewDraft.status == "OPEN", PaperReviewDraft.kind == "IMPORT")
     if subject_id:
         q = q.where(PaperReviewDraft.subject_id == subject_id)
     drafts = [d for d in db.scalars(q.order_by(PaperReviewDraft.updated_at.desc()).limit(MAX_LISTED * 4)) if _visible(p, d)]

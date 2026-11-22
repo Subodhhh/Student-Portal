@@ -192,7 +192,10 @@ def test_built_papers_never_change_when_shared_questions_do(client, world, sc, d
 
 # ------------------------------------------------------------------ provider-wide (D1, D3, D8)
 
-def test_provider_wide_uploads_and_questions_are_for_the_provider_admin_only(client, world, sc, db_factory, store):  # noqa: F811
+def test_bulk_uploads_are_provider_wide_for_everyone_who_adds_questions(client, world, sc, db_factory, store):  # noqa: F811
+    """Owner decision 2026-11-22: Bulk Upload goes to the provider's central bank for its Provider Admin, its Branch Admins and its
+    teachers (their subjects); each sees their own uploads, the Provider Admin all. One-by-one provider-wide questions stay the
+    Provider Admin's (D8)."""
     job = imported(client, sc, "pa", db_factory, store, xlsx(ROWS), target="PROVIDER")      # provider derived from the assignment
     assert job["status"] == "COMPLETED" and job["branch_id"] is None and job["provider_id"] == str(world["p1"])
     with db_factory() as db:
@@ -201,9 +204,23 @@ def test_provider_wide_uploads_and_questions_are_for_the_provider_admin_only(cli
     assert wide <= set(search(client, sc, "thane", scope="PROVIDER", origin="PROVIDER_WIDE"))
     assert client.get(f"{API}/bulk-imports", params={"provider_id": str(world["p1"])}, headers=sc["h"]("pa")).json()["total"] == 1
 
-    for who in ("thane", "teacher"):                                               # D1: not Branch Admins or teachers
-        assert upload(client, sc, who, xlsx(ROWS), target="PROVIDER", provider_id=str(world["p1"])).status_code == 403
-    assert upload(client, sc, "sa", xlsx(ROWS), target="PROVIDER", provider_id=str(world["p1"])).status_code == 403   # D3
+    own = {}
+    for who in ("thane", "teacher"):                                               # Branch Admins and teachers upload provider-wide too
+        r = upload(client, sc, who, xlsx(ROWS), target="PROVIDER", provider_id=str(world["p1"]))
+        assert r.status_code == 202 and r.json()["branch_id"] is None, r.text
+        own[who] = r.json()["job_id"]
+    assert upload(client, sc, "teacher", xlsx(ROWS), subject=sc["chem"], target="PROVIDER",
+                  provider_id=str(world["p1"])).status_code == 403                 # a teacher: only the subjects they teach
+    for who in ("thane", "teacher"):                                               # their own uploads only; the Provider Admin sees all
+        listed = client.get(f"{API}/bulk-imports", params={"provider_id": str(world["p1"])}, headers=sc["h"](who)).json()["items"]
+        assert [j["job_id"] for j in listed] == [own[who]]
+        assert client.get(f"{API}/bulk-imports/{own['teacher' if who == 'thane' else 'thane']}", headers=sc["h"](who)).status_code in (403, 404)
+    assert client.get(f"{API}/bulk-imports", params={"provider_id": str(world["p1"])}, headers=sc["h"]("pa")).json()["total"] == 3
+    teacher_targets = client.get(f"{API}/bulk-imports/targets", headers=sc["h"]("teacher")).json()["provider_wide"]
+    assert [[s["name"] for s in t["subjects"]] for t in teacher_targets] == [["Physics"]]
+    r = upload(client, sc, "sa", xlsx(ROWS), target="PROVIDER", provider_id=str(world["p1"]))      # platform admins: any provider
+    assert r.status_code == 202 and r.json()["provider_id"] == str(world["p1"]) and r.json()["branch_id"] is None, r.text
+    assert upload(client, sc, "sa", xlsx(ROWS), target="PROVIDER").status_code == 422              # ...named explicitly
     assert upload(client, sc, "pa2", xlsx(ROWS), target="PROVIDER", provider_id=str(world["p1"])).status_code == 403  # another provider
     assert client.get(f"{API}/bulk-imports", params={"provider_id": str(world["p1"])}, headers=sc["h"]("pa2")).status_code == 403
 
@@ -216,7 +233,7 @@ def test_provider_wide_uploads_and_questions_are_for_the_provider_admin_only(cli
     assert client.patch(f"{API}/questions/{wide_one}", json={"difficulty": "EASY"}, headers=sc["h"]("thane")).status_code == 403
 
 
-def test_the_worker_stops_a_provider_wide_import_when_the_provider_admin_role_is_removed(client, world, sc, db_factory, store):  # noqa: F811
+def test_the_worker_stops_a_provider_wide_import_when_the_uploaders_role_is_removed(client, world, sc, db_factory, store):  # noqa: F811
     job_id = upload(client, sc, "pa", xlsx(ROWS), target="PROVIDER").json()["job_id"]
     work(db_factory, store)
     assert client.post(f"{API}/bulk-imports/{job_id}/confirm", headers=sc["h"]("pa")).status_code == 200
@@ -227,7 +244,7 @@ def test_the_worker_stops_a_provider_wide_import_when_the_provider_admin_role_is
     work(db_factory, store)
     with db_factory() as db:
         job = db.get(BulkImportJob, UUID(job_id))
-        assert job.status == "FAILED" and "Provider Admin" in job.last_error
+        assert job.status == "FAILED" and "permission to add questions" in job.last_error
     assert count(db_factory) == before
 
 
@@ -237,10 +254,13 @@ def test_global_imports_are_for_platform_administrators_and_their_pictures_are_p
     red = png("red")
     rows = [q(stem="Identify the instrument.", chapter="Measurement", topic="Instruments"), q(chapter="Any chapter, typed freely")]
     targets = client.get(f"{API}/bulk-imports/targets", headers=sc["h"]("sa")).json()
-    assert targets["global"] and {s["name"] for s in targets["global"]["subjects"]} >= {"Physics", "Chemistry"} and targets["provider_wide"] == []
+    assert targets["global"] and {s["name"] for s in targets["global"]["subjects"]} >= {"Physics", "Chemistry"}
+    assert {p["provider_id"] for p in targets["provider_wide"]} >= {str(world["p1"]), str(world["p2"])}      # and every provider
+    names = [p["name"] for p in targets["provider_wide"]]
+    assert names == sorted(names, key=str.lower)
     job = imported(client, sc, "sa", db_factory, store, xlsx(rows, [(2, "Question Image", red)]), target="GLOBAL")
     assert job["status"] == "COMPLETED" and job["scope"] == "GLOBAL" and job["provider_id"] is None and job["branch_id"] is None
-    assert client.get(f"{API}/bulk-imports/{job['job_id']}/taxonomy-issues", headers=sc["h"]("sa")).json() == []
+    assert client.get(f"{API}/bulk-imports/{job['job_id']}/taxonomy-issues", headers=sc["h"]("sa")).json() == []   # no platform records
     with db_factory() as db:
         made = db.query(Question).filter_by(scope="GLOBAL").all()
         assert {x.chapter for x in made} == {"Measurement", "Any chapter, typed freely"} and not any(x.chapter_id for x in made)
@@ -253,7 +273,8 @@ def test_global_imports_are_for_platform_administrators_and_their_pictures_are_p
     assert client.get(f"{API}/bulk-imports", params={"target": "GLOBAL"}, headers=sc["h"]("pa")).status_code == 403
     pa_targets = client.get(f"{API}/bulk-imports/targets", headers=sc["h"]("pa")).json()
     assert pa_targets["global"] is None and [p["provider_id"] for p in pa_targets["provider_wide"]] == [str(world["p1"])]
-    assert client.get(f"{API}/bulk-imports/targets", headers=sc["h"]("thane")).json()["provider_wide"] == []
+    assert [p["provider_id"] for p in client.get(f"{API}/bulk-imports/targets", headers=sc["h"]("thane")).json()["provider_wide"]] == [
+        str(world["p1"])]                                                          # a Branch Admin uploads to its provider
 
 
 def test_a_provider_picture_used_by_a_platform_question_is_visible_to_every_provider(client, world, sc, db_factory):
@@ -343,3 +364,28 @@ def test_finished_import_history_shows_the_stored_pictures(client, world, sc, db
     got = client.get(url, headers=sc["h"]("thane"))
     assert got.status_code == 200 and got.content == teal                    # and every branch of the provider may see it
     assert client.get(url, headers=sc["h"]("pa2")).status_code == 404
+
+
+def test_global_imports_use_the_platform_list_where_it_has_records(client, world, sc, db_factory, store):  # noqa: F811
+    from inst_paper.services import taxonomy
+    from uuid import uuid4
+    with db_factory() as db:
+        ch = taxonomy.create_node(db, provider_id=None, subject_id=sc["phy"], level="CHAPTER", parent_id=None, name="Measurement",
+                                  staff_id=uuid4(), ip=None)
+        db.commit()
+        chapter_id = str(ch.node_id)
+    rows = [q(chapter="measurement", topic="Instruments"), q(stem="Second?", chapter="Measurment")]
+    r = upload(client, sc, "sa", xlsx(rows), target="GLOBAL")
+    job_id = r.json()["job_id"]
+    work(db_factory, store)
+    [issue] = client.get(f"{API}/bulk-imports/{job_id}/taxonomy-issues", headers=sc["h"]("sa")).json()
+    assert issue["value"] == "Measurment" and issue["preselect"] == chapter_id and issue["may_manage"] is True
+    body = {"level": "CHAPTER", "value": "Measurment", "action": "MAP", "node_id": chapter_id}
+    assert client.post(f"{API}/bulk-imports/{job_id}/taxonomy-resolutions", json=body, headers=sc["h"]("sa")).status_code == 200
+    work(db_factory, store)
+    assert client.post(f"{API}/bulk-imports/{job_id}/confirm", headers=sc["h"]("sa")).status_code == 200
+    work(db_factory, store)
+    with db_factory() as db:
+        made = db.query(Question).filter_by(scope="GLOBAL").all()
+        assert {(x.chapter, str(x.chapter_id), x.topic) for x in made} == {("Measurement", chapter_id, "Instruments"),
+                                                                           ("Measurement", chapter_id, "Force")}   # q() default topic: plain text
