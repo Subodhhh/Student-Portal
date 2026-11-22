@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import "../../styles/performance.css";
+import "../../styles/PerformancePage.css";
 
 import {
   ATTEMPT_API_URL,

@@ -1,14 +1,5 @@
 :root {
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    Helvetica,
-    Arial,
-    sans-serif;
-
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #172033;
   background: #f4f7fb;
 
@@ -17,40 +8,90 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --primary: #2563eb;
-  --primary-dark: #1d4ed8;
-  --primary-light: #eff6ff;
+  /* =========================================
+     BRAND / PRIMARY COLORS (Academic Blue)
+     ========================================= */
+  --color-primary: #2563eb;         /* Main buttons, active states */
+  --color-primary-hover: #1d4ed8;   /* Button hover states */
+  --color-primary-light: #eff6ff;   /* Icon backgrounds, subtle badges */
+  --color-primary-text: #475569;    /* Links, secondary active text */
 
-  --text-primary: #172033;
-  --text-secondary: #64748b;
-  --text-muted: #94a3b8;
+  /* Backward compatibility for your existing index.css */
+  --primary: var(--color-primary);
+  --primary-dark: var(--color-primary-hover);
+  --primary-light: var(--color-primary-light);
 
-  --page-background: #f4f7fb;
-  --surface: #ffffff;
-  --surface-soft: #f8fafc;
+  /* =========================================
+     BACKGROUNDS & SURFACES
+     ========================================= */
+  --color-bg-body: #f4f7fb;         /* Main page background */
+  --color-bg-surface: #ffffff;      /* Cards, modals, inputs */
+  --color-bg-hover: #f8fafc;        /* Hover state for nav items/lists */
+  --color-bg-gradient: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  
+  /* Backward compatibility */
+  --page-background: var(--color-bg-body);
+  --surface: var(--color-bg-surface);
+  --surface-soft: var(--color-bg-hover);
 
-  --border: #e2e8f0;
+  /* =========================================
+     TEXT COLORS
+     ========================================= */
+  --color-text-main: #172033;       /* Headings, strong text */
+  --color-text-muted: #64748b;      /* Subheadings, descriptions */
+  --color-text-light: #94a3b8;      /* Placeholders, disabled text */
+  --color-text-white: #ffffff;
+
+  /* Backward compatibility */
+  --text-primary: var(--color-text-main);
+  --text-secondary: var(--color-text-muted);
+  --text-muted: var(--color-text-light);
+
+  /* =========================================
+     BORDERS & DIVIDERS
+     ========================================= */
+  --color-border: #e2e8f0;          /* Standard borders */
+  --color-border-focus: #475569;    /* Input focus rings */
   --border-light: #edf1f6;
+  --hover-border: #d5deea;
 
-  --success: #16a34a;
-  --success-background: #dcfce7;
+  /* Backward compatibility */
+  --border: var(--color-border);
 
-  --warning: #d97706;
-  --warning-background: #fef3c7;
+  /* =========================================
+     SEMANTIC STATUS COLORS
+     ========================================= */
+  --color-error-bg: #fee2e2;
+  --color-error-border: #fecaca;
+  --color-error-text: #dc2626;
+  
+  --color-success-bg: #dcfce7;
+  --color-success-text: #16a34a;
+  --color-success-main: #16a34a;
+  
+  --color-warning-bg: #fef3c7;
+  --color-warning-text: #d97706;
 
-  --danger: #dc2626;
-  --danger-background: #fee2e2;
+  /* Backward compatibility */
+  --success: var(--color-success-main);
+  --success-background: var(--color-success-bg);
+  --warning: var(--color-warning-text);
+  --warning-background: var(--color-warning-bg);
+  --danger: var(--color-error-text);
+  --danger-background: var(--color-error-bg);
 
+  /* =========================================
+     SHADOWS & RADIUS
+     ========================================= */
   --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05);
   --shadow-md: 0 6px 20px rgba(15, 23, 42, 0.07);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.09);
+  --shadow-card: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
+  --hover-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
 
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-
-  --hover-border: #d5deea;
-  --hover-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
 }
 
 * {
@@ -93,21 +134,17 @@ a {
 /* =========================
    SCROLLBAR
    ========================= */
-
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 999px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
@@ -115,14 +152,6 @@ a {
 /* =========================
    GLOBAL CARD HOVER
    ========================= */
-
-/*
-   All major portal cards use the same interaction:
-   - no movement
-   - subtle shadow
-   - blue horizontal line across the TOP on hover
-*/
-
 .test-card,
 .scheduled-test-card,
 .result-card,
@@ -138,12 +167,8 @@ a {
 .stat-card {
   position: relative;
   overflow: hidden;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-
-/* Top blue accent */
 
 .test-card::before,
 .scheduled-test-card::before,
@@ -169,8 +194,6 @@ a {
   transition: opacity 0.15s ease;
   pointer-events: none;
 }
-
-/* Card hover */
 
 .test-card:hover,
 .scheduled-test-card:hover,
@@ -208,13 +231,10 @@ a {
 /* =========================
    REUSABLE PORTAL CARD
    ========================= */
-
 .portal-hover-card {
   position: relative;
   overflow: hidden;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .portal-hover-card::before {
@@ -242,7 +262,6 @@ a {
 /* =========================
    GLOBAL FOCUS
    ========================= */
-
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -255,11 +274,8 @@ select:focus-visible {
 /* =========================
    REDUCED MOTION
    ========================= */
-
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;

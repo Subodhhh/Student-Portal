@@ -1,0 +1,221 @@
+/* =========================
+   NOTIFICATIONS PAGE
+   ========================= */
+.notifications-page {
+  width: 100%;
+  max-width: none;            /* extend to the borders */
+  margin: 0;
+  padding: 32px 40px 64px;
+}
+
+/* Card (hover accent bar comes from the global card rule in index.css) */
+.notifications-card {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* =========================
+   HEADER
+   ========================= */
+.notifications-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notifications-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.notifications-header button {
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.notifications-header button:hover:not(:disabled) {
+  color: var(--color-text-white);
+  background: var(--color-primary);
+}
+
+.notifications-header button:disabled {
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+/* =========================
+   LIST
+   ========================= */
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Loading / empty text */
+.notifications-list > p {
+  margin: 0;
+  padding: 56px 32px;
+  text-align: center;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+/* =========================
+   NOTIFICATION ITEM
+   ========================= */
+.notification-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 22px 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+}
+
+.notification-item:hover {
+  background: var(--surface-soft);
+}
+
+/* Unread state: tinted background + left accent bar */
+.notification-item.unread {
+  background: var(--primary-light);
+}
+
+.notification-item.unread::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--primary);
+}
+
+.notification-item.unread:hover {
+  background: #e0ecff;
+}
+
+/* =========================
+   DOT
+   ========================= */
+.notification-dot {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--color-text-light);
+}
+
+.notification-item.unread .notification-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+}
+
+/* =========================
+   CONTENT
+   ========================= */
+.notification-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-content h3 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.notification-item.unread .notification-content h3 {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.notification-content p {
+  margin: 0 0 10px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.notification-content span {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* =========================
+   KEYBOARD FOCUS
+   ========================= */
+.notification-item:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: -2px;
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 700px) {
+  .notifications-page {
+    padding: 16px 12px 32px;
+  }
+
+  .notifications-header {
+    padding: 16px 18px;
+  }
+
+  .notifications-header h2 {
+    font-size: 1.15rem;
+  }
+
+  .notifications-header button {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+  }
+
+  .notification-item {
+    padding: 16px 18px;
+    gap: 12px;
+  }
+
+  .notification-content h3 {
+    font-size: 1rem;
+  }
+
+  .notification-content p {
+    font-size: 0.92rem;
+  }
+}

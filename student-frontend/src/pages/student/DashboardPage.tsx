@@ -40,20 +40,14 @@ function DashboardPage() {
         const response = await fetch(`${PROFILE_API_URL}/profile`, {
           credentials: "include",
         });
-
         if (!response.ok) return;
-
         const student = await response.json();
-        const fullName = [student.first_name, student.last_name]
-          .filter(Boolean)
-          .join(" ");
-
+        const fullName = [student.first_name, student.last_name].filter(Boolean).join(" ");
         if (fullName) setStudentName(fullName);
       } catch (error) {
         console.error("Failed to fetch student profile:", error);
       }
     };
-
     fetchStudentProfile();
   }, []);
 
@@ -64,9 +58,7 @@ function DashboardPage() {
         const response = await fetch(`${RESULT_API_URL}/results`, {
           credentials: "include",
         });
-
         if (!response.ok) throw new Error("Failed to fetch results");
-
         const results: RecentResult[] = await response.json();
         setRecentResults(results.slice(0, 3));
       } catch (error) {
@@ -76,7 +68,6 @@ function DashboardPage() {
         setResultsLoading(false);
       }
     };
-
     fetchRecentResults();
   }, []);
 
@@ -86,10 +77,6 @@ function DashboardPage() {
       month: "short",
       year: "numeric",
     });
-  };
-
-  const handleViewResult = (attemptId: string) => {
-    navigate(`/tests/result/${attemptId}`);
   };
 
   return (
@@ -113,11 +100,7 @@ function DashboardPage() {
           </div>
 
           <div className="dashboard-empty-state">
-            <div className="empty-icon-wrapper">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
-              </svg>
-            </div>
+            {/* Icon Removed */}
             <h4>No upcoming tests</h4>
             <p>You don't have any exams scheduled at the moment.</p>
           </div>
@@ -134,16 +117,12 @@ function DashboardPage() {
 
           {resultsLoading ? (
             <div className="dashboard-empty-state">
-              <div className="loading-spinner" />
+              {/* Spinner Removed */}
               <p>Loading your results...</p>
             </div>
           ) : recentResults.length === 0 ? (
             <div className="dashboard-empty-state">
-              <div className="empty-icon-wrapper">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                </svg>
-              </div>
+              {/* Icon Removed */}
               <h4>No results yet</h4>
               <p>Complete a test to see your performance here.</p>
             </div>
@@ -172,7 +151,7 @@ function DashboardPage() {
                   <button
                     type="button"
                     className="result-view-btn"
-                    onClick={() => handleViewResult(result.attempt_id)}
+                    onClick={() => navigate(`/tests/result/${result.attempt_id}`)}
                   >
                     View Result
                   </button>

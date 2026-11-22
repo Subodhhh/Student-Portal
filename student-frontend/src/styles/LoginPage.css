@@ -4,7 +4,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #f0f4fd 0%, #e2eafc 100%);
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   padding: 1.5rem;
 }
@@ -16,8 +16,8 @@
   background: #ffffff;
   border-radius: 16px;
   padding: 2.5rem;
-  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.6);
 }
 
 /* --- Header --- */
@@ -26,22 +26,6 @@
   margin-bottom: 2rem;
 }
 
-.login-logo {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 1rem;
-  background: #eef2ff;
-  color: #4f46e5;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.login-logo svg {
-  width: 28px;
-  height: 28px;
-}
 
 .login-header h1 {
   font-size: 1.5rem;
@@ -75,7 +59,7 @@
   color: #334155;
 }
 
-/* --- Modern Flexbox Input Wrapper --- */
+/* --- Input Wrapper --- */
 .input-wrapper {
   display: flex;
   align-items: center;
@@ -89,44 +73,45 @@
 }
 
 .input-wrapper:focus-within {
-  border-color: #4f46e5;
+  border-color: #475569;
   background: #ffffff;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.1);
 }
 
+/* --- THE FIX FOR THE MASSIVE ICONS --- */
 .input-icon {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.25rem !important; /* Forces the icon to be exactly 20px wide */
+  height: 1.25rem !important; /* Forces the icon to be exactly 20px tall */
+  max-width: 1.25rem;
+  max-height: 1.25rem;
   color: #94a3b8;
-  flex-shrink: 0;
+  flex-shrink: 0; /* Prevents the icon from being squished or expanded */
   margin-right: 0.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
 }
 
+/* --- Input Field --- */
 .input-wrapper input {
   flex: 1;
   width: 100%;
   height: 100% !important; 
   padding: 0 !important; 
   margin: 0 !important;
-  
-  /* Force transparency and kill the shadow */
   border: none !important; 
   background: transparent !important; 
-  background-color: transparent !important;
   box-shadow: none !important; 
   outline: none !important;
-  border-radius: 10px !important; /* Prevent sharp corners inside the wrapper */
-  
   font-size: 0.95rem;
   color: #0f172a;
   font-family: inherit;
   line-height: 48px !important; 
 }
 
-/* --- KILL CHROME AUTOFILL BLUE BACKGROUND --- */
+.input-wrapper input::placeholder {
+  color: #cbd5e1;
+}
+
+/* Chrome Autofill Fix */
 .input-wrapper input:-webkit-autofill,
 .input-wrapper input:-webkit-autofill:hover, 
 .input-wrapper input:-webkit-autofill:focus, 
@@ -136,16 +121,11 @@
   transition: background-color 5000s ease-in-out 0s;
 }
 
-/* When focused, change the autofill background to white to match the wrapper */
 .input-wrapper:focus-within input:-webkit-autofill {
   -webkit-box-shadow: 0 0 0 30px #ffffff inset !important;
 }
 
-.input-wrapper input::placeholder {
-  color: #cbd5e1;
-}
-
-
+/* --- Password Toggle Button --- */
 .password-toggle-btn {
   background: none;
   border: none;
@@ -164,9 +144,12 @@
   color: #475569;
 }
 
+/* Constrain the eye icon */
 .password-toggle-btn svg {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  max-width: 1.25rem;
+  max-height: 1.25rem;
 }
 
 /* --- Actions (Forgot Password) --- */
@@ -179,7 +162,7 @@
 .forgot-password-btn {
   background: none;
   border: none;
-  color: #4f46e5;
+  color: #475569;
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -187,14 +170,15 @@
 }
 
 .forgot-password-btn:hover {
+  color: #0f172a;
   text-decoration: underline;
 }
 
-/* --- Submit Button --- */
+/* --- Submit Button (GREY THEME) --- */
 .login-submit-btn {
   width: 100%;
   padding: 0.875rem;
-  background: #4f46e5;
+  background: #2563eb; /* FORCED BLUE - No variable */
   color: white;
   border: none;
   border-radius: 10px;
@@ -210,7 +194,7 @@
 }
 
 .login-submit-btn:hover:not(:disabled) {
-  background: #4338ca;
+  background: #1d4ed8; /* FORCED DARK BLUE - No variable */
 }
 
 .login-submit-btn:active:not(:disabled) {
@@ -238,15 +222,15 @@
 }
 
 .login-error-banner svg {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
   flex-shrink: 0;
 }
 
-/* --- Spinner Animation --- */
+/* --- Spinner --- */
 .spinner {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
   animation: spin 1s linear infinite;
 }
 

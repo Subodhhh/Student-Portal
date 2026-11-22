@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import EmptyState from "../../components/EmptyState";
-import "../../styles/ranking.css";
+import "../../styles/RankingPage.css";
 
 type Result = {
   test_id: string;

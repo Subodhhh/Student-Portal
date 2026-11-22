@@ -4,17 +4,17 @@
   max-width: 1200px;
   margin: 0 auto;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #0f172a;
+  color: var(--color-text-main);
 }
 
 /* --- Welcome Banner --- */
 .dashboard-welcome {
-  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
-  color: white;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+  color: var(--color-text-white);
   padding: 2rem 2.5rem;
   border-radius: 16px;
   margin-bottom: 2rem;
-  box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.3);
 }
 
 .welcome-text h1 {
@@ -25,7 +25,7 @@
 
 .welcome-text p {
   margin: 0;
-  color: #e0e7ff;
+  color: var(--color-primary-light);
   font-size: 1rem;
 }
 
@@ -44,10 +44,10 @@
 
 /* --- Cards --- */
 .dashboard-card {
-  background: #ffffff;
+  background: var(--color-bg-surface);
   border-radius: 16px;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -55,23 +55,23 @@
 
 .card-header {
   padding: 1.5rem 1.5rem 1rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-bg-hover);
 }
 
 .card-header h3 {
   margin: 0 0 0.25rem 0;
   font-size: 1.125rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-text-main);
 }
 
 .card-header p {
   margin: 0;
   font-size: 0.875rem;
-  color: #64748b;
+  color: var(--color-text-muted);
 }
 
-/* --- Empty States --- */
+/* --- Empty States (Text Only) --- */
 .dashboard-empty-state {
   display: flex;
   flex-direction: column;
@@ -80,35 +80,19 @@
   padding: 3rem 1.5rem;
   text-align: center;
   flex: 1;
-}
-
-.empty-icon-wrapper {
-  width: 48px;
-  height: 48px;
-  background: #f1f5f9;
-  color: #94a3b8;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 1rem;
-}
-
-.empty-icon-wrapper svg {
-  width: 24px;
-  height: 24px;
+  min-height: 250px;
 }
 
 .dashboard-empty-state h4 {
-  margin: 0 0 0.25rem 0;
-  color: #334155;
-  font-size: 1rem;
+  margin: 0 0 0.5rem 0;
+  color: var(--color-text-main);
+  font-size: 1.1rem;
 }
 
 .dashboard-empty-state p {
   margin: 0;
-  color: #64748b;
-  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
 }
 
 /* --- Results List --- */
@@ -123,7 +107,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-bg-hover);
   transition: background 0.2s;
   gap: 1rem;
 }
@@ -133,7 +117,7 @@
 }
 
 .result-list-item:hover {
-  background: #f8fafc;
+  background: var(--color-bg-hover);
 }
 
 /* Info */
@@ -148,7 +132,7 @@
   margin: 0 0 0.25rem 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -156,7 +140,7 @@
 
 .result-meta {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--color-text-muted);
   margin-bottom: 0.25rem;
   white-space: nowrap;
   overflow: hidden;
@@ -165,7 +149,7 @@
 
 .result-date {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--color-text-light);
   font-weight: 500;
 }
 
@@ -180,26 +164,26 @@
 .score-value {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--color-text-main);
 }
 
 .score-value span {
   font-size: 0.875rem;
-  color: #94a3b8;
+  color: var(--color-text-light);
   font-weight: 500;
 }
 
 .score-accuracy {
   font-size: 0.75rem;
-  color: #10b981; /* Green for accuracy */
+  color: var(--color-success-main);
   font-weight: 600;
   margin-top: 0.25rem;
 }
 
 /* Button */
 .result-view-btn {
-  background: #eef2ff;
-  color: #4f46e5;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   border: none;
   padding: 0.5rem 1rem;
   border-radius: 8px;
@@ -211,21 +195,6 @@
 }
 
 .result-view-btn:hover {
-  background: #4f46e5;
-  color: white;
-}
-
-/* --- Loading Spinner --- */
-.loading-spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid #e2e8f0;
-  border-top-color: #4f46e5;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+  background: var(--color-primary);
+  color: var(--color-text-white);
 }

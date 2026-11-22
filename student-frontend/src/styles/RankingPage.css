@@ -1,0 +1,360 @@
+/* =========================
+   RANKING PAGE
+   ========================= */
+.ranking-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 32px 40px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* =========================
+   TEST SELECTOR
+   ========================= */
+.ranking-selector {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 24px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ranking-selector label {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+}
+
+.ranking-selector select {
+  flex: 1;
+  min-width: 260px;
+  max-width: 640px;
+  padding: 14px 48px 14px 18px;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ranking-selector select:hover {
+  border-color: var(--hover-border);
+}
+
+.ranking-selector select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* =========================
+   LOADING / ERROR
+   ========================= */
+.ranking-loading,
+.ranking-error {
+  padding: 48px 28px;
+  text-align: center;
+  font-size: 1.05rem;
+  border-radius: var(--radius-lg);
+}
+
+.ranking-loading {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+}
+
+.ranking-error {
+  padding: 18px 24px;
+  text-align: left;
+  color: var(--color-error-text);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+}
+
+/* =========================
+   SUMMARY
+   ========================= */
+.ranking-summary {
+  display: grid;
+  grid-template-columns: 2.4fr 1.4fr 1fr 1fr;
+  gap: 20px;
+}
+
+.ranking-summary > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;   /* keeps all four labels on the same line */
+  gap: 12px;
+  min-width: 0;
+  min-height: 150px;
+  padding: 32px 30px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ranking-summary > div:hover {
+  border-color: var(--hover-border);
+  box-shadow: var(--hover-shadow);
+}
+
+.ranking-summary span {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.ranking-summary strong {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+/* Highlight the student's own rank */
+.ranking-summary > div:nth-child(3) {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
+
+.ranking-summary > div:nth-child(3) strong {
+  font-size: 2.4rem;
+  line-height: 1.1;
+  color: var(--color-primary);
+}
+
+/* =========================
+   TABS (Global Test subjects)
+   ========================= */
+.ranking-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.ranking-tab {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ranking-tab:hover {
+  color: var(--text-primary);
+  background: var(--surface-soft);
+}
+
+.ranking-tab.active {
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* =========================
+   PANEL
+   ========================= */
+.ranking-panel {
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ranking-panel-header {
+  margin-bottom: 24px;
+}
+
+.ranking-panel-header h3 {
+  margin: 0 0 6px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ranking-panel-header p {
+  margin: 0;
+  max-width: 780px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* =========================
+   TABLE
+   ========================= */
+.ranking-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.ranking-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 1.05rem;
+}
+
+.ranking-table thead th {
+  padding: 16px 24px;
+  text-align: left;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.ranking-table tbody td {
+  padding: 20px 24px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.ranking-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ranking-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.ranking-table tbody tr:hover {
+  background: var(--surface-soft);
+}
+
+/* Column sizing: rank narrow, student takes the rest */
+.ranking-table thead th:first-child,
+.ranking-table tbody td:first-child {
+  width: 120px;
+}
+
+.ranking-table tbody td:first-child {
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* Podium accents for top 3 */
+.ranking-table tbody tr:nth-child(1) td:first-child { color: #b45309; }
+.ranking-table tbody tr:nth-child(2) td:first-child { color: #64748b; }
+.ranking-table tbody tr:nth-child(3) td:first-child { color: #c2410c; }
+
+/* Current student row */
+.ranking-table tbody tr.current-student,
+.ranking-table tbody tr.current-student:hover {
+  background: var(--primary-light);
+}
+
+.ranking-table tbody tr.current-student td {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.ranking-table tbody tr.current-student td:first-child {
+  color: var(--color-primary);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+/* Empty-board message row */
+.ranking-table tbody td[colspan] {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 1100px) {
+  .ranking-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .ranking-summary > div {
+    min-height: 130px;
+  }
+}
+
+@media (max-width: 700px) {
+  .ranking-page {
+    padding: 18px 14px 40px;
+    gap: 18px;
+  }
+
+  .ranking-selector {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 18px;
+  }
+
+  .ranking-selector select {
+    max-width: none;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .ranking-summary {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .ranking-summary > div {
+    min-height: 0;
+    padding: 20px;
+  }
+
+  .ranking-summary strong {
+    font-size: 1.3rem;
+  }
+
+  .ranking-panel {
+    padding: 20px;
+  }
+
+  .ranking-table tbody td,
+  .ranking-table thead th {
+    padding: 14px 16px;
+  }
+}

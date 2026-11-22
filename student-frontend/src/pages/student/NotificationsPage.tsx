@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { NOTIFICATION_API_URL } from "../../hooks/api";
-
-import "../../styles/notifications.css";
+import "../../styles/NotificationsPage.css";
 
 type NotificationMetadata = {
   test_id?: string;
@@ -263,19 +262,17 @@ function NotificationsPage() {
           ) : (
             notifications.map((notification) => (
               <article
-                key={
-                  notification.notification_recipient_id
-                }
-                className={`notification-item ${
-                  !notification.is_read
-                    ? "unread"
-                    : ""
-                }`}
-                onClick={() =>
-                  handleNotificationClick(
-                    notification
-                  )
-                }
+                key={notification.notification_recipient_id}
+                className={`notification-item ${!notification.is_read ? "unread" : ""}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleNotificationClick(notification)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleNotificationClick(notification);
+                  }
+                }}
               >
                 <div className="notification-dot" />
 
