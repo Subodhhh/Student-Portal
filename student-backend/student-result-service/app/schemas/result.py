@@ -16,8 +16,8 @@ class ResultResponse(BaseModel):
     incorrect_answers: int
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    total_marks: float
+    obtained_marks: float
     accuracy: float
 
     created_at: datetime
@@ -30,9 +30,9 @@ class ResultListItem(BaseModel):
     student_id: str
 
     test_name: str
-    global_occurrence_id: UUID | None = None   # a unified Global Test: not owned by provider_id (only its anchor), labelled "Global Test"
-    is_retake: bool = False                    # the result of a provider-authorized retake
-    superseded: bool = False                   # an original replaced by its evaluated retake (kept for audit; not official)
+    global_occurrence_id: UUID | None = None
+    is_retake: bool = False
+    superseded: bool = False
     provider_id: UUID
     provider_name: str
 
@@ -49,27 +49,30 @@ class ResultListItem(BaseModel):
     incorrect_answers: int
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    # CHANGED TO FLOAT HERE:
+    total_marks: float
+    obtained_marks: float
     accuracy: float
 
     created_at: datetime
 
+
 class SubjectPerformance(BaseModel):
     subject: str
-    status: str | None = None        # unified Global Test: PAPER, or why the student had no paper for this subject
+    status: str | None = None
     message: str | None = None
 
     total_questions: int
     attempted_questions: int
     correct_answers: int
-    incorrect_answers: int
+    incorrect_answers: float
     unanswered_questions: int
 
-    total_marks: int
-    obtained_marks: int
+    # CHANGED TO FLOAT HERE:
+    total_marks: float
+    obtained_marks: float
     accuracy: float
-    adjustment: int = 0              # a Global Test: this subject's manual adjustment (included in obtained_marks)
+    adjustment: int = 0              
 
 
 class QuestionReview(BaseModel):
@@ -89,9 +92,9 @@ class QuestionReview(BaseModel):
 
     status: str
 
-    marks_obtained: int
-    marks: int
-    negative_marks: int
+    marks_obtained: float
+    marks: float
+    negative_marks: float
 
     image_reference: str | None
     question_image: str | None = None
@@ -105,8 +108,6 @@ class ResultDetailsResponse(BaseModel):
     result: ResultResponse
     subjects: list[SubjectPerformance]
     questions: list[QuestionReview]
-    # False while the test can still be started by others: questions is then empty and review opens at review_available_at.
     review_available: bool = True
     review_available_at: datetime | None = None
-    # a Global Test: a manual adjustment never attributed to a subject (included in the overall result only)
     unattributed_adjustment: int | None = None

@@ -54,6 +54,26 @@ services:
       - student-portal-network
 
   # ---- Student Portal -----------------------------------------------------------------------------------------------------
+  
+  student-gateway:
+    build: ./student-backend/student-gateway
+    image: student-gateway:latest
+    container_name: student-gateway
+    restart: unless-stopped
+    ports:
+      - "8011:80"      # one origin for the whole student portal
+    depends_on:
+      - student-authentication-service
+      - student-profile-service
+      - student-enrollment-service
+      - student-test-service
+      - student-attempt-service
+      - student-result-service
+      - student-ranking-service
+      - student-notification-service
+    networks: [student-portal-network, student-portal-edge]
+
+
   student-authentication-service:
     build: ./student-backend/student-authentication-service
     image: student-authentication-service:latest
@@ -210,18 +230,30 @@ services:
       - student-portal-network
       - student-portal-edge
 
+  # student-portal-frontend:
+  #   build:
+  #     context: ./student-frontend
+  #     args:
+  #       VITE_AUTH_API_URL: http://localhost:8002
+  #       VITE_PROFILE_API_URL: http://localhost:8003
+  #       VITE_ENROLLMENT_API_URL: http://localhost:8004
+  #       VITE_TEST_API_URL: http://localhost:8005
+  #       VITE_ATTEMPT_API_URL: http://localhost:8006
+  #       VITE_RESULT_API_URL: http://localhost:8007
+  #       VITE_RANKING_API_URL: http://localhost:8008
+  #       VITE_NOTIFICATION_API_URL: http://localhost:8009
   student-portal-frontend:
     build:
       context: ./student-frontend
       args:
-        VITE_AUTH_API_URL: http://localhost:8002
-        VITE_PROFILE_API_URL: http://localhost:8003
-        VITE_ENROLLMENT_API_URL: http://localhost:8004
-        VITE_TEST_API_URL: http://localhost:8005
-        VITE_ATTEMPT_API_URL: http://localhost:8006
-        VITE_RESULT_API_URL: http://localhost:8007
-        VITE_RANKING_API_URL: http://localhost:8008
-        VITE_NOTIFICATION_API_URL: http://localhost:8009
+        VITE_AUTH_API_URL:         http://localhost:8011
+        VITE_PROFILE_API_URL:      http://localhost:8011
+        VITE_ENROLLMENT_API_URL:   http://localhost:8011
+        VITE_TEST_API_URL:         http://localhost:8011
+        VITE_ATTEMPT_API_URL:      http://localhost:8011
+        VITE_RESULT_API_URL:       http://localhost:8011
+        VITE_RANKING_API_URL:      http://localhost:8011
+        VITE_NOTIFICATION_API_URL: http://localhost:8011
     image: student-portal-frontend:latest
     container_name: student-portal-frontend
     restart: unless-stopped

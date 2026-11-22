@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import "../../styles/test-details.css";
 import PaperSelection, { type PaperChoices } from "../../components/PaperSelection";
-import { TEST_API_URL } from "../../services/api";
+import { TEST_API_URL } from "../../hooks/api";
 
 type TestSection = {
   position: number;

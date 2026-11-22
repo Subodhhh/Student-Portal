@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PROFILE_API_URL } from "../../services/api";
+import { PROFILE_API_URL } from "../../hooks/api";
 import "../../styles/profile.css";
 
 type StudentProfile = {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { ATTEMPT_API_URL } from "../services/api";
+import { ATTEMPT_API_URL } from "../hooks/api";
 
 /*
  * A Global Test with paper choice: every subject with the papers this student may sit. The attempt service decides everything (eligibility,

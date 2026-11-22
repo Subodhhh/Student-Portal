@@ -1,8 +1,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "./renderApp";
-import { me, page, stubApi } from "./stubApi";
-import { fail, me, page, stubApi } from "../test/stubApi";
+import { fail, me, page, stubApi } from "./stubApi";
 
 const common = { "/api/v1/notifications/unread-count": { unread_count: 3 }, "/api/v1/providers": page([]) };
 const PLATFORM = {

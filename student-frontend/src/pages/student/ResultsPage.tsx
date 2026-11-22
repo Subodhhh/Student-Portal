@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ENROLLMENT_API_URL,
   RESULT_API_URL,
-} from "../../services/api";
+} from "../../hooks/api";
 import "../../styles/results.css";
 
 type Result = {

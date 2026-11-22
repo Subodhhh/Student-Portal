@@ -6,6 +6,7 @@ export async function getResultDetails(attemptId: string) {
     {
       method: "GET",
       credentials: "include",
+      cache: "no-store",
     }
   );
 

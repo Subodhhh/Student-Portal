@@ -71,10 +71,22 @@ def get_ranking(
 def rank(entries: list[dict], student_id: str, *, raw_marks_order: bool) -> dict:
     """Standard competition ranking by percentage of the delivered maximum (1, 1, 3): equal percentages share a rank, compared exactly
     (fractions, never rounded floats). raw_marks_order only orders entries inside a shared rank (overall ranking); it never splits it."""
+    
     def pct(e):
-        return Fraction(e["obtained_marks"], e["max_marks"])
+        # Safely handle None and convert floats/Decimals to Fractions
+        obtained = e.get("obtained_marks") or 0
+        max_marks = e.get("max_marks") or 0
+        
+        if max_marks == 0:
+            return Fraction(0, 1)
+            
+        try:
+            # Convert to string first to handle Decimals (like 8.75) safely
+            return Fraction(str(obtained)) / Fraction(str(max_marks))
+        except (ValueError, TypeError):
+            return Fraction(0, 1)
 
-    entries = sorted(entries, key=lambda e: (-pct(e), -e["obtained_marks"] if raw_marks_order else 0, e["student_name"], e["student_id"]))
+    entries = sorted(entries, key=lambda e: (-pct(e), -e.get("obtained_marks", 0) if raw_marks_order else 0, e["student_name"], e["student_id"]))
     leaderboard, previous, current = [], None, 0
     for index, e in enumerate(entries, start=1):
         if pct(e) != previous:
@@ -109,8 +121,9 @@ def get_occurrence_ranking(db: Session, test_id: UUID, occurrence_id: UUID, sect
     subject_rankings = []
     for subject in subjects:
         # only students who were delivered questions for the subject: a missing subject is never 0%
-        entries = [{"student_id": s["student_id"], "student_name": names[s["student_id"]], "obtained_marks": int(s["obtained_marks"]),
-                    "max_marks": int(s["max_marks"])} for s in scores if s["subject"] == subject and s["max_marks"]]
+        # FIXED: Removed int() casting to preserve decimal marks
+        entries = [{"student_id": s["student_id"], "student_name": names[s["student_id"]], "obtained_marks": s["obtained_marks"],
+                    "max_marks": s["max_marks"]} for s in scores if s["subject"] == subject and s["max_marks"]]
         subject_rankings.append({"subject": subject, **rank(entries, student_id, raw_marks_order=False)})
 
     return {

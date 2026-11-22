@@ -23,7 +23,7 @@ class SectionPaperResponse(BaseModel):
     label: str
     provider_name: str | None = None
     question_count: int
-    total_marks: int
+    total_marks: float
 
 
 class SectionResponse(BaseModel):
@@ -43,7 +43,7 @@ class TestResponse(BaseModel):
     description: str | None
     duration_minutes: int
     total_questions: int | None       # None only for a Global Test whose paper choice is not fixed yet
-    total_marks: int | None
+    total_marks: float | None
     start_at: datetime | None
     end_at: datetime | None
     status: str

@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { MathText } from "./MathText";
-import { mathProblems, splitMath } from "./mathRender";
+import { MathText } from "../MathText";
+import { mathProblems, splitMath } from "../mathRender";
 
 describe("MathText", () => {
   it("typesets stored LaTeX segments and keeps the surrounding text", () => {

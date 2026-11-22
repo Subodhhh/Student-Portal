@@ -1,0 +1,343 @@
+/* --- Base Layout --- */
+.student-layout {
+  display: flex;
+  min-height: 100vh;
+  background-color: #f8fafc;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* --- Desktop Sidebar Shell --- */
+.desktop-sidebar-container {
+  flex-shrink: 0;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 40;
+  transition: width 0.3s ease;
+}
+
+/* --- Sidebar Internal Styles --- */
+.student-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  transition: width 0.3s ease;
+}
+
+.student-sidebar.sidebar-expanded { width: 260px; }
+.student-sidebar.sidebar-collapsed { width: 80px; }
+
+.student-sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  height: 72px;
+}
+
+.student-logo {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-toggle {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #64748b;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover { background: #f1f5f9; color: #0f172a; }
+
+.student-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 0.5rem;
+  gap: 0.25rem;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.student-nav a {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  color: #64748b;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.student-nav a:hover { background: #f8fafc; color: #0f172a; }
+.student-nav a.active { background: #eef2ff; color: #4f46e5; }
+
+.sidebar-nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+/* --- Main Content Area --- */
+.student-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.student-content {
+  flex: 1;
+  padding: 2rem;
+}
+
+/* --- Header Styles --- */
+.student-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.student-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mobile-menu-button {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #0f172a;
+  padding: 0;
+}
+
+.student-page-heading h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.student-page-heading p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.student-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Notification Bell */
+.notification-button {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.notification-button:hover { background: #f1f5f9; color: #0f172a; }
+
+.notification-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: bold;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+/* Profile Dropdown */
+.student-profile-menu {
+  position: relative;
+}
+
+.student-avatar-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.student-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.student-avatar-small {
+  width: 32px;
+  height: 32px;
+  font-size: 0.8rem;
+}
+
+.student-profile-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 240px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  z-index: 50;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.student-profile-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.student-profile-info strong {
+  display: block;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.student-profile-info span {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.student-profile-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 1rem 0;
+}
+
+.logout-button {
+  width: 100%;
+  padding: 0.5rem;
+  background: #fef2f2;
+  color: #ef4444;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.logout-button:hover { background: #fee2e2; }
+.logout-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.logout-error {
+  color: #ef4444;
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+  text-align: center;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Mobile Overlay --- */
+.mobile-sidebar-container,
+.mobile-sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .desktop-sidebar-container { display: none; }
+  .mobile-menu-button { display: block; }
+
+  .mobile-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 50;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+  }
+
+  .mobile-sidebar-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .mobile-sidebar-container {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    background: #ffffff;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.1);
+  }
+
+  .mobile-sidebar-container.open {
+    transform: translateX(0);
+  }
+
+  .student-header { padding: 0 1rem; }
+  .student-content { padding: 1.5rem; }
+}

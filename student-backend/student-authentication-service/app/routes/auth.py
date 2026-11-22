@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -113,14 +114,26 @@ def login(
 
     session_id, _ = create_session(str(student.student_id))
 
+    is_dev = os.getenv("APP_ENV", "dev") == "dev"
+
     response.set_cookie(
         key="session_id",
         value=session_id,
         httponly=True,
-        secure=settings.session_cookie_secure,
+        # If dev, force False. If production, use the env setting (True)
+        secure=False if is_dev else settings.session_cookie_secure,
         samesite="lax",
         max_age=1800,
     )
+
+    # response.set_cookie(
+    #     key="session_id",
+    #     value=session_id,
+    #     httponly=True,
+    #     secure=settings.session_cookie_secure,
+    #     samesite="lax",
+    #     max_age=1800,
+    # )
 
     return {"message": "Login successful"}
 
@@ -184,12 +197,20 @@ def logout(
         delete_session(session_id)
 
     # Same attributes as at login, so browsers accept the deletion of the Secure cookie.
+    is_dev = os.getenv("APP_ENV", "dev") == "dev"
+
     response.delete_cookie(
         key="session_id",
         httponly=True,
-        secure=settings.session_cookie_secure,
+        secure=False if is_dev else settings.session_cookie_secure,
         samesite="lax",
     )
+    # response.delete_cookie(
+    #     key="session_id",
+    #     httponly=True,
+    #     secure=settings.session_cookie_secure,
+    #     samesite="lax",
+    # )
 
     return {"message": "Logout successful"}
 

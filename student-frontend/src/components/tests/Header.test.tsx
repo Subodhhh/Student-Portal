@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AUTH_API_URL } from "../services/api";
-import ProtectedRoute from "./ProtectedRoute";
-import Header from "./Header";
+import { AUTH_API_URL } from "../../hooks/api";
+import ProtectedRoute from "../ProtectedRoute";
+import Header from "../Header";
 
 const LOGOUT_URL = `${AUTH_API_URL}/auth/logout`;
 const ME_URL = `${AUTH_API_URL}/auth/me`;

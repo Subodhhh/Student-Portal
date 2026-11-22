@@ -1,12 +1,11 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-import LoginPage from "../pages/auth/LoginPage";
-import ForgotPasswordPage from "../pages/auth/ForgotPasswordPage";
-import ResetPasswordPage from "../pages/auth/ResetPasswordPage";
+import LoginPage from "../pages/student/LoginPage";
+import ForgotPasswordPage from "../components/ForgotPasswordPage";
+import ResetPasswordPage from "../components/ResetPasswordPage";
 
 import StudentLayout from "../layouts/StudentLayout";
 import TestLayout from "../layouts/TestLayout";
-
 import DashboardPage from "../pages/student/DashboardPage";
 import MyInstitutesPage from "../pages/student/MyInstitutesPage";
 import TestsPage from "../pages/student/TestsPage";
@@ -19,7 +18,6 @@ import NotificationsPage from "../pages/student/NotificationsPage";
 import ProfilePage from "../pages/student/ProfilePage";
 import PerformancePage from "../pages/student/PerformancePage";
 import TestResultPage from "../pages/student/TestResultPage";
-
 import ProtectedRoute from "../components/ProtectedRoute";
 
 

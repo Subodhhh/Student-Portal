@@ -1,0 +1,15 @@
+.test-layout {
+  min-height: 100vh;
+  width: 100%;
+  background-color: #f8fafc; /* Matches your dashboard background */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ensures the child page (Outlet) fills the full height */
+.test-layout > * {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}

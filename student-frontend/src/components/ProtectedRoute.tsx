@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
-import { AUTH_API_URL } from "../services/api";
+import { AUTH_API_URL } from "../hooks/api";
 
 function ProtectedRoute() {
   const [loading, setLoading] = useState(true);

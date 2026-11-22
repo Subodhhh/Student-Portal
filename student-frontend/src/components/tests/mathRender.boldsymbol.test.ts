@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mathProblems, renderMath } from "./mathRender";
+import { mathProblems, renderMath } from "../mathRender";
 
 // Cycle 2.3: Word bold-italic letters (a bold vector) arrive as \boldsymbol{...}. It must typeset with the installed KaTeX under the
 // same strict, trust-refusing options every stored question uses.

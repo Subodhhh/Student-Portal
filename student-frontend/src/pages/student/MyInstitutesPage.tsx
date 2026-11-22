@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getMyEnrollments } from "../../services/enrollmentService";
+import { getMyEnrollments } from "../../hooks/enrollmentService";
 import "../../styles/my-institutes.css";
 
 type Batch = {

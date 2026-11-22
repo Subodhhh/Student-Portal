@@ -7,6 +7,7 @@ export async function loginStudent(login: string, password: string) {
       "Content-Type": "application/json",
     },
     credentials: "include",
+    cache: "no-store",
     body: JSON.stringify({
       login,
       password,
@@ -30,6 +31,7 @@ export async function resetStudentPassword(
     headers: {
       "Content-Type": "application/json",
     },
+    cache: "no-store",
     body: JSON.stringify({
       token,
       new_password: newPassword,
@@ -50,6 +52,7 @@ export async function forgotStudentPassword(email: string) {
     headers: {
       "Content-Type": "application/json",
     },
+    cache: "no-store",
     body: JSON.stringify({
       email,
     }),
@@ -67,6 +70,7 @@ export async function logoutStudent() {
   const response = await fetch(`${AUTH_API_URL}/auth/logout`, {
     method: "POST",
     credentials: "include",
+    cache: "no-store",
   });
 
   if (!response.ok) {

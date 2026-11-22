@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import "../../App.css";
-import { resetStudentPassword } from "../../services/authService";
+import "../App.css";
+import { resetStudentPassword } from "../hooks/authService";
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();

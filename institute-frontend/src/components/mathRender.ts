@@ -51,7 +51,7 @@ export function renderMath(latex: string, display = false): string | Error {
     try {
       // trust is refused for every command that would need it (\href, \url, \includegraphics, \htmlClass ...); KaTeX then draws the
       // command as red source text instead of throwing, so the attempt is recorded and the segment treated as not displayable.
-      const html = katex.renderToString(latex, { ...OPTIONS, displayMode: display, trust: (ctx) => { untrusted = ctx.command; return false; } });
+      const html = katex.renderToString(latex, { ...OPTIONS, displayMode: display, trust: (ctx : any) => { untrusted = ctx.command; return false; } });
       hit = untrusted ? new Error(`${untrusted} is not allowed`) : html;
     } catch (e) {
       hit = e instanceof Error ? e : new Error(String(e));
@@ -59,7 +59,7 @@ export function renderMath(latex: string, display = false): string | Error {
     if (cache.size > 2000) cache.clear();
     cache.set(key, hit);
   }
-  return hit;
+  return hit as string | Error;
 }
 
 /** Problems that would stop a text from rendering (used to validate a provider's correction before it can be accepted). */

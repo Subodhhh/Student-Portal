@@ -5,8 +5,8 @@ import {
   ENROLLMENT_API_URL,
   ATTEMPT_API_URL,
   TEST_API_URL,
-} from "../../services/api";
-import { isNoAttempt } from "../../services/attempts";
+} from "../../hooks/api";
+import { isNoAttempt } from "../../hooks/attempts";
 
 type Enrollment = {
   enrollment_id: string;

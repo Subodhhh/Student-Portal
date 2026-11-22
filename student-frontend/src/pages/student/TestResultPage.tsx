@@ -6,8 +6,8 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { TEST_API_URL } from "../../services/api";
-import { getResultDetails } from "../../services/resultService";
+import { TEST_API_URL } from "../../hooks/api";
+import { getResultDetails } from "../../hooks/resultService";
 
 import "../../styles/test-result.css";
 import { MathText } from "../../components/MathText";

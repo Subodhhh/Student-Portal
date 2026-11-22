@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { NOTIFICATION_API_URL } from "../../services/api";
+import { NOTIFICATION_API_URL } from "../../hooks/api";
 
 import "../../styles/notifications.css";
 

@@ -4,10 +4,10 @@ import { useNavigate } from "react-router-dom";
 import {
   ATTEMPT_API_URL,
   TEST_API_URL,
-} from "../../services/api";
+} from "../../hooks/api";
 
 import "../../styles/scheduled-tests.css";
-import { isNoAttempt } from "../../services/attempts";
+import { isNoAttempt } from "../../hooks/attempts";
 
 type TestSection = {
   position: number;

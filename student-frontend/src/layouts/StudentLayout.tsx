@@ -2,7 +2,7 @@ import { useState } from "react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { Outlet } from "react-router-dom";
-import "../styles/student-layout.css";
+import "../styles/StudentLayout.css";
 
 function StudentLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
