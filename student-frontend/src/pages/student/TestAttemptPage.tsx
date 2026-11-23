@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { 
-  ExamRulesScreen, 
-  FullscreenBlocker, 
-  IntegrityBadge 
+import {
+  ExamRulesScreen,
+  FullscreenBlocker,
+  IntegrityBadge
 } from "../../components/TestIntegrityUI";
 
 import {
@@ -13,7 +13,7 @@ import {
   TEST_API_URL,
 } from "../../hooks/api";
 
-import "../../styles/test-attempt.css";
+import "../../styles/TestAttemptPage.css";
 import { MathText } from "../../components/MathText";
 import type { IntegrityState } from "../../components/examIntegrity";
 import { useExamIntegrity } from "../../components/examIntegrity";
@@ -104,6 +104,15 @@ type Question = {
   negativeMarks: number;
 };
 
+const SAVE_FAILED_MESSAGE =
+  "Your last change could not be saved. Check your connection and select your answer again.";
+
+function exitFullscreenQuietly() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => { /* already left */ });
+  }
+}
+
 function TestAttemptPage() {
   const navigate = useNavigate();
   const { testId } = useParams();
@@ -121,8 +130,11 @@ function TestAttemptPage() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
 
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [saveWarning, setSaveWarning] = useState("");
   const [selectionRequired, setSelectionRequired] = useState<string[] | null>(null);
 
   // --- Exam Integrity State ---
@@ -131,6 +143,7 @@ function TestAttemptPage() {
   const [autoSubmitted, setAutoSubmitted] = useState<IntegrityState | null>(null);
   const [reviewMessage, setReviewMessage] = useState("");
   const [reviewSent, setReviewSent] = useState<string>("");
+  const [reviewError, setReviewError] = useState("");
 
   // Track fullscreen changes
   useEffect(() => {
@@ -142,9 +155,9 @@ function TestAttemptPage() {
   const onAutoSubmitted = useCallback((s: IntegrityState) => {
     setAutoSubmitted(s);
     setSubmitted(true);
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => { /* already left */ });
+    exitFullscreenQuietly();
   }, []);
-  
+
   const integrity = useExamIntegrity(ATTEMPT_API_URL, attemptId, rulesAccepted && !submitted, onAutoSubmitted);
 
   // --- Sections & Questions Logic ---
@@ -214,7 +227,7 @@ function TestAttemptPage() {
           const found: unknown = finishedResponse.ok ? await finishedResponse.json() : null;
           const last = found && !isNoAttempt(found) ? (found as AttemptResponse) : null;
           if (!last || last.status === "IN_PROGRESS") throw new Error(`Failed to start attempt: ${attemptResponse.status}`);
-          
+
           setAttemptId(last.attempt_id);
           const st = await fetch(`${ATTEMPT_API_URL}/attempts/${last.attempt_id}/integrity`, { credentials: "include" });
           const integrityState: IntegrityState | null = st.ok ? await st.json() : null;
@@ -223,10 +236,19 @@ function TestAttemptPage() {
         } else {
           attemptData = await attemptResponse.json();
           if (attemptData) {
+            const expiresAt = new Date(attemptData.expires_at).getTime();
             setAttemptId(attemptData.attempt_id);
-            setAttemptExpiresAt(new Date(attemptData.expires_at).getTime());
+            setAttemptExpiresAt(expiresAt);
+            setRemainingSeconds(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
             finished = attemptData.status === "SUBMITTED" || attemptData.status === "AUTO_SUBMITTED";
           }
+        }
+
+        // An attempt that is already over only needs the submitted screen: no test or answers to load.
+        if (finished || !attemptData) {
+          setSubmitted(true);
+          exitFullscreenQuietly();
+          return;
         }
 
         const testResponse = await fetch(`${TEST_API_URL}/tests/${currentTestId}/start`, { credentials: "include" });
@@ -272,11 +294,6 @@ function TestAttemptPage() {
           console.error("Failed to load student profile:", profileError);
         }
 
-        if (finished || !attemptData) {
-          setSubmitted(true);
-          return;
-        }
-
         const answersResponse = await fetch(`${ATTEMPT_API_URL}/attempts/${attemptData.attempt_id}/answers`, { credentials: "include" });
         if (!answersResponse.ok) throw new Error(`Failed to load saved answers: ${answersResponse.status}`);
 
@@ -315,20 +332,28 @@ function TestAttemptPage() {
   useEffect(() => {
     if (attemptExpiresAt === null || submitted) return;
     const expiresAt = attemptExpiresAt;
+    let checking = false;
 
     async function updateTimer() {
       const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
       setRemainingSeconds(remaining);
 
-      if (remaining > 0 || !attemptId) return;
+      // At zero, ask the server whether it closed the attempt. One check at a time.
+      if (remaining > 0 || !attemptId || checking) return;
+      checking = true;
 
       try {
         const response = await fetch(`${ATTEMPT_API_URL}/attempts/${attemptId}`, { credentials: "include" });
         if (!response.ok) return;
         const attempt: AttemptResponse = await response.json();
-        if (attempt.status === "AUTO_SUBMITTED") setSubmitted(true);
+        if (attempt.status === "AUTO_SUBMITTED" || attempt.status === "SUBMITTED") {
+          setSubmitted(true);
+          exitFullscreenQuietly();
+        }
       } catch (timerError) {
         console.error("Failed to verify attempt expiry:", timerError);
+      } finally {
+        checking = false;
       }
     }
 
@@ -371,8 +396,10 @@ function TestAttemptPage() {
         if (response.status === 400) setSubmitted(true);
         throw new Error(`Failed to save answer: ${response.status}`);
       }
+      setSaveWarning("");
     } catch (saveError) {
       console.error("Failed to save answer:", saveError);
+      setSaveWarning(SAVE_FAILED_MESSAGE);
     }
   }
 
@@ -394,8 +421,10 @@ function TestAttemptPage() {
         if (response.status === 400) setSubmitted(true);
         throw new Error(`Failed to clear answer: ${response.status}`);
       }
+      setSaveWarning("");
     } catch (clearError) {
       console.error("Failed to clear answer:", clearError);
+      setSaveWarning(SAVE_FAILED_MESSAGE);
     }
   }
 
@@ -420,25 +449,60 @@ function TestAttemptPage() {
   }
 
   async function handleSubmit() {
-    if (!attemptId || submitted) return;
-    
+    if (!attemptId || submitted || submitting) return;
+
     // Avoid counting the native confirmation dialog as a warning
     const confirmed = integrity.withoutWarnings(() => window.confirm("Are you sure you want to submit the test?"));
     if (!confirmed) return;
 
+    setSubmitting(true);
+    setSubmitError("");
+
     try {
-      setError("");
       const response = await fetch(`${ATTEMPT_API_URL}/attempts/${attemptId}/submit`, { method: "POST", credentials: "include" });
-      if (!response.ok) throw new Error(`Failed to submit attempt: ${response.status}`);
+
+      // 400/409 means the attempt is already closed, e.g. an earlier try submitted it
+      // but evaluation failed. Carry on to evaluation instead of failing the retry.
+      if (!response.ok && response.status !== 400 && response.status !== 409) {
+        throw new Error(`Failed to submit attempt: ${response.status}`);
+      }
 
       const resultResponse = await fetch(`${RESULT_API_URL}/results/attempts/${attemptId}/evaluate`, { method: "POST", credentials: "include" });
       if (!resultResponse.ok) throw new Error(`Failed to evaluate result: ${resultResponse.status}`);
 
       await resultResponse.json();
+
+      // Leave fullscreen without it being recorded as a warning
+      integrity.withoutWarnings(() => exitFullscreenQuietly());
       navigate(`/tests/result/${attemptId}`);
-    } catch (submitError) {
-      console.error("Failed to submit test:", submitError);
-      setError("The test was submitted, but the result could not be generated. Please try again.");
+    } catch (submitFailure) {
+      console.error("Failed to submit test:", submitFailure);
+      setSubmitError("The test could not be submitted or evaluated. Your answers are saved. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleReviewRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!autoSubmitted) return;
+    setReviewError("");
+
+    try {
+      const r = await fetch(`${ATTEMPT_API_URL}/attempts/${autoSubmitted.attempt_id}/review`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: reviewMessage }),
+      });
+      if (r.ok) {
+        setReviewSent("sent");
+      } else {
+        setReviewSent("");
+        setReviewError("The review request could not be sent. Please try again.");
+      }
+    } catch (reviewFailure) {
+      console.error("Failed to send review request:", reviewFailure);
+      setReviewSent("");
+      setReviewError("The review request could not be sent. Please try again.");
     }
   }
 
@@ -458,9 +522,10 @@ function TestAttemptPage() {
           <h2>Test submitted automatically</h2>
           <p role="status">
             Your test was submitted automatically because {autoSubmitted.warnings} warnings were recorded
-            (leaving the test tab or window, leaving fullscreen, copying, pasting, using the browser back
-            button, or refreshing). Your saved answers were submitted and are evaluated as usual. The
-            submission is under review: this is a record of browser activity, not a finding of cheating.
+            (leaving the test tab or window, leaving fullscreen, copying, pasting, taking a screenshot,
+            using the browser back button, or refreshing). Your saved answers were submitted and are
+            evaluated as usual. The submission is under review: this is a record of browser activity,
+            not a finding of cheating.
           </p>
           {review || reviewSent ? (
             <p className="test-attempt-review-status">
@@ -468,23 +533,12 @@ function TestAttemptPage() {
               {review?.decision_reason ? ` Reason: ${review.decision_reason}` : ""}
             </p>
           ) : (
-            <form
-              className="test-attempt-review-form"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                const r = await fetch(`${ATTEMPT_API_URL}/attempts/${autoSubmitted.attempt_id}/review`, {
-                  method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ message: reviewMessage }),
-                });
-                setReviewSent(r.ok ? "sent" : "");
-                if (!r.ok) setError("The review request could not be sent. Please try again.");
-              }}
-            >
+            <form className="test-attempt-review-form" onSubmit={handleReviewRequest}>
               <label htmlFor="review-message">If you believe this was unjustified, tell your institute what happened:</label>
               <textarea id="review-message" value={reviewMessage} minLength={10} maxLength={2000} required
                         onChange={(event) => setReviewMessage(event.target.value)} />
               <button type="submit" disabled={reviewMessage.trim().length < 10}>Request a review</button>
-              {error && <p className="test-attempt-error">{error}</p>}
+              {reviewError && <p className="test-attempt-error" role="alert">{reviewError}</p>}
             </form>
           )}
           <button type="button" onClick={() => navigate("/results")}>Go to Results</button>
@@ -518,20 +572,7 @@ function TestAttemptPage() {
     );
   }
 
-  // 5. Error Screen
-  if (error || !test) {
-    return (
-      <section className="test-attempt-submitted">
-        <div className="test-attempt-submitted-card">
-          <h2>Unable to Load Test</h2>
-          <p>{error || "Test not found."}</p>
-          <button type="button" onClick={() => navigate("/tests")}>Back to Tests</button>
-        </div>
-      </section>
-    );
-  }
-
-  // 6. Submitted Screen
+  // 5. Submitted Screen (before the error screen, so a finished attempt never shows a load error)
   if (submitted) {
     return (
       <section className="test-attempt-submitted">
@@ -540,6 +581,19 @@ function TestAttemptPage() {
           <h2>Test Submitted</h2>
           <p>Your test has been submitted successfully. Your result will be available after evaluation.</p>
           <button type="button" onClick={() => navigate("/results")}>Go to Results</button>
+        </div>
+      </section>
+    );
+  }
+
+  // 6. Error Screen
+  if (error || !test) {
+    return (
+      <section className="test-attempt-submitted">
+        <div className="test-attempt-submitted-card">
+          <h2>Unable to Load Test</h2>
+          <p>{error || "Test not found."}</p>
+          <button type="button" onClick={() => navigate("/tests")}>Back to Tests</button>
         </div>
       </section>
     );
@@ -563,7 +617,7 @@ function TestAttemptPage() {
   // --- Main Test UI ---
   return (
     <section className="test-attempt-page">
-      
+
       {/* Modularized Integrity UI */}
       <FullscreenBlocker isFullscreen={isFullscreen} />
       <IntegrityBadge integrity={integrity.state} />
@@ -666,10 +720,10 @@ function TestAttemptPage() {
             <button type="button" className="secondary-button" onClick={handleMarkForReview}>Mark for Review</button>
 
             <div className="test-attempt-navigation-right">
-              <button type="button" className="secondary-button" disabled={currentVisibleIndex === 0} onClick={moveToPreviousQuestion}>
+              <button type="button" className="secondary-button" disabled={currentVisibleIndex <= 0} onClick={moveToPreviousQuestion}>
                 Previous
               </button>
-              <button type="button" className="primary-button" onClick={handleSaveAndNext} disabled={currentVisibleIndex === visibleQuestions.length - 1}>
+              <button type="button" className="primary-button" onClick={handleSaveAndNext} disabled={currentVisibleIndex < 0 || currentVisibleIndex === visibleQuestions.length - 1}>
                 Save & Next
               </button>
             </div>
@@ -737,8 +791,16 @@ function TestAttemptPage() {
             <div className="legend-item"><span className="legend-dot review" /><span>Marked for Review</span></div>
           </div>
 
-          <button type="button" className="submit-test-button" onClick={handleSubmit}>
-            Submit Test
+          {saveWarning && (
+            <p className="test-attempt-save-warning" role="alert">{saveWarning}</p>
+          )}
+
+          {submitError && (
+            <p className="test-attempt-submit-error" role="alert">{submitError}</p>
+          )}
+
+          <button type="button" className="submit-test-button" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "Submitting..." : "Submit Test"}
           </button>
         </aside>
       </div>

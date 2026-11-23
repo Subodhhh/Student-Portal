@@ -1,0 +1,394 @@
+/* =========================
+   RESULTS PAGE
+   ========================= */
+.results-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 32px 40px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* =========================
+   LOADING / ERROR
+   ========================= */
+.results-loading,
+.results-error {
+  padding: 56px 28px;
+  text-align: center;
+  font-size: 1.05rem;
+  border-radius: var(--radius-lg);
+}
+
+.results-loading {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+}
+
+.results-error {
+  padding: 18px 24px;
+  text-align: left;
+  color: var(--color-error-text);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+}
+
+/* =========================
+   TOOLBAR (search + provider)
+   ========================= */
+.results-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 20px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.results-search {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.results-search:hover {
+  border-color: var(--hover-border);
+}
+
+.results-search:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.results-search span {
+  flex-shrink: 0;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.results-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 0;
+  font-size: 1.02rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+}
+
+.results-search input:focus,
+.results-search input:focus-visible {
+  outline: none;               /* focus ring is on the wrapper */
+}
+
+.results-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.results-provider-select {
+  min-width: 220px;
+  padding: 14px 44px 14px 18px;
+  font-size: 1.02rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.results-provider-select:hover {
+  border-color: var(--hover-border);
+}
+
+.results-provider-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* =========================
+   RESULTS LIST
+   ========================= */
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* =========================
+   RESULT CARD
+   (hover accent bar comes from the global card rule in index.css)
+   ========================= */
+.result-card {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 26px 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.result-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.result-provider {
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border-radius: 999px;
+}
+
+.result-card-main h3 {
+  margin: 4px 0 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.result-card-main p {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.result-date {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* Retake / superseded labels */
+.result-attempt-label {
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+}
+
+.result-attempt-label.superseded {
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  border-color: #fde68a;
+}
+
+/* =========================
+   SCORE
+   ========================= */
+.result-card-score {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 130px;
+  padding: 16px 24px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.result-card-score span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.result-card-score strong {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.result-card-score small {
+  margin-left: 2px;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* =========================
+   VIEW BUTTON
+   ========================= */
+.result-view-button {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  font-size: 0.97rem;
+  font-weight: 600;
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.result-view-button:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  box-shadow: var(--hover-shadow);
+}
+
+/* =========================
+   EMPTY STATES
+   (no results for a provider / no results at all)
+   ========================= */
+.provider-no-results,
+.results-empty-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  padding: 40px 24px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.provider-no-results-content,
+.results-empty-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  text-align: center;
+}
+
+.provider-no-results-name {
+  padding: 5px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border-radius: 999px;
+}
+
+.provider-no-results-content strong,
+.results-empty-content h3 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.provider-no-results-content p,
+.results-empty-content p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.results-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  font-size: 1.8rem;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 900px) {
+  .result-card {
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+
+  .result-card-main {
+    flex-basis: 100%;
+  }
+
+  .result-card-score {
+    flex: 1;
+    flex-direction: row;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .result-view-button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .results-page {
+    padding: 16px 12px 40px;
+    gap: 16px;
+  }
+
+  .results-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 16px;
+  }
+
+  .results-search,
+  .results-provider-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .result-card {
+    padding: 20px;
+  }
+
+  .result-card-main h3 {
+    font-size: 1.15rem;
+  }
+
+  .result-card-score,
+  .result-view-button {
+    flex-basis: 100%;
+  }
+
+  .provider-no-results,
+  .results-empty-card {
+    min-height: 240px;
+  }
+}

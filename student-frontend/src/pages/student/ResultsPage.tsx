@@ -4,7 +4,7 @@ import {
   ENROLLMENT_API_URL,
   RESULT_API_URL,
 } from "../../hooks/api";
-import "../../styles/results.css";
+import "../../styles/ResultsPage.css";
 
 type Result = {
   result_id: string;
@@ -267,23 +267,6 @@ function ResultsPage() {
               </button>
             </article>
           ))}
-        </div>
-      ) : provider !== "ALL" ? (
-        <div className="provider-no-results">
-          <div className="provider-no-results-content">
-            <span className="provider-no-results-name">
-              {selectedProviderName}
-            </span>
-
-            <strong>
-              No results available
-            </strong>
-
-            <p>
-              You have not completed any tests from
-              this provider yet.
-            </p>
-          </div>
         </div>
       ) : provider !== "ALL" ? (
         <div className="provider-no-results">

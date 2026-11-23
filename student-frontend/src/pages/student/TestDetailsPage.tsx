@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import "../../styles/test-details.css";
+import "../../styles/TestDetailsPage.css";
 import PaperSelection, { type PaperChoices } from "../../components/PaperSelection";
 import { TEST_API_URL } from "../../hooks/api";
 
@@ -66,6 +66,14 @@ function formatTime(date: string | null) {
   });
 }
 
+function formatWindow(startAt: string | null, endAt: string | null) {
+  if (!startAt || !endAt) {
+    return "Time not specified";
+  }
+
+  return `${formatTime(startAt)} - ${formatTime(endAt)}`;
+}
+
 function TestDetailsPage() {
   const navigate = useNavigate();
   const { testId } = useParams();
@@ -74,8 +82,17 @@ function TestDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [choices, setChoices] = useState<PaperChoices | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  // Keep the Upcoming / Available / Closed status current while the page stays open.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadTest() {
       if (!testId) {
         setError("Test not found.");
@@ -102,20 +119,30 @@ function TestDetailsPage() {
 
         const data: Test = await response.json();
 
-        setTest(data);
+        if (!cancelled) {
+          setTest(data);
+        }
       } catch (loadError) {
         console.error(
           "Failed to load test details:",
           loadError
         );
 
-        setError("Unable to load test details.");
+        if (!cancelled) {
+          setError("Unable to load test details.");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     loadTest();
+
+    return () => {
+      cancelled = true;
+    };
   }, [testId]);
 
   function handleTakeTest() {
@@ -137,8 +164,8 @@ function TestDetailsPage() {
           ← Back to Scheduled Tests
         </button>
 
-        <div className="test-details-description">
-          <p>Loading test details...</p>
+        <div className="test-details-loading">
+          Loading test details...
         </div>
       </section>
     );
@@ -155,15 +182,14 @@ function TestDetailsPage() {
           ← Back to Scheduled Tests
         </button>
 
-        <div className="test-details-description">
-          <p>{error || "Test not found."}</p>
+        <div className="test-details-error" role="alert">
+          {error || "Test not found."}
         </div>
       </section>
     );
   }
 
   // the same rules as the Scheduled Tests lists: before the window Upcoming, inside it Available, otherwise Closed
-  const now = new Date();
   const phase =
     test.status !== "ACTIVE" || test.start_at === null || test.end_at === null ? "closed"
       : now < new Date(test.start_at) ? "upcoming"
@@ -219,11 +245,6 @@ function TestDetailsPage() {
           </div>
 
           <h2>{test.name}</h2>
-
-          <p>
-            {test.description ||
-              "Test details provided by your provider."}
-          </p>
         </div>
 
         <span className={`test-details-status test-details-status-${phase}`}>
@@ -231,12 +252,11 @@ function TestDetailsPage() {
         </span>
       </div>
 
-      <div className="test-details-description">
-        <p>
-          {test.description ||
-            "No additional description has been provided for this test."}
-        </p>
-      </div>
+      {test.description && (
+        <div className="test-details-description">
+          <p>{test.description}</p>
+        </div>
+      )}
 
       <div className="test-details-grid">
         <div className="test-detail-item">
@@ -276,8 +296,7 @@ function TestDetailsPage() {
           <div>
             <span>Test Window</span>
             <strong>
-              {formatTime(test.start_at)} -{" "}
-              {formatTime(test.end_at)}
+              {formatWindow(test.start_at, test.end_at)}
             </strong>
           </div>
         </div>
@@ -292,7 +311,11 @@ function TestDetailsPage() {
             {[...test.sections].sort((a, b) => a.position - b.position).map((section) => (
               <li key={section.subject} className={section.status === "PAPER" ? "available" : "unavailable"}>
                 <strong>{section.subject}</strong>
-                <span>{section.status === "PAPER" ? `${section.question_count} question(s)` : section.message}</span>
+                <span>
+                  {section.status === "PAPER"
+                    ? `${section.question_count} question(s)`
+                    : section.message ?? "No paper available for you."}
+                </span>
               </li>
             ))}
           </ul>

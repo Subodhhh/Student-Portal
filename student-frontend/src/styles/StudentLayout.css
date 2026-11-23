@@ -1,24 +1,30 @@
-/* --- Base Layout --- */
+/* =========================
+   STUDENT LAYOUT
+   ========================= */
 .student-layout {
   display: flex;
   min-height: 100vh;
-  background-color: #f8fafc;
+  background-color: var(--color-bg-body);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-/* --- Desktop Sidebar Shell --- */
+/* =========================
+   DESKTOP SIDEBAR SHELL
+   ========================= */
 .desktop-sidebar-container {
   flex-shrink: 0;
-  background: #ffffff;
-  border-right: 1px solid #e2e8f0;
   position: sticky;
   top: 0;
   height: 100vh;
   z-index: 40;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
   transition: width 0.3s ease;
 }
 
-/* --- Sidebar Internal Styles --- */
+/* =========================
+   SIDEBAR
+   ========================= */
 .student-sidebar {
   display: flex;
   flex-direction: column;
@@ -27,80 +33,130 @@
   transition: width 0.3s ease;
 }
 
-.student-sidebar.sidebar-expanded { width: 260px; }
-.student-sidebar.sidebar-collapsed { width: 80px; }
+.student-sidebar.sidebar-expanded { width: 290px; }
+.student-sidebar.sidebar-collapsed { width: 84px; }
 
 .student-sidebar-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.5rem 1rem;
-  border-bottom: 1px solid #f1f5f9;
-  height: 72px;
+  gap: 12px;
+  height: 80px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.student-sidebar.sidebar-collapsed .student-sidebar-top {
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
 }
 
 .student-logo {
-  font-size: 1.125rem;
+  font-size: 1.4rem;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
 }
 
+.student-sidebar.sidebar-collapsed .student-logo {
+  font-size: 1.1rem;
+  color: var(--color-primary);
+}
+
 .sidebar-toggle {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  width: 24px;
-  height: 24px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  color: #64748b;
+  width: 34px;
+  height: 34px;
+  font-size: 1.1rem;
   font-weight: bold;
-  flex-shrink: 0;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.sidebar-toggle:hover { background: #f1f5f9; color: #0f172a; }
+.sidebar-toggle:hover {
+  color: var(--color-primary);
+  background: var(--primary-light);
+}
 
+/* =========================
+   NAV
+   ========================= */
 .student-nav {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 1rem 0.5rem;
-  gap: 0.25rem;
-  flex: 1;
+  gap: 6px;
+  padding: 20px 14px;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.student-sidebar.sidebar-collapsed .student-nav {
+  padding: 20px 10px;
 }
 
 .student-nav a {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.75rem;
-  border-radius: 8px;
-  color: #64748b;
-  text-decoration: none;
-  font-weight: 500;
-  font-size: 0.95rem;
+  gap: 16px;
+  padding: 14px 18px;
+  font-size: 1.05rem;
+  font-weight: 600;
   white-space: nowrap;
-  transition: all 0.2s;
+  text-decoration: none;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.student-nav a:hover { background: #f8fafc; color: #0f172a; }
-.student-nav a.active { background: #eef2ff; color: #4f46e5; }
+.student-sidebar.sidebar-collapsed .student-nav a {
+  justify-content: center;
+  padding: 14px 0;
+}
+
+.student-nav a:hover {
+  color: var(--text-primary);
+  background: var(--surface-soft);
+}
+
+/* Active item: blue instead of purple */
+.student-nav a.active {
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
 
 .sidebar-nav-icon {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
 }
 
-/* --- Main Content Area --- */
+.sidebar-nav-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* =========================
+   MAIN CONTENT AREA
+   ========================= */
 .student-main {
   flex: 1;
   display: flex;
@@ -109,183 +165,201 @@
   overflow-x: hidden;
 }
 
+/* Pages now carry their own padding, so the wrapper adds none. */
 .student-content {
   flex: 1;
-  padding: 2rem;
+  padding: 0;
 }
 
-/* --- Header Styles --- */
+/* =========================
+   HEADER
+   ========================= */
 .student-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 72px;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 0 2rem;
   position: sticky;
   top: 0;
   z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 80px;
+  padding: 0 40px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .student-header-left {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 16px;
 }
 
 .mobile-menu-button {
   display: none;
+  padding: 0;
+  font-size: 1.6rem;
+  color: var(--text-primary);
   background: none;
   border: none;
-  font-size: 1.5rem;
   cursor: pointer;
-  color: #0f172a;
-  padding: 0;
 }
 
 .student-page-heading h1 {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .student-page-heading p {
-  margin: 0;
-  font-size: 0.875rem;
-  color: #64748b;
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
 }
 
 .student-header-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 14px;
 }
 
-/* Notification Bell */
+/* =========================
+   NOTIFICATION BELL
+   ========================= */
 .notification-button {
-  background: none;
-  border: none;
-  color: #64748b;
-  cursor: pointer;
-  padding: 0.5rem;
-  border-radius: 50%;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s;
+  width: 44px;
+  height: 44px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.notification-button:hover { background: #f1f5f9; color: #0f172a; }
+.notification-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.notification-button:hover {
+  color: var(--color-primary);
+  background: var(--primary-light);
+}
 
 .notification-badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  background: #ef4444;
-  color: white;
-  font-size: 0.65rem;
-  font-weight: bold;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 8px;
+  top: 3px;
+  right: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-white);
+  background: var(--color-error-text);
+  border-radius: 9px;
 }
 
-/* Profile Dropdown */
+/* =========================
+   PROFILE MENU
+   ========================= */
 .student-profile-menu {
   position: relative;
 }
 
 .student-avatar-button {
+  padding: 0;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0;
 }
 
 .student-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border: 1px solid #bfdbfe;
   border-radius: 50%;
-  background: #eef2ff;
-  color: #4f46e5;
-  font-weight: 600;
-  font-size: 0.9rem;
 }
 
 .student-avatar-small {
-  width: 32px;
-  height: 32px;
-  font-size: 0.8rem;
+  width: 36px;
+  height: 36px;
+  font-size: 0.9rem;
 }
 
 .student-profile-dropdown {
   position: absolute;
   top: calc(100% + 0.5rem);
   right: 0;
-  width: 240px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-  padding: 1rem;
   z-index: 50;
+  width: 260px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   animation: fadeIn 0.2s ease-out;
 }
 
 .student-profile-info {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 12px;
 }
 
 .student-profile-info strong {
   display: block;
-  font-size: 0.9rem;
-  color: #0f172a;
+  font-size: 0.97rem;
+  color: var(--text-primary);
 }
 
-.student-profile-info span {
+.student-profile-info span:not(.student-avatar) {
   display: block;
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 .student-profile-divider {
   height: 1px;
-  background: #e2e8f0;
-  margin: 1rem 0;
+  margin: 14px 0;
+  background: var(--border);
 }
 
 .logout-button {
   width: 100%;
-  padding: 0.5rem;
-  background: #fef2f2;
-  color: #ef4444;
-  border: none;
-  border-radius: 6px;
+  padding: 10px;
+  font-size: 0.95rem;
   font-weight: 600;
+  color: var(--color-error-text);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.15s ease;
 }
 
-.logout-button:hover { background: #fee2e2; }
+.logout-button:hover:not(:disabled) { background: var(--color-error-border); }
 .logout-button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .logout-error {
-  color: #ef4444;
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
+  margin: 8px 0 0;
+  font-size: 0.8rem;
   text-align: center;
+  color: var(--color-error-text);
 }
 
 @keyframes fadeIn {
@@ -293,7 +367,9 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* --- Mobile Overlay --- */
+/* =========================
+   MOBILE
+   ========================= */
 .mobile-sidebar-container,
 .mobile-sidebar-overlay {
   display: none;
@@ -307,9 +383,9 @@
     display: block;
     position: fixed;
     inset: 0;
+    z-index: 50;
     background: rgba(15, 23, 42, 0.4);
     backdrop-filter: blur(2px);
-    z-index: 50;
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
@@ -326,9 +402,9 @@
     top: 0;
     left: 0;
     bottom: 0;
-    width: 280px;
-    background: #ffffff;
     z-index: 60;
+    width: 290px;
+    background: var(--surface);
     transform: translateX(-100%);
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.1);
@@ -338,6 +414,7 @@
     transform: translateX(0);
   }
 
-  .student-header { padding: 0 1rem; }
-  .student-content { padding: 1.5rem; }
+  .student-header { padding: 0 16px; }
+  .student-page-heading h1 { font-size: 1.15rem; }
+  .student-page-heading p { display: none; }
 }

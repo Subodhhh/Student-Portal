@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import "../../styles/tests.css";
+import { useNavigate } from "react-router-dom";
+import "../../styles/TestsPage.css";
 
 import {
   ENROLLMENT_API_URL,
@@ -88,6 +89,8 @@ function formatDate(date: string | null) {
 }
 
 function TestsPage() {
+  const navigate = useNavigate();
+
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [tests, setTests] = useState<Test[]>([]);
   const [attempts, setAttempts] = useState<
@@ -102,6 +105,8 @@ function TestsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     async function fetchData() {
       try {
         setLoading(true);
@@ -135,46 +140,51 @@ function TestsPage() {
         const testData: Test[] =
           await testsResponse.json();
 
-        setEnrollments(enrollmentData);
-        setTests(testData);
-
+        /*
+         * A failed lookup for one test is treated as
+         * "no attempt" so it cannot break the whole page.
+         */
         const attemptResults = await Promise.all(
           testData.map(async (test) => {
-            const response = await fetch(
-              `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
-              {
-                credentials: "include",
-              }
-            );
-
-            if (response.status === 404) {
-              return {
-                testId: test.test_id,
-                attempt: null,
-              };
-            }
-
-            if (!response.ok) {
-              throw new Error(
-                `Failed to fetch attempt: ${response.status}`
+            try {
+              const response = await fetch(
+                `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
+                {
+                  credentials: "include",
+                }
               );
-            }
 
-            const body: unknown = await response.json();
+              if (!response.ok) {
+                return {
+                  testId: test.test_id,
+                  attempt: null,
+                };
+              }
 
-            if (isNoAttempt(body)) {
+              const body: unknown = await response.json();
+
+              if (isNoAttempt(body)) {
+                return {
+                  testId: test.test_id,
+                  attempt: null,
+                };
+              }
+
+              return {
+                testId: test.test_id,
+                attempt: body as Attempt,
+              };
+            } catch (attemptError) {
+              console.error(
+                "Failed to fetch attempt:",
+                attemptError
+              );
+
               return {
                 testId: test.test_id,
                 attempt: null,
               };
             }
-
-            const attempt = body as Attempt;
-
-            return {
-              testId: test.test_id,
-              attempt,
-            };
           })
         );
 
@@ -189,19 +199,35 @@ function TestsPage() {
           }
         );
 
+        if (cancelled) {
+          return;
+        }
+
+        // Set everything together so submitted tests never flash in the list.
+        setEnrollments(enrollmentData);
+        setTests(testData);
         setAttempts(attemptMap);
-      } catch (error) {
+      } catch (loadError) {
         console.error(
           "Failed to load tests:",
-          error
+          loadError
         );
-        setError("Unable to load tests.");
+
+        if (!cancelled) {
+          setError("Unable to load tests.");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     fetchData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const providers = [
@@ -258,11 +284,19 @@ function TestsPage() {
     selectedProvider,
   ]);
 
+  const isFiltering =
+    search.trim() !== "" ||
+    selectedProvider !== "All Providers";
+
   function openTest(testId: string) {
     window.open(
       `/tests/${testId}/attempt`,
       "_blank"
     );
+  }
+
+  function openDetails(testId: string) {
+    navigate(`/tests/${testId}`);
   }
 
   return (
@@ -319,12 +353,8 @@ function TestsPage() {
       </div>
 
       {loading ? (
-        <div className="tests-empty">
-          <h3>Loading tests...</h3>
-
-          <p>
-            Please wait while we load your available tests.
-          </p>
+        <div className="tests-loading">
+          Loading your available tests...
         </div>
       ) : error ? (
         <div className="tests-empty">
@@ -350,7 +380,13 @@ function TestsPage() {
                   <div className="test-card-title-row">
                     <h3>{test.name}</h3>
 
-                    <span className="test-status test-status-available">
+                    <span
+                      className={
+                        isResume
+                          ? "test-status test-status-in-progress"
+                          : "test-status test-status-available"
+                      }
+                    >
                       {isResume
                         ? "In Progress"
                         : "Available"}
@@ -413,12 +449,12 @@ function TestsPage() {
                 <div className="test-card-action">
                   {test.total_questions === null ? (
                     // a Global Test with paper choice: the student chooses their papers on the details page first
-                    <button type="button" onClick={() => window.location.assign(`/tests/${test.test_id}`)}>
+                    <button type="button" onClick={() => openDetails(test.test_id)}>
                       Choose Papers
                     </button>
                   ) : test.total_questions === 0 ? (
                     // a Global Test card without any paper for this student: it explains each subject, nothing to start
-                    <button type="button" className="test-details-link" onClick={() => window.location.assign(`/tests/${test.test_id}`)}>
+                    <button type="button" className="test-details-link" onClick={() => openDetails(test.test_id)}>
                       No paper available · View Details
                     </button>
                   ) : (
@@ -431,7 +467,7 @@ function TestsPage() {
                     }
                     onClick={() =>
                       // a Global Test is started from its details page, where the student reviews their papers first
-                      test.global_occurrence_id && !isResume ? window.location.assign(`/tests/${test.test_id}`) : openTest(test.test_id)
+                      test.global_occurrence_id && !isResume ? openDetails(test.test_id) : openTest(test.test_id)
                     }
                   >
                     {isResume
@@ -470,8 +506,9 @@ function TestsPage() {
           <h3>No available tests</h3>
 
           <p>
-            There are no available tests matching your
-            current search or provider selection.
+            {isFiltering
+              ? "There are no available tests matching your current search or provider selection."
+              : "There are no tests available for you right now."}
           </p>
         </div>
       )}

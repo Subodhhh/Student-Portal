@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { enterFullscreen } from "./examIntegrity";
 import type { IntegrityState } from "./examIntegrity";
-import "../styles/test-integrity.css"; // We will create this CSS file next
+import "../styles/TestIntegrity.css";
 
 interface Props {
   integrity: IntegrityState | null;
@@ -29,7 +29,6 @@ export function TestIntegrityOverlay({ integrity, isFullscreen }: Props) {
     return (
       <div className="integrity-fullscreen-blocker">
         <div className="integrity-blocker-content">
-          <div className="integrity-icon">⚠️</div>
           <h2>Fullscreen Required</h2>
           <p>You have left fullscreen mode. Please return to fullscreen immediately to continue your exam.</p>
           <button type="button" onClick={enterFullscreen} className="integrity-btn-primary">
@@ -52,7 +51,6 @@ export function TestIntegrityOverlay({ integrity, isFullscreen }: Props) {
 
       {/* Persistent Header Badge */}
       <div className={`integrity-badge ${isDanger ? "danger" : isWarning ? "warning" : "safe"}`}>
-        <span className="integrity-icon-small">🛡️</span>
         <span>Warnings: {integrity.warnings} / {integrity.threshold}</span>
       </div>
     </>

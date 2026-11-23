@@ -14,7 +14,8 @@ export type IntegrityState = {
 type Kind =
   | "TAB_HIDDEN" | "WINDOW_BLUR" | "FULLSCREEN_EXIT"
   | "COPY" | "PASTE" | "CUT" | "KEYBOARD_SHORTCUT"
-  | "CONTEXT_MENU" | "BACK" | "REFRESH";
+  | "CONTEXT_MENU" | "BACK" | "REFRESH"
+  | "PRINT_SCREEN";
 
 const RETRIES = [500, 1500, 4000];
 
@@ -32,6 +33,7 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
   const done = useRef(false);
   const unloading = useRef(false);
   const suppressPageHide = useRef(false);
+  const lastPrintScreen = useRef(0);
   const callback = useRef(onAutoSubmitted);
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
   const report = useCallback(async (kind: Kind) => {
     if (!attemptId || done.current || unloading.current || Date.now() < suppressUntil.current) return;
     const body = JSON.stringify({ client_event_id: newId(), kind, occurred_at: new Date().toISOString() });
-    
+
     for (let i = 0; i <= RETRIES.length; i += 1) {
       try {
         const r = await fetch(`${apiUrl}/attempts/${attemptId}/integrity-events`, {
@@ -69,7 +71,7 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
   useEffect(() => {
     if (!active || !attemptId) return;
     let cancelled = false;
-    
+
     fetch(`${apiUrl}/attempts/${attemptId}/integrity`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((s: IntegrityState | null) => { if (s && !cancelled) apply(s); })
@@ -82,10 +84,10 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
       event.returnValue = "";
       return "";
     };
-    
+
     const onVisibility = () => { if (document.visibilityState === "hidden") void report("TAB_HIDDEN"); };
     const onBlur = () => { if (document.visibilityState === "visible") void report("WINDOW_BLUR"); };
-    
+
     const onFullscreen = () => {
       if (document.fullscreenElement) {
         inFullscreen.current = true;
@@ -105,10 +107,31 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
     const onSelectStart = (event: Event) => { event.preventDefault(); };
     const onDragStart = (event: Event) => { event.preventDefault(); };
 
+    // Print Screen: browsers cannot block it (the OS handles it), so we
+    // record a warning and overwrite whatever it put on the clipboard.
+    // Windows often fires only keyup for this key, so both events are
+    // handled, with a 1s guard so one press never counts twice.
+    const onPrintScreen = (event: KeyboardEvent) => {
+      if (event.key !== "PrintScreen" && event.code !== "PrintScreen") return;
+      event.preventDefault();
+
+      const now = Date.now();
+      if (now - lastPrintScreen.current > 1000) {
+        lastPrintScreen.current = now;
+        void report("PRINT_SCREEN");
+      }
+
+      try {
+        void navigator.clipboard.writeText(" ").catch(() => { /* Ignored */ });
+      } catch {
+        /* Ignored: clipboard API may be unavailable */
+      }
+    };
+
     // Block Keyboard Shortcuts (Copy, Paste, Cut, Select All, Print, Inspect, View Source)
     const onKeyDown = (event: KeyboardEvent) => {
       const isCmdOrCtrl = event.ctrlKey || event.metaKey;
-      
+
       // Block Ctrl+C, V, X, A, P, S, U
       if (isCmdOrCtrl && ["c", "v", "x", "a", "p", "s", "u"].includes(event.key.toLowerCase())) {
         event.preventDefault();
@@ -116,7 +139,7 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
       }
       // Block F12, Ctrl+Shift+I (Inspect), Ctrl+Shift+J (Console), Ctrl+Shift+C (Element Picker)
       if (
-        event.key === "F12" || 
+        event.key === "F12" ||
         (isCmdOrCtrl && event.shiftKey && ["i", "j", "c"].includes(event.key.toLowerCase()))
       ) {
         event.preventDefault();
@@ -124,17 +147,17 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
       }
     };
 
-    try { 
-      history.pushState({ examGuard: true }, "", location.href); 
-    } catch { 
-      /* Ignored: History API may fail in some browsers */ 
+    try {
+      history.pushState({ examGuard: true }, "", location.href);
+    } catch {
+      /* Ignored: History API may fail in some browsers */
     }
-    
+
     const onPopState = () => {
-      try { 
-        history.pushState({ examGuard: true }, "", location.href); 
-      } catch { 
-        /* Ignored */ 
+      try {
+        history.pushState({ examGuard: true }, "", location.href);
+      } catch {
+        /* Ignored */
       }
       suppressPageHide.current = true;
       window.setTimeout(() => { suppressPageHide.current = false; }, 500);
@@ -149,8 +172,8 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
           body: JSON.stringify({ client_event_id: newId(), kind: "REFRESH", occurred_at: new Date().toISOString() }),
           keepalive: true,
         }).catch(() => { /* Page is going away; server records what arrived */ });
-      } catch { 
-        /* Ignored */ 
+      } catch {
+        /* Ignored */
       }
     };
 
@@ -166,6 +189,8 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
     document.addEventListener("selectstart", onSelectStart, { capture: true });
     document.addEventListener("dragstart", onDragStart, { capture: true });
     document.addEventListener("keydown", onKeyDown, { capture: true });
+    document.addEventListener("keydown", onPrintScreen, { capture: true });
+    document.addEventListener("keyup", onPrintScreen, { capture: true });
     window.addEventListener("popstate", onPopState);
     window.addEventListener("pagehide", onPageHide);
 
@@ -182,6 +207,8 @@ export function useExamIntegrity(apiUrl: string, attemptId: string | null, activ
       document.removeEventListener("selectstart", onSelectStart, { capture: true });
       document.removeEventListener("dragstart", onDragStart, { capture: true });
       document.removeEventListener("keydown", onKeyDown, { capture: true });
+      document.removeEventListener("keydown", onPrintScreen, { capture: true });
+      document.removeEventListener("keyup", onPrintScreen, { capture: true });
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("pagehide", onPageHide);
     };

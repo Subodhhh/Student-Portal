@@ -9,7 +9,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { TEST_API_URL } from "../../hooks/api";
 import { getResultDetails } from "../../hooks/resultService";
 
-import "../../styles/test-result.css";
+import "../../styles/TestResultPage.css";
 import { MathText } from "../../components/MathText";
 
 /** The text of option A-D of a reviewed question, or "" when the letter has no stored option. */
@@ -35,6 +35,20 @@ function OptionShown({ q, letter, testId }: { q: PictureFields & Parameters<type
   }
   const text = optionText(q, letter);
   return text ? <> — <MathText text={text} /></> : null;
+}
+
+/** Rounds to at most 2 decimals so values like 66.6666667 stay readable. */
+function formatNumber(value: number): number {
+  return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+}
+
+/** Share of the marks obtained, clamped to 0-100 and safe when total is 0. */
+function progressPercent(obtained: number, total: number): number {
+  if (!total || total <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max((obtained / total) * 100, 0), 100);
 }
 
 interface Result {
@@ -127,43 +141,59 @@ export default function TestResultPage() {
   const questionReviewRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    async function loadResult() {
-      try {
-        if (!attemptId) {
-          throw new Error("Attempt ID is missing");
-        }
+    if (!attemptId) {
+      return;
+    }
 
+    let cancelled = false;
+
+    async function loadResult(id: string) {
+      try {
         const resultDetails: ResultDetails =
-          await getResultDetails(attemptId);
+          await getResultDetails(id);
+
+        if (cancelled) {
+          return;
+        }
 
         setResult(resultDetails.result);
         setSubjects(resultDetails.subjects);
         setQuestions(resultDetails.questions);
+        setSelectedSubject(null);
         setReviewAvailable(resultDetails.review_available !== false);
         setReviewAvailableAt(resultDetails.review_available_at ?? null);
 
         // /details resolves for any test the student is assigned to, also after its window closed.
-        const testResponse = await fetch(
-          `${TEST_API_URL}/tests/${resultDetails.result.test_id}/details`,
-          {
-            credentials: "include",
-          }
-        );
+        // A failure here only costs the title and provider, never the result itself.
+        try {
+          const testResponse = await fetch(
+            `${TEST_API_URL}/tests/${resultDetails.result.test_id}/details`,
+            {
+              credentials: "include",
+            }
+          );
 
-        if (testResponse.ok) {
-          const testData: Test = await testResponse.json();
-          setTest(testData);
+          if (testResponse.ok && !cancelled) {
+            const testData: Test = await testResponse.json();
+            setTest(testData);
+          }
+        } catch (testError) {
+          console.error("Failed to load test details:", testError);
         }
       } catch (error) {
         console.error("Failed to load test performance:", error);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
-    if (attemptId) {
-      loadResult();
-    }
+    loadResult(attemptId);
+
+    return () => {
+      cancelled = true;
+    };
   }, [attemptId]);
 
   useEffect(() => {
@@ -186,6 +216,9 @@ export default function TestResultPage() {
       (result.obtained_marks / result.total_marks) * 100
     );
   }, [result]);
+
+  // The ring cannot draw a negative or over-full angle, so it gets a clamped value.
+  const ringPercentage = Math.min(Math.max(percentage, 0), 100);
 
   const selectedSubjectQuestions = useMemo(() => {
     if (!selectedSubject) {
@@ -297,8 +330,8 @@ export default function TestResultPage() {
               className="score-ring"
               style={{
                 background: `conic-gradient(
-                  #2563eb ${percentage * 3.6}deg,
-                  #e2e8f0 ${percentage * 3.6}deg
+                  #2563eb ${ringPercentage * 3.6}deg,
+                  #e2e8f0 ${ringPercentage * 3.6}deg
                 )`,
               }}
             >
@@ -346,7 +379,7 @@ export default function TestResultPage() {
             <div className="stat-icon">%</div>
             <div>
               <span>Accuracy</span>
-              <strong>{result.accuracy}%</strong>
+              <strong>{formatNumber(result.accuracy)}%</strong>
             </div>
           </div>
 
@@ -408,11 +441,14 @@ export default function TestResultPage() {
                 const isSelected =
                   selectedSubject === subject.subject;
 
+                const hasPaper =
+                  !subject.status || subject.status === "PAPER";
+
                 return (
                   <div
                     className={`subject-performance-item ${
                       isSelected ? "selected" : ""
-                    }`}
+                    } ${hasPaper ? "" : "no-paper"}`}
                     key={subject.subject}
                   >
                     <div className="subject-performance-main">
@@ -421,7 +457,7 @@ export default function TestResultPage() {
                         <h3>{subject.subject}</h3>
 
                         <span>
-                          {subject.status && subject.status !== "PAPER"
+                          {!hasPaper
                             ? `Unavailable: ${subject.message ?? "no paper for you"}`
                             : `${subject.attempted_questions} of ${subject.total_questions} attempted`}
                         </span>
@@ -439,43 +475,40 @@ export default function TestResultPage() {
 
                     </div>
 
-                    <div className="subject-performance-stats">
-                      <span className="subject-stat correct">
-                        ✓ {subject.correct_answers} Correct
-                      </span>
+                    {hasPaper && (
+                      <div className="subject-performance-stats">
+                        <span className="subject-stat correct">
+                          ✓ {subject.correct_answers} Correct
+                        </span>
 
-                      <span className="subject-stat incorrect">
-                        × {subject.incorrect_answers} Incorrect
-                      </span>
+                        <span className="subject-stat incorrect">
+                          × {subject.incorrect_answers} Incorrect
+                        </span>
 
-                      <span className="subject-stat unanswered">
-                        — {subject.unanswered_questions} Unanswered
-                      </span>
+                        <span className="subject-stat unanswered">
+                          — {subject.unanswered_questions} Unanswered
+                        </span>
 
-                      <span className="subject-stat accuracy">
-                        {subject.accuracy}% Accuracy
-                      </span>
-                    </div>
+                        <span className="subject-stat accuracy">
+                          {formatNumber(subject.accuracy)}% Accuracy
+                        </span>
+                      </div>
+                    )}
 
                     <div className="subject-performance-footer">
                       <div className="subject-progress">
                         <div
                           className="subject-progress-fill"
                           style={{
-                            width: `${Math.min(
-                              Math.max(
-                                (subject.obtained_marks /
-                                  subject.total_marks) *
-                                  100,
-                                0
-                              ),
-                              100
+                            width: `${progressPercent(
+                              subject.obtained_marks,
+                              subject.total_marks
                             )}%`,
                           }}
                         />
                       </div>
 
-                      {reviewAvailable && (
+                      {reviewAvailable && hasPaper && (
                         <button
                           type="button"
                           className="review-subject-button"

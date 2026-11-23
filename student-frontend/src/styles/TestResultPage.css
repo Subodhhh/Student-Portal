@@ -1,0 +1,817 @@
+/* =========================
+   TEST RESULT PAGE
+   Every rule is scoped under .test-performance-page because
+   PerformancePage.css also defines .performance-header,
+   .performance-card, etc. Plain CSS is global, so unscoped
+   rules would leak between the two pages.
+   ========================= */
+.test-performance-page {
+  width: 100%;
+  max-width: none;            /* extend to the borders */
+  margin: 0;
+  padding: 32px 40px 64px;
+}
+
+.test-performance-page .test-performance-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+}
+
+/* =========================
+   LOADING / NOT FOUND
+   ========================= */
+.test-performance-page .performance-loading,
+.test-performance-page .performance-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 380px;
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.test-performance-page .performance-loading h2,
+.test-performance-page .performance-empty h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.test-performance-page .performance-loading p,
+.test-performance-page .performance-empty p {
+  margin: 0;
+  max-width: 420px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .performance-loading-spinner {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  border: 4px solid var(--primary-light);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: test-result-spin 0.8s linear infinite;
+}
+
+@keyframes test-result-spin {
+  to { transform: rotate(360deg); }
+}
+
+.test-performance-page .performance-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  border-radius: 50%;
+}
+
+.test-performance-page .performance-empty button {
+  margin-top: 10px;
+  padding: 12px 26px;
+  font-size: 0.97rem;
+  font-weight: 600;
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.test-performance-page .performance-empty button:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+/* =========================
+   HEADER
+   ========================= */
+.test-performance-page .performance-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.test-performance-page .performance-eyebrow {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-primary);
+  background: var(--primary-light);
+  border-radius: 999px;
+}
+
+.test-performance-page .performance-header h1 {
+  margin: 0 0 8px;
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.test-performance-page .performance-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .context-dot {
+  color: var(--text-muted);
+}
+
+.test-performance-page .performance-back-button {
+  padding: 11px 22px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.test-performance-page .performance-back-button:hover {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
+
+/* =========================
+   HERO
+   ========================= */
+.test-performance-page .performance-hero {
+  padding: 36px 40px;
+  background: linear-gradient(135deg, var(--surface) 0%, var(--primary-light) 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.test-performance-page .performance-hero-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+
+.test-performance-page .hero-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.test-performance-page .hero-score {
+  margin: 6px 0;
+  font-size: 3.4rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.test-performance-page .hero-score span {
+  margin-left: 8px;
+  font-size: 1.6rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .hero-subtitle {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .score-ring {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+}
+
+.test-performance-page .score-ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 118px;
+  height: 118px;
+  background: var(--surface);
+  border-radius: 50%;
+}
+
+.test-performance-page .score-ring-inner strong {
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.test-performance-page .score-ring-inner span {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .completion-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+  border-radius: 999px;
+}
+
+.test-performance-page .completion-badge span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 0.85rem;
+  color: var(--color-text-white);
+  background: var(--color-success-main);
+  border-radius: 50%;
+}
+
+/* =========================
+   SUMMARY STAT CARDS
+   ========================= */
+.test-performance-page .performance-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.test-performance-page .performance-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.test-performance-page .performance-stat-card:hover {
+  border-color: var(--hover-border);
+  box-shadow: var(--hover-shadow);
+}
+
+.test-performance-page .stat-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+}
+
+.test-performance-page .performance-stat-card > div:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.test-performance-page .performance-stat-card span {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .performance-stat-card strong {
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+.test-performance-page .performance-stat-card.correct .stat-icon {
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+}
+
+.test-performance-page .performance-stat-card.incorrect .stat-icon {
+  color: #e11d48;
+  background: #ffe4e6;
+}
+
+.test-performance-page .performance-stat-card.unanswered .stat-icon {
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+}
+
+.test-performance-page .performance-stat-card.accuracy .stat-icon {
+  color: var(--color-primary);
+  background: var(--primary-light);
+}
+
+/* =========================
+   SHARED CARD
+   ========================= */
+.test-performance-page .performance-card {
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.test-performance-page .performance-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.test-performance-page .card-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-primary);
+}
+
+.test-performance-page .performance-card-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.test-performance-page .performance-card-header p {
+  margin: 8px 0 0;
+  max-width: 720px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .question-total {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+/* =========================
+   ATTEMPT OVERVIEW
+   ========================= */
+.test-performance-page .overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.test-performance-page .overview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 24px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.test-performance-page .overview-item span {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .overview-item strong {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* =========================
+   SUBJECT PERFORMANCE
+   ========================= */
+.test-performance-page .subject-performance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.test-performance-page .subject-performance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 28px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.test-performance-page .subject-performance-item:hover {
+  border-color: var(--hover-border);
+  box-shadow: var(--hover-shadow);
+}
+
+.test-performance-page .subject-performance-item.selected {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
+
+.test-performance-page .subject-performance-item.no-paper {
+  opacity: 0.85;
+}
+
+.test-performance-page .subject-performance-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.test-performance-page .subject-performance-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.test-performance-page .subject-performance-title h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.test-performance-page .subject-performance-title span {
+  font-size: 0.93rem;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .subject-performance-score {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.test-performance-page .subject-performance-score strong {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.test-performance-page .subject-performance-score span {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .subject-performance-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.test-performance-page .subject-stat {
+  padding: 6px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.test-performance-page .subject-stat.correct {
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+}
+
+.test-performance-page .subject-stat.incorrect {
+  color: #e11d48;
+  background: #ffe4e6;
+}
+
+.test-performance-page .subject-stat.unanswered {
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+}
+
+.test-performance-page .subject-stat.accuracy {
+  color: var(--color-primary);
+  background: var(--primary-light);
+}
+
+.test-performance-page .subject-performance-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.test-performance-page .subject-progress {
+  flex: 1;
+  height: 10px;
+  overflow: hidden;
+  background: var(--color-border);
+  border-radius: 999px;
+}
+
+.test-performance-page .subject-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.test-performance-page .review-subject-button {
+  flex-shrink: 0;
+  padding: 10px 22px;
+  font-size: 0.93rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.test-performance-page .review-subject-button:hover {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
+
+.test-performance-page .subject-performance-item.selected .review-subject-button {
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* =========================
+   QUESTION REVIEW
+   ========================= */
+.test-performance-page .question-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.test-performance-page .question-review-item {
+  padding: 24px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 5px;
+  border-radius: var(--radius-md);
+}
+
+.test-performance-page .question-review-item.correct {
+  border-left-color: var(--color-success-main);
+}
+
+.test-performance-page .question-review-item.incorrect {
+  border-left-color: #fb7185;
+}
+
+.test-performance-page .question-review-item.unanswered {
+  border-left-color: #f59e0b;
+}
+
+.test-performance-page .question-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.test-performance-page .question-number {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.test-performance-page .question-status {
+  padding: 5px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.test-performance-page .question-status.correct {
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+}
+
+.test-performance-page .question-status.incorrect {
+  color: #e11d48;
+  background: #ffe4e6;
+}
+
+.test-performance-page .question-status.unanswered {
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+}
+
+.test-performance-page .question-review-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.test-performance-page .question-text {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.test-performance-page .question-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.test-performance-page .question-image.option-image {
+  display: inline-block;
+  max-height: 140px;
+  margin-top: 8px;
+  vertical-align: middle;
+}
+
+.test-performance-page .question-review-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.test-performance-page .question-answer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 20px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.test-performance-page .question-answer-box span {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.test-performance-page .question-answer-box strong {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* =========================
+   ACTIONS
+   ========================= */
+.test-performance-page .performance-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.test-performance-page .secondary-action {
+  padding: 12px 26px;
+  font-size: 0.97rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.test-performance-page .secondary-action:hover {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 1100px) {
+  .test-performance-page .performance-summary-grid,
+  .test-performance-page .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .test-performance-page .performance-hero-content {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .test-performance-page .question-review-answer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .test-performance-page .subject-performance-main {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .test-performance-page {
+    padding: 16px 12px 40px;
+  }
+
+  .test-performance-page .test-performance-container {
+    gap: 16px;
+  }
+
+  .test-performance-page .performance-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .test-performance-page .performance-hero {
+    padding: 24px 20px;
+  }
+
+  .test-performance-page .hero-score {
+    font-size: 2.6rem;
+  }
+
+  .test-performance-page .performance-summary-grid,
+  .test-performance-page .overview-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .test-performance-page .performance-card {
+    padding: 20px;
+  }
+
+  .test-performance-page .subject-performance-item,
+  .test-performance-page .question-review-item {
+    padding: 18px;
+  }
+
+  .test-performance-page .subject-performance-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .test-performance-page .review-subject-button {
+    width: 100%;
+  }
+}

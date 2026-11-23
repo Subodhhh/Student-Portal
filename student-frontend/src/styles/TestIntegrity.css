@@ -1,0 +1,286 @@
+/* =========================
+   RULES SCREEN
+   ========================= */
+.exam-rules-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 32px 20px;
+  background: var(--color-bg-gradient);
+}
+
+.exam-rules-card {
+  width: 100%;
+  max-width: 760px;
+  padding: 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.exam-rules-header {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.exam-rules-header h2 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.exam-rules-header p {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.exam-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.rule-item {
+  padding: 16px 20px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rule-item:hover {
+  border-color: var(--hover-border);
+  border-left-color: var(--primary);
+  box-shadow: var(--hover-shadow);
+}
+
+.rule-item strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rule-item p {
+  margin: 0;
+  font-size: 0.93rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.exam-start-btn {
+  width: 100%;
+  padding: 15px 24px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.exam-start-btn:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  box-shadow: var(--hover-shadow);
+}
+
+/* =========================
+   FULLSCREEN BLOCKER
+   ========================= */
+.integrity-fullscreen-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+.integrity-blocker-content {
+  width: 100%;
+  max-width: 480px;
+  padding: 40px 36px;
+  text-align: center;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.integrity-blocker-content h2 {
+  margin: 0 0 12px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.integrity-blocker-content p {
+  margin: 0 0 28px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.integrity-btn-primary {
+  padding: 13px 28px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-white);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.integrity-btn-primary:hover {
+  background: var(--color-primary-hover);
+  box-shadow: var(--hover-shadow);
+}
+
+/* =========================
+   RED FLASH (on new warning)
+   ========================= */
+.integrity-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  background: rgba(220, 38, 38, 0.25);
+  box-shadow: inset 0 0 120px rgba(220, 38, 38, 0.55);
+  animation: integrity-flash-fade 1.5s ease-out forwards;
+}
+
+@keyframes integrity-flash-fade {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* =========================
+   TOP WARNING BANNER
+   ========================= */
+.integrity-top-banner {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  z-index: 9999;
+  width: calc(100% - 40px);
+  max-width: 520px;
+  padding: 16px 22px;
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  border-left: 5px solid var(--color-error-text);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%);
+  animation: integrity-banner-in 0.25s ease-out;
+}
+
+.integrity-top-banner strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--color-error-text);
+}
+
+.integrity-top-banner p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: #7f1d1d;
+}
+
+@keyframes integrity-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* =========================
+   WARNING BADGE (top-right)
+   ========================= */
+.integrity-badge {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  z-index: 9997;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.integrity-badge.safe {
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+  border-color: #bbf7d0;
+}
+
+.integrity-badge.warning {
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  border-color: #fde68a;
+}
+
+.integrity-badge.danger {
+  color: var(--color-error-text);
+  background: var(--color-error-bg);
+  border-color: var(--color-error-border);
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 600px) {
+  .exam-rules-card {
+    padding: 24px 20px;
+  }
+
+  .exam-rules-header h2 {
+    font-size: 1.3rem;
+  }
+
+  .rule-item {
+    padding: 14px 16px;
+  }
+
+  .integrity-blocker-content {
+    padding: 28px 22px;
+  }
+
+  .integrity-badge {
+    top: 10px;
+    right: 10px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+  }
+
+  .integrity-top-banner {
+    top: 56px;
+  }
+}

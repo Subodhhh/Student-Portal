@@ -6,7 +6,7 @@ import {
   TEST_API_URL,
 } from "../../hooks/api";
 
-import "../../styles/scheduled-tests.css";
+import "../../styles/ScheduledTestsPage.css";
 import { isNoAttempt } from "../../hooks/attempts";
 
 type TestSection = {
@@ -104,6 +104,12 @@ function formatTimeRange(
   return `${formatTime(startAt)} - ${formatTime(endAt)}`;
 }
 
+function attemptTime(attempt: Attempt) {
+  return new Date(
+    attempt.submitted_at ?? attempt.started_at
+  ).getTime();
+}
+
 // A unified Global Test is one exam whose subjects come from the student's own institutes: it is shown as the Global Test, never as
 // one of those institutes.
 function TestSource({ test }: { test: Test }) {
@@ -186,6 +192,8 @@ function ScheduledTestsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadTests() {
       try {
         const [
@@ -236,44 +244,50 @@ function ScheduledTestsPage() {
 
         /*
          * Get attempt status for every active test.
+         * A failed lookup for one test is treated as
+         * "no attempt" so it cannot break the whole page.
          */
         const attemptResults = await Promise.all(
           activeData.map(async (test) => {
-            const response = await fetch(
-              `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
-              {
-                credentials: "include",
-              }
-            );
-
-            if (response.status === 404) {
-              return {
-                testId: test.test_id,
-                attempt: null,
-              };
-            }
-
-            if (!response.ok) {
-              throw new Error(
-                "Failed to load attempt."
+            try {
+              const response = await fetch(
+                `${ATTEMPT_API_URL}/attempts/test/${test.test_id}`,
+                {
+                  credentials: "include",
+                }
               );
-            }
 
-            const body: unknown = await response.json();
+              if (!response.ok) {
+                return {
+                  testId: test.test_id,
+                  attempt: null,
+                };
+              }
 
-            if (isNoAttempt(body)) {
+              const body: unknown = await response.json();
+
+              if (isNoAttempt(body)) {
+                return {
+                  testId: test.test_id,
+                  attempt: null,
+                };
+              }
+
+              return {
+                testId: test.test_id,
+                attempt: body as Attempt,
+              };
+            } catch (attemptError) {
+              console.error(
+                "Failed to load attempt:",
+                attemptError
+              );
+
               return {
                 testId: test.test_id,
                 attempt: null,
               };
             }
-
-            const attempt = body as Attempt;
-
-            return {
-              testId: test.test_id,
-              attempt,
-            };
           })
         );
 
@@ -287,8 +301,6 @@ function ScheduledTestsPage() {
             attemptMap[testId] = attempt;
           }
         );
-
-        setAttempts(attemptMap);
 
         /*
          * Submitted tests should not appear
@@ -304,22 +316,20 @@ function ScheduledTestsPage() {
             );
           });
 
-        setActiveTests(availableActiveTests);
-
-        setUpcomingTests(upcomingData);
-
-        setMissedTests(missedData);
-
         /*
          * Keep only the latest completed attempt
-         * for each test.
+         * for each test (sorted newest first).
          */
+        const sortedAttempts = [...completedAttempts].sort(
+          (a, b) => attemptTime(b) - attemptTime(a)
+        );
+
         const latestAttempts = new Map<
           string,
           Attempt
         >();
 
-        completedAttempts.forEach((attempt) => {
+        sortedAttempts.forEach((attempt) => {
           if (!latestAttempts.has(attempt.test_id)) {
             latestAttempts.set(
               attempt.test_id,
@@ -356,6 +366,14 @@ function ScheduledTestsPage() {
           )
         );
 
+        if (cancelled) {
+          return;
+        }
+
+        setAttempts(attemptMap);
+        setActiveTests(availableActiveTests);
+        setUpcomingTests(upcomingData);
+        setMissedTests(missedData);
         setCompletedTests(
           completedResults.filter(
             (item): item is CompletedTest =>
@@ -368,15 +386,21 @@ function ScheduledTestsPage() {
           loadError
         );
 
-        setError(
-          "Unable to load scheduled tests."
-        );
+        if (!cancelled) {
+          setError("Unable to load scheduled tests.");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     loadTests();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function getCurrentTests() {
@@ -469,10 +493,9 @@ function ScheduledTestsPage() {
       </div>
 
       {loading ? (
-        <EmptyState
-          title="Loading tests"
-          description="Please wait while we load your tests."
-        />
+        <div className="scheduled-tests-loading">
+          Loading your tests...
+        </div>
       ) : error ? (
         <EmptyState
           title="Unable to load tests"
@@ -559,6 +582,10 @@ function ScheduledTestsPage() {
             const isInProgress =
               attempt?.status === "IN_PROGRESS";
 
+            const isUnavailable =
+              activeFilter === "Active" &&
+              test.total_questions === 0;
+
             return (
               <article
                 className="scheduled-test-card"
@@ -569,9 +596,13 @@ function ScheduledTestsPage() {
                     <h3>{test.name}</h3>
 
                     <span
-                      className={`scheduled-test-status scheduled-test-status-${activeFilter.toLowerCase()}`}
+                      className={`scheduled-test-status ${
+                        isUnavailable
+                          ? "scheduled-test-status-unavailable"
+                          : `scheduled-test-status-${activeFilter.toLowerCase()}`
+                      }`}
                     >
-                      {test.total_questions === 0 && activeFilter !== "Upcoming" ? "Unavailable" : activeFilter}
+                      {isUnavailable ? "Unavailable" : activeFilter}
                     </span>
                   </div>
 
@@ -614,7 +645,7 @@ function ScheduledTestsPage() {
                 </div>
 
                 <div className="scheduled-test-action">
-                  {activeFilter === "Active" && test.total_questions === 0 && (
+                  {isUnavailable && (
                     // a Global Test card without any paper for this student: it explains each subject, nothing to start
                     <>
                       <span className="scheduled-test-unavailable">No paper available</span>
@@ -650,19 +681,7 @@ function ScheduledTestsPage() {
                     </button>
                   )}
 
-                  {activeFilter === "Upcoming" && (
-                    <button
-                      type="button"
-                      className="scheduled-test-details-button"
-                      onClick={() =>
-                        openDetails(test.test_id)
-                      }
-                    >
-                      View Details
-                    </button>
-                  )}
-
-                  {activeFilter === "Missed" && (
+                  {(activeFilter === "Upcoming" || activeFilter === "Missed") && (
                     <button
                       type="button"
                       className="scheduled-test-details-button"
