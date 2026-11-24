@@ -32,7 +32,7 @@ export function ChaptersTab() {
   const [platform, setPlatform] = useState(global);
   const providerId = platform ? null : scope.providerId || null;
   const subjects = useReference<Page<Subject> | Subject[]>(platform ? "/api/v1/subjects?page_size=100"
-    : providerId ? `/api/v1/providers/${providerId}/subjects` : null);
+    : providerId ? `/api/v1/providers/${providerId}/subjects` : null, platform);   // only the platform catalogue is paged
   const list = Array.isArray(subjects.data) ? subjects.data : subjects.data?.items ?? [];
   const [subjectId, setSubjectId] = useState("");
   const subject = list.some((s) => s.subject_id === subjectId) ? subjectId : list[0]?.subject_id ?? "";

@@ -98,7 +98,7 @@ function CreateStaff({ role, providerId: fixedProvider, branchId: fixedBranch, o
   const [branchId, setBranchId] = useState(fixedBranch ?? "");
   const needsProvider = !isGlobalRole(role);
   const needsBranch = role === "BRANCH_ADMIN";
-  const branches = useReference<Page<{ branch_id: string; name: string }>>(needsBranch && providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null);
+  const branches = useReference<Page<{ branch_id: string; name: string }>>(needsBranch && providerId ? `/api/v1/providers/${providerId}/branches?page_size=100` : null, true);
   const { busy, error, run } = useAction();
   const body = {
     full_name: f.full_name, email: f.email, phone: f.phone || null,

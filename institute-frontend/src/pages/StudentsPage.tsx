@@ -47,7 +47,7 @@ function Inner({ providerId, branchId }: { providerId: string; branchId: string 
   const [moving, setMoving] = useState<Enrollment | null>(null);
   const [managing, setManaging] = useState<Enrollment | null>(null);
   const list = useApi<Page<Enrollment>>(`/api/v1/branches/${branchId}/enrollments?page=${page}&page_size=25`);
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`);
+  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`, true);
   const transfers = useApi<Page<Transfer>>(can("enrollment.transfer_approve") ? `/api/v1/providers/${providerId}/transfers?status=PENDING` : null);
   const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const batchName = (id: string) => batches.data?.items.find((b) => b.batch_id === id)?.name ?? id.slice(0, 8);
@@ -181,7 +181,7 @@ function EnrollDialog({ branchId, batches, onClose, onDone }: { branchId: string
 }
 
 function TransferDialog({ enrollment, providerId, currentBranch, onClose, onDone }: { enrollment: Enrollment; providerId: string; currentBranch: string; onClose: () => void; onDone: () => void }) {
-  const branches = useReference<Page<{ branch_id: string; name: string }>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
+  const branches = useReference<Page<{ branch_id: string; name: string }>>(`/api/v1/providers/${providerId}/branches?page_size=100`, true);
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
   const { busy, error, run } = useAction();

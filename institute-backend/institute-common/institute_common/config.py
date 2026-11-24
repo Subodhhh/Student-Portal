@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     service_name: str = "institute"
     database_url: str
+    # connection pool per process (ignored for sqlite): a request waits at most db_pool_timeout seconds for a free connection
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    db_pool_timeout: int = 10
     # a pooled connection idle longer than this is checked (one round trip) before reuse; recently used ones are reused directly
     db_ping_after_idle_seconds: int = 30
     redis_url: str = ""                      # only the identity service uses Redis (sessions, MFA, rate limits)

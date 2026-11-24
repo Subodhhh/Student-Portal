@@ -117,3 +117,17 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
 export const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : "Something went wrong.");
 
 export type Page<T> = { items: T[]; total: number; page: number; page_size: number };
+
+/** Every page of a paged list, for selects and short lists that must show it whole (the server returns at most 100 per page).
+ * shortcut: stops after 50 pages (5,000 items); a list that can outgrow that needs a server-side search instead. */
+export async function apiAllPages<T>(path: string): Promise<Page<T>> {
+  const at = (page: number) => `${path}${path.includes("?") ? "&" : "?"}page=${page}`;
+  const first = await api<Page<T>>(at(1));
+  const items = [...first.items];
+  for (let page = 2; items.length < first.total && page <= 50; page++) {
+    const next = await api<Page<T>>(at(page));
+    if (!next.items.length) break;
+    items.push(...next.items);
+  }
+  return { ...first, items, page: 1, page_size: items.length };
+}

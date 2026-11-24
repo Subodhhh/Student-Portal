@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useReference } from "../hooks/useApi";
-import { api, type Page } from "../services/api";
+import { apiAllPages, type Page } from "../services/api";
 import { loadReference, scopeHintKey } from "../services/referenceCache";
 import { useAuth } from "./AuthContext";
 
@@ -30,7 +30,7 @@ function read(): { p: string; b: string } {
 export function ScopeProvider({ children }: { children: ReactNode }) {
   const { me } = useAuth();
   const [choice, setChoice] = useState(read);
-  const providersQ = useReference<Page<Provider>>(me ? "/api/v1/providers?page_size=100" : null);
+  const providersQ = useReference<Page<Provider>>(me ? "/api/v1/providers?page_size=100" : null, true);
   const providers: Provider[] = providersQ.data?.items ?? EMPTY;
   // Until the lists arrive, the saved choice (or the user's own provider/branch) is used so branches and page data load in parallel
   // with the lists instead of after them; once a list arrives the selection is validated and, if stale, falls back to the first
@@ -41,7 +41,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     ? (providers.some((p) => p.provider_id === choice.p) ? choice.p : (providers[0]?.provider_id ?? ""))
     : (me ? guessP : "");
 
-  const branchesQ = useReference<Page<Branch>>(providerId ? branchesPath(providerId) : null);
+  const branchesQ = useReference<Page<Branch>>(providerId ? branchesPath(providerId) : null, true);
   const branches: Branch[] = branchesQ.data?.items ?? EMPTY;
   const guessB = choice.b || (assigned?.provider_id === providerId ? assigned?.branch_id ?? "" : "");
   const branchId = branchesQ.data
@@ -56,7 +56,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     if (!hintKey || guessP) return;
     let hinted = "";
     try { hinted = localStorage.getItem(hintKey) ?? ""; } catch { /* storage may be unavailable */ }
-    if (hinted) loadReference(branchesPath(hinted), (path) => api(path)).catch(() => undefined);
+    if (hinted) loadReference(branchesPath(hinted), (path) => apiAllPages(path)).catch(() => undefined);
   }, [hintKey, guessP]);
   const first = providers[0]?.provider_id ?? "";
   useEffect(() => {

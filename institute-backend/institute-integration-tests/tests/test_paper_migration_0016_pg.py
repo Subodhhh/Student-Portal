@@ -31,7 +31,7 @@ def session(db, size: int = 10, received: int = 0) -> None:
 def test_upgrade_keeps_jobs_and_allows_files_over_two_gib(db):
     at_0015_with_a_job(db)
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert sql(db, "select source_size from bulk_import_jobs") == [(12345,)]                     # kept
     sql(db, f"update bulk_import_jobs set source_size = {3 * GIB}")                              # over 2 GiB fits now
     assert sql(db, "select data_type from information_schema.columns where table_name = 'bulk_import_jobs' "

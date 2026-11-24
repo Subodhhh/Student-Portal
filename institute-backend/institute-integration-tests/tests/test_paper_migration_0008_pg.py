@@ -23,7 +23,7 @@ def test_a_new_database_migrates_every_chain_to_head(db):
     paper_at(db, "head")
     for s in AFTER_PAPER:
         run(db, s, "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert [c[0] for c in picture_columns(db)] == COLUMNS and all(c[1] == "YES" and c[2] == "uuid" for c in picture_columns(db))
     assert {f"question_versions_{c}_fkey" for c in COLUMNS} <= keys(db)
 

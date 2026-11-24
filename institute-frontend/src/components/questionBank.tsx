@@ -50,7 +50,7 @@ export function QuestionBrowser({ source, branchId, providerId, selected, onTogg
   if (origin && source !== "GLOBAL") params.set(origin === "PROVIDER_WIDE" || origin === "BRANCH" ? "origin" : "origin_branch_id", origin);
   params.set("page", String(page));
   params.set("page_size", "20");
-  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   const facets = useApi<Facets>(`/api/v1/question-taxonomy?${facetParams.toString()}`);
   const list = useApi<Page<BankQuestion>>(`/api/v1/questions?${params.toString()}`);
   const sName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
@@ -512,7 +512,7 @@ export function AddQuestion({ scope, branchId, providerId, onClose, onDone }: { 
   const mayAddProviderWide = scope === "PROVIDER" && !!providerId && !!me?.assignments.some((a) => a.role === "PROVIDER_ADMIN" && a.provider_id === providerId);
   const [providerWide, setProviderWide] = useState(false);
   const { target, field: branchField } = useTargetBranch(scope === "PROVIDER" ? branchId : "global");   // "All Branches": choose one
-  const catalogue = useReference<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null);
+  const catalogue = useReference<Page<Subject>>(scope === "GLOBAL" ? "/api/v1/subjects?page_size=100" : null, true);
   const offered = useReference<Subject[]>(scope === "PROVIDER" && providerId ? `/api/v1/providers/${providerId}/subjects` : null);
   const subjects = scope === "GLOBAL" ? catalogue.data?.items ?? [] : offered.data ?? [];
   const [subjectId, setSubjectId] = useState("");
@@ -574,7 +574,7 @@ export function ReviewFlags({ reviews, stemOf, subjectName }: { reviews: Subject
 
 export function BuildPapersDialog({ scope, branchId, selected, onClose, onDone }: { scope: "GLOBAL" | "PROVIDER"; branchId?: string; selected: Map<string, BankQuestion>;
   onClose: () => void; onDone: (papers: BuiltPaper[]) => void }) {
-  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   const groups = groupBySubject(selected);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [meta, setMeta] = useState({ exam_type: "", target_class: "" });

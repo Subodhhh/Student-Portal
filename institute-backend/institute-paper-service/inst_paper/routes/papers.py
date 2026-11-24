@@ -594,11 +594,22 @@ def _latest_versions():
             .group_by(QuestionVersion.question_id).subquery())
 
 
-def _usage_counts():
-    """Paper versions using any version of each question (a question is reused by reference, never duplicated)."""
-    return (select(QuestionVersion.question_id, func.count(distinct(PaperVersionQuestion.paper_version_id)).label("uses"))
-            .join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
-            .group_by(QuestionVersion.question_id).subquery())
+def _usage_counts(db: Session, question_ids: list[UUID]) -> dict[UUID, int]:
+    """Paper versions using any version of each question (a question is reused by reference, never duplicated). Counted only for
+    the given questions (one page), never the whole bank."""
+    if not question_ids:
+        return {}
+    return dict(db.execute(
+        select(QuestionVersion.question_id, func.count(distinct(PaperVersionQuestion.paper_version_id)))
+        .join(PaperVersionQuestion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+        .where(QuestionVersion.question_id.in_(question_ids)).group_by(QuestionVersion.question_id)).all())
+
+
+def _is_used():
+    """SQL condition: some paper version uses a version of the question."""
+    return (select(PaperVersionQuestion.paper_version_id)
+            .join(QuestionVersion, PaperVersionQuestion.question_version_id == QuestionVersion.question_version_id)
+            .where(QuestionVersion.question_id == Question.question_id).exists())
 
 
 def _question_visibility(p: Principal, db: Session, scope: str, provider_id: UUID | None, branch_id: UUID | None):
@@ -721,11 +732,10 @@ def search_questions(
     """The question bank: reusable questions with their latest version, filtered along the taxonomy. Only staff use this API; the
     Student services receive questions solely through exam delivery, and answers there are revealed only at result review.
     `origin` / `origin_branch_id` narrow PROVIDER questions by where they were created (they never widen what is visible)."""
-    latest, uses = _latest_versions(), _usage_counts()
-    stmt = (select(Question, QuestionVersion, uses.c.uses)
+    latest = _latest_versions()
+    stmt = (select(Question, QuestionVersion)
             .join(latest, latest.c.question_id == Question.question_id)
             .join(QuestionVersion, (QuestionVersion.question_id == Question.question_id) & (QuestionVersion.version_no == latest.c.n))
-            .outerjoin(uses, uses.c.question_id == Question.question_id)
             .where(_question_visibility(p, db, scope, provider_id, branch_id)))
     if status != "ALL":
         stmt = stmt.where(Question.status == status)
@@ -746,15 +756,16 @@ def search_questions(
     if difficulty:
         stmt = stmt.where(Question.difficulty.in_(difficulty))
     if not include_used:
-        stmt = stmt.where(uses.c.uses.is_(None))
+        stmt = stmt.where(~_is_used())
     if q:
         stmt = stmt.where(QuestionVersion.stem.ilike(f"%{escape_like(q)}%", escape="\\"))
     page_size = min(max(page_size, 1), 100)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = db.execute(stmt.order_by(Question.created_at.desc(), Question.question_id).limit(page_size).offset((max(page, 1) - 1) * page_size)).all()
-    policy = AnswerPolicy(db, p, [qq for qq, _, _ in rows])
-    names = _branch_names(db, [qq for qq, _, _ in rows])
-    return {"items": [_bank_out(p, qq, v, n, policy, names) for qq, v, n in rows], "total": total, "page": max(page, 1), "page_size": page_size}
+    uses = _usage_counts(db, [qq.question_id for qq, _ in rows])
+    policy = AnswerPolicy(db, p, [qq for qq, _ in rows])
+    names = _branch_names(db, [qq for qq, _ in rows])
+    return {"items": [_bank_out(p, qq, v, uses.get(qq.question_id, 0), policy, names) for qq, v in rows], "total": total, "page": max(page, 1), "page_size": page_size}
 
 
 def _question(db: Session, question_id: UUID) -> Question:

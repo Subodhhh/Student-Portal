@@ -178,7 +178,7 @@ export function ProviderDetailPage() {
 function ProviderBranches({ providerId, onChange }: { providerId: string; onChange: (c: StatusChange) => void }) {
   const { can } = useAuth();
   const scope = useScope();
-  const branches = useReference<Page<Branch>>(`/api/v1/providers/${providerId}/branches?page_size=100`);
+  const branches = useReference<Page<Branch>>(`/api/v1/providers/${providerId}/branches?page_size=100`, true);
   const [adding, setAdding] = useState(false);
   return (
     <div className="stack">

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, SESSION_EXPIRED_EVENT, api, setCsrfToken } from "./api";
+import { ApiError, SESSION_EXPIRED_EVENT, api, apiAllPages, setCsrfToken } from "./api";
 
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn().mockResolvedValue({ ok: status < 400, status, json: async () => body });
@@ -47,5 +47,22 @@ describe("api client", () => {
   it("reports network failures clearly", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fail")));
     await expect(api("/api/v1/x")).rejects.toMatchObject({ code: "NETWORK" });
+  });
+});
+
+describe("apiAllPages", () => {
+  it("follows the pages until it has every item", async () => {
+    const pages: Record<string, unknown> = {
+      "1": { items: [1, 2], total: 5, page: 1, page_size: 2 },
+      "2": { items: [3, 4], total: 5, page: 2, page_size: 2 },
+      "3": { items: [5], total: 5, page: 3, page_size: 2 },
+    };
+    const fn = vi.fn().mockImplementation(async (url: string) => ({ ok: true, status: 200, json: async () => pages[new URL(url, "http://x").searchParams.get("page")!] }));
+    vi.stubGlobal("fetch", fn);
+    const all = await apiAllPages<number>("/api/v1/subjects?page_size=2");
+    expect(all.items).toEqual([1, 2, 3, 4, 5]);
+    expect(all.total).toBe(5);
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(fn.mock.calls[1][0]).toContain("/api/v1/subjects?page_size=2&page=2");
   });
 });

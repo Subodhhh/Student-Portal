@@ -37,7 +37,7 @@ def test_upgrade_from_0010_adds_the_taxonomy_and_keeps_question_labels(db):
     seed_whole_number_data(db)
     sql(db, f"update bank_questions set chapter = 'Laws of Motion' where question_id = '{QUESTION}'")
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert link_columns(db) == [(c, "YES") for c in LINKS]
     assert sql(db, "select chapter, chapter_id from bank_questions") == [("Laws of Motion", None)]     # untouched until the backfill
 

@@ -167,7 +167,7 @@ export function GlobalTestDetailPage() {
   const { me, can } = useAuth();
   const platform = isGlobalRole(me?.primary_role) && can("examplan.manage");
   const t = useApi<GlobalTest>(`/api/v1/global-tests/${testId}`);
-  const schedules = useApi<Page<ScheduledTest>>(`/api/v1/tests?global_test_id=${testId}&page_size=100`);
+  const schedules = useApi<Page<ScheduledTest>>(`/api/v1/tests?global_test_id=${testId}&page_size=100`, true);
   // A SCHEDULE test's dates, requested with the test itself (the test's kind is known only from its answer: for another kind this
   // answers 404, which is never shown because only a SCHEDULE test's page shows the dates)
   const dates = useApi<{ items: Occurrence[] }>(`/api/v1/global-tests/${testId}/occurrences`);

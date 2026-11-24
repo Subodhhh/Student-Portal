@@ -10,7 +10,8 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(settings.database_url)
+engine = create_engine(settings.database_url, **({} if settings.database_url.startswith("sqlite") else dict(
+    pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow, pool_timeout=settings.db_pool_timeout)))
 
 
 # Ping a pooled connection only when it sat idle (a ping on EVERY checkout costs one database round trip per request, ~200 ms to the

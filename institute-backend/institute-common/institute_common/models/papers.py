@@ -218,6 +218,7 @@ class Question(Base):
         Index("ix_bank_questions_taxonomy", "subject_id", "exam_type", "target_class", "chapter"),
         Index("ix_bank_questions_branch_id", "branch_id"),
         Index("ix_bank_questions_provider_subject", "provider_id", "subject_id", "status"),
+        Index("ix_bank_questions_created", "created_at", "question_id"),      # the bank's newest-first order
     )
 
     question_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -256,6 +257,8 @@ class QuestionVersion(Base):
     __tablename__ = "question_versions"
     __table_args__ = (
         UniqueConstraint("question_id", "version_no", name="uq_question_version"),
+        # the bank's text search (ILIKE '%q%'); needs pg_trgm (paper 0018). Other dialects (sqlite tests) get a plain index
+        Index("ix_question_versions_stem_trgm", "stem", postgresql_using="gin", postgresql_ops={"stem": "gin_trgm_ops"}),
         # The shape follows the version's type (core/question_types.py): an MCQ keeps the columns it always had (four options, the
         # correct letter); an MSQ or NAT keeps its options / number format in `content` and its key in `answer_key`, its four
         # option columns empty and without pictures, and no correct letter.

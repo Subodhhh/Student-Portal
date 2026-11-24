@@ -44,7 +44,7 @@ def test_upgrade_keeps_existing_rows_and_accepts_the_three_scopes(db):
     sql(db, f"insert into bulk_import_jobs(job_id, provider_id, branch_id, subject_id, file_format, file_name, source_size, source_sha256, "
             f"created_by) values (gen_random_uuid(), '{PROVIDER}', '{BRANCH}', '{SUBJECT}', 'XLSX', 'q.xlsx', 1, '{'b' * 64}', gen_random_uuid())")
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     # existing rows are untouched: the branch question keeps its (now: originating) branch, the old job becomes a PROVIDER job
     assert sql(db, f"select provider_id::text, branch_id::text from bank_questions where question_id = '{QUESTION}'") == [(PROVIDER, BRANCH)]
     assert sql(db, "select scope, branch_id::text from bulk_import_jobs") == [("PROVIDER", BRANCH)]

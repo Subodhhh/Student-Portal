@@ -13,7 +13,7 @@ type Teacher = { staff_id: string; staff_code: string; full_name: string };
  * the same subject is shared (no duplicates) and teachers and batches can only use subjects the provider offers. */
 export function ProviderSubjects({ providerId }: { providerId: string }) {
   const { can } = useAuth();
-  const catalogue = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const catalogue = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   const offered = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
   const act = useAction();
   const isOffered = (id: string) => offered.data?.some((s) => s.subject_id === id);
@@ -40,10 +40,10 @@ export function ProviderSubjects({ providerId }: { providerId: string }) {
 /** Teacher-subject assignments in one branch: which teacher teaches which offered subject, to the whole branch or one batch. */
 export function TeachingAssignments({ providerId, branchId }: { providerId: string; branchId: string }) {
   const { can } = useAuth();
-  const list = useApi<Page<Teaching>>(`/api/v1/teaching?branch_id=${branchId}&page_size=100`);
+  const list = useApi<Page<Teaching>>(`/api/v1/teaching?branch_id=${branchId}&page_size=100`, true);
   const subjects = useReference<Subject[]>(`/api/v1/providers/${providerId}/subjects`);
-  const teachers = useApi<Page<Teacher>>(`/api/v1/staff?role=TEACHER&provider_id=${providerId}&status=ACTIVE&page_size=100`);
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`);
+  const teachers = useApi<Page<Teacher>>(`/api/v1/staff?role=TEACHER&provider_id=${providerId}&status=ACTIVE&page_size=100`, true);
+  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=ALL&page_size=100`, true);
   const [f, setF] = useState({ staff_id: "", subject_id: "", batch_id: "" });
   const [ending, setEnding] = useState<Teaching | null>(null);
   const act = useAction();

@@ -33,7 +33,7 @@ def at_0011_with_a_database_picture(db) -> None:
 def test_existing_pictures_survive_and_the_new_rules_hold(db):
     at_0011_with_a_database_picture(db)
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert sql(db, "select storage, storage_key, image_data is not null from question_image_assets") == [("db", None, True)]
     picture(db, "s3", f"question-images/{PROVIDER}/{'b' * 64}", "b" * 64)               # object-stored: allowed with its key
     for storage, key in (("s3", None), ("local", None), ("db", "question-images/x"), ("ftp", "k")):

@@ -110,7 +110,7 @@ export function GlobalTestsPanel({ onContribute }: { onContribute?: (t: GlobalTe
 
 /** A Global Test definition: subjects, duration and marking. No paper is chosen here: providers submit theirs for each date. */
 export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | null; onClose: () => void; onDone: (t: GlobalTest) => void }) {
-  const subjects = useReference<Page<Subject & { status?: string }>>("/api/v1/subjects?page_size=200");
+  const subjects = useReference<Page<Subject & { status?: string }>>("/api/v1/subjects?page_size=100", true);
   const [f, setF] = useState({ name: test?.name ?? "", description: test?.description ?? "", exam_type: test?.exam_type ?? "", target_class: test?.target_class ?? "",
     duration: String(test?.duration_minutes ?? 60), marking: test?.marking_mode ?? "UNIFORM", correct: String(test?.marks_correct ?? 4),
     wrong: String(test?.marks_wrong ?? 1), leadHours: String((test?.generate_lead_minutes ?? 120) / 60),
@@ -173,10 +173,10 @@ export function GlobalTestForm({ test, onClose, onDone }: { test: GlobalTest | n
 
 /** Editing an earlier draft built from platform papers (kind SECTIONS). */
 function SectionsTestForm({ test, onClose, onDone }: { test: GlobalTest; onClose: () => void; onDone: (t: GlobalTest) => void }) {
-  const papers = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100");
-  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const papers = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100", true);
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   // Platform copies of approved provider contributions, labelled so the administrator knows where a paper came from.
-  const contributed = useApi<Page<{ global_paper_id: string | null; provider_name: string | null; test_name: string }>>("/api/v1/global-test-contributions?status=APPROVED&page_size=100");
+  const contributed = useApi<Page<{ global_paper_id: string | null; provider_name: string | null; test_name: string }>>("/api/v1/global-test-contributions?status=APPROVED&page_size=100", true);
   const origin = (paperId: string) => contributed.data?.items.find((c) => c.global_paper_id === paperId);
   const [f, setF] = useState({ name: test.name, description: test.description ?? "", exam_type: test.exam_type ?? "", target_class: test.target_class ?? "",
     duration: String(test.duration_minutes) });

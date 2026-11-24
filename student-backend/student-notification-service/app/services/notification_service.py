@@ -49,11 +49,13 @@ def get_recipient_notifications(
     db: Session,
     recipient_id: str,
     recipient_type,
+    limit: int = 50,
 ):
     recipients = get_notifications_for_recipient(
         db=db,
         recipient_id=recipient_id,
         recipient_type=recipient_type,
+        limit=limit,
     )
 
     return [

@@ -155,7 +155,7 @@ function PaperList({ scope, providerId, branchId }: { scope: "GLOBAL" | "PROVIDE
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [subjectId, setSubjectId] = useState("");
-  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   const params = new URLSearchParams({ scope, page: String(page), page_size: "20" });
   if (branchId) params.set("branch_id", branchId);
   else if (providerId) params.set("provider_id", providerId);
@@ -216,7 +216,7 @@ function ImportTab({ providerId, branchId }: { providerId: string; branchId: str
   const [title, setTitle] = useState("");
   // a revised file can be imported as the next version of an existing paper of this branch and subject (compare it with the earlier one)
   const [revisionOf, setRevisionOf] = useState("");
-  const existing = useApi<Page<PaperRow>>(subjectId && target ? `/api/v1/papers?scope=PROVIDER&branch_id=${target}&subject_id=${subjectId}&page=1&page_size=100` : null);
+  const existing = useApi<Page<PaperRow>>(subjectId && target ? `/api/v1/papers?scope=PROVIDER&branch_id=${target}&subject_id=${subjectId}&page_size=100` : null, true);
   const [useKey, setUseKey] = useState(false);
   const [errors, setErrors] = useState<UploadError[]>([]);
   const [ok, setOk] = useState<{ version: string; count: number } | null>(null);

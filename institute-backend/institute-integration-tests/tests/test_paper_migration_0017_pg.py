@@ -36,7 +36,7 @@ def request(db, node: str, alias: str = "Newtons Laws") -> None:
 def test_upgrade_keeps_records_and_adds_the_platform_list_merging_and_requests(db):
     provider_chapter = at_0016_with_a_chapter(db)
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert sql(db, f"select provider_id, name, status, merged_into_id from question_taxonomy_nodes where node_id = '{provider_chapter}'") \
         == [(__import__("uuid").UUID(PROVIDER), "Laws of Motion", "ACTIVE", None)]
     platform = chapter(db, "Laws of Motion")                                  # the platform list is separate from the provider's

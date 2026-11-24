@@ -42,7 +42,7 @@ def test_existing_mcq_versions_upgrade_unchanged_and_the_three_shapes_are_enforc
     at_0014_with_data(db)
     before = sql(db, f"select stem, option_a, correct_option, marks_positive from question_versions where question_id = '{QUESTION}'")
     run(db, "paper", "upgrade", "head")
-    assert head(db) == PAPER_HEAD == "0017_taxonomy_aliases"
+    assert head(db) == PAPER_HEAD == "0018_question_bank_search"
     assert sql(db, f"select stem, option_a, correct_option, marks_positive, question_type, content from question_versions "
                    f"where question_id = '{QUESTION}'") == [(*before[0], "MCQ_SINGLE", None)]
 

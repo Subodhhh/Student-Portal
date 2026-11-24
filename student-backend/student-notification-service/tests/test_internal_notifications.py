@@ -130,3 +130,14 @@ def test_legacy_create_endpoint_requires_the_service_key_once_configured(env, mo
     assert c.post("/notifications", json=LEGACY, headers={"X-Service-Key": "wrong"}).status_code == 401
     assert c.post("/notifications", json=LEGACY, headers={"X-Service-Key": "new-key-456"}).status_code == 201
     assert c.post("/notifications", json=LEGACY, headers={"X-Service-Key": "old-key-123"}).status_code == 201
+
+
+def test_inbox_returns_at_most_limit_entries_unread_first(env):
+    from app.auth import get_current_student
+    c, _ = env
+    for n in range(3):
+        c.post("/internal/v1/notifications", json=body(dedupe_key=f"exam-published:k{n}", title=f"T{n}"), headers=H)
+    app.dependency_overrides[get_current_student] = lambda: "STU000001"
+    assert len(c.get("/notifications").json()) == 3
+    assert len(c.get("/notifications?limit=2").json()) == 2
+    assert c.get("/notifications?limit=0").status_code == 422 and c.get("/notifications?limit=201").status_code == 422

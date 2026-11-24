@@ -122,6 +122,8 @@ def test_archive_hides_from_the_bank_but_keeps_papers_and_versions(client, world
     info = client.get(f"{API}/questions/{qid}", headers=h).json()
     assert [v["version_no"] for v in info["versions"]] == [2, 1] and info["usage"][0]["question_version_no"] == 1
     assert info["question"]["usage_count"] == 1
+    listed = client.get(f"{API}/questions?branch_id={b}", headers=h).json()     # counted per page, through any version (here v1)
+    assert listed["total"] == 1 and listed["items"][0]["usage_count"] == 1
     assert client.get(f"{API}/questions?branch_id={b}&include_used=false", headers=h).json()["total"] == 0
     assert client.patch(f"{API}/questions/{qid}", json={"status": "ARCHIVED"}, headers=h).json()["status"] == "ARCHIVED"
     assert client.get(f"{API}/questions?branch_id={b}", headers=h).json()["total"] == 0

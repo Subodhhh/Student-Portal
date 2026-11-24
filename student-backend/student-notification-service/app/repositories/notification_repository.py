@@ -25,6 +25,7 @@ def get_notifications_for_recipient(
     db: Session,
     recipient_id: str,
     recipient_type,
+    limit: int = 50,
 ) -> list[NotificationRecipient]:
     query = (
         select(NotificationRecipient)
@@ -38,6 +39,7 @@ def get_notifications_for_recipient(
             NotificationRecipient.is_read.asc(),
             Notification.created_at.desc(),
         )
+        .limit(limit)
     )
 
     return list(

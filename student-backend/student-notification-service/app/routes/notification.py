@@ -1,7 +1,7 @@
 import hmac
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_student
@@ -86,6 +86,7 @@ def create_notification(
     response_model=list[NotificationResponse],
 )
 def get_notifications(
+    limit: int = Query(default=50, ge=1, le=200),   # unread first, then newest: older read notifications drop off the list
     student_id: str = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
@@ -93,6 +94,7 @@ def get_notifications(
         db=db,
         recipient_id=student_id,
         recipient_type=RecipientType.STUDENT,
+        limit=limit,
     )
 
 

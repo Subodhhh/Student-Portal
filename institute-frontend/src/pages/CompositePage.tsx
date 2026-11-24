@@ -20,7 +20,7 @@ export default function CompositePage() {
   const canRequest = can("examplan.manage");
   const [chosen, setChosen] = useState("");
   const tab = chosen || (canRequest ? "requests" : "invitations");     // derived, so it is right even before the session has loaded
-  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100");
+  const subjects = useReference<Page<Subject>>("/api/v1/subjects?page_size=100", true);
   const subjectName = (id: string) => subjects.data?.items.find((s) => s.subject_id === id)?.name ?? "Subject";
   return (
     <>
@@ -122,7 +122,7 @@ function Contribute({ inv, onClose, onDone }: { inv: Invitation; onClose: () => 
   const act = useAction();
   const [versionId, setVersionId] = useState("");
   const wrongProvider = scope.providerId !== inv.slot.provider_id;
-  const papers = useApi<Page<PaperRow>>(!wrongProvider && scope.branchId ? `/api/v1/branches/${scope.branchId}/papers?subject_id=${inv.slot.subject_id}&status=PUBLISHED&page_size=100` : null);
+  const papers = useApi<Page<PaperRow>>(!wrongProvider && scope.branchId ? `/api/v1/branches/${scope.branchId}/papers?subject_id=${inv.slot.subject_id}&status=PUBLISHED&page_size=100` : null, true);
   const published = (papers.data?.items ?? []).filter((p) => p.latest_version?.status === "PUBLISHED");
   return (
     <Modal title={`Contribute a paper to "${inv.request.name}"`} onClose={onClose}>

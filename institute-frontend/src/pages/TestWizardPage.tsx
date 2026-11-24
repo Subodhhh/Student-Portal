@@ -403,7 +403,7 @@ function AudienceStep({ providerId, branchId, branchName, audience, onChange, al
   providerId: string; branchId: string; branchName?: string; audience: Audience; onChange: (a: Audience) => void; allowInstitute: boolean;
   preview: { data: Preview | null; loading: boolean; error: string };
 }) {
-  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`);
+  const batches = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?page_size=100`, true);
   const set = (t: Audience["audience_type"]) => onChange({ audience_type: t, batch_ids: [], student_ids: [] });
   return (
     <Card>
@@ -479,8 +479,8 @@ function StudentPicker({ providerId, chosen, onChange }: { providerId: string; c
 /** Papers & test creation: for each subject choose an existing paper version (this branch's or a platform paper), or upload one. */
 function PaperSlots({ providerId, branchId, subjects, slots, onChange }: { providerId: string; branchId: string; subjects: Subject[];
   slots: Record<string, Slot>; onChange: (s: Record<string, Slot>) => void }) {
-  const own = useApi<Page<PaperRow>>(`/api/v1/papers?scope=PROVIDER&branch_id=${branchId}&page_size=100`);
-  const platform = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100");
+  const own = useApi<Page<PaperRow>>(`/api/v1/papers?scope=PROVIDER&branch_id=${branchId}&page_size=100`, true);
+  const platform = useApi<Page<PaperRow>>("/api/v1/papers?scope=GLOBAL&page_size=100", true);
   const [uploading, setUploading] = useState<string | null>(null);
   const papers = [...(own.data?.items ?? []), ...(platform.data?.items ?? [])].filter((p) => p.latest_version && p.latest_version.status !== "WITHDRAWN");
   const choose = (subjectId: string, versionId: string) => {

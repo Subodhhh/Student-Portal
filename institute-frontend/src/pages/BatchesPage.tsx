@@ -29,7 +29,7 @@ export default function BatchesPage() {
 export function Batches({ providerId, branchId }: { providerId: string; branchId: string }) {
   const { can } = useAuth();
   const [status, setStatus] = useState<"ACTIVE" | "INACTIVE">("ACTIVE");
-  const list = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=${status}&page_size=100`);
+  const list = useApi<Page<Batch>>(`/api/v1/branches/${branchId}/batches?status=${status}&page_size=100`, true);
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState<Batch | null>(null);
   const [editing, setEditing] = useState<Batch | null>(null);

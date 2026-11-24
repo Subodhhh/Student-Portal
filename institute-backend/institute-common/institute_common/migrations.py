@@ -103,6 +103,9 @@ def adopt_or_create(bind, service: str) -> list[str]:
     import institute_common.models  # noqa: F401  (register every mapped table)
     existing = set(inspect(bind).get_table_names())
     missing = [t for t in ddl_tables(service) if t.name not in existing]
+    if missing and service == "paper" and bind.dialect.name == "postgresql":   # question_versions' trigram index (paper 0018) needs it
+        from sqlalchemy import text
+        bind.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public"))
     Base.metadata.create_all(bind, tables=missing, checkfirst=True)
     return [t.name for t in missing]
 
